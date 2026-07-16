@@ -1,35 +1,43 @@
 **Language:** English | [简体中文](README_zh.md)
 
-# agentrt-linux System (AirymaxOS System)
+# system — agentrt-linux (AirymaxOS) System
 
 [![Version](https://img.shields.io/badge/version-0.1.1-5a6b7e)](https://atomgit.com/openairymax/system)
 [![License](https://img.shields.io/badge/license-AGPL--3.0+Apache--2.0-4a90d9)](LICENSE)
 
-> System subsystem of [agentrt-linux（AirymaxOS）](https://atomgit.com/openairymax/agentrt-linux) — the AI Agent Operating System.
-> One of the leaf repositories aggregated by the [agentrt-linux](https://atomgit.com/openairymax/agentrt-linux) management repo.
+> System subsystem of [agentrt-linux (AirymaxOS)](https://atomgit.com/openairymax/agentrt-linux) — the AI Agent Operating System.
+> One of the 8 leaf repositories aggregated by the [agentrt-linux](https://atomgit.com/openairymax/agentrt-linux) management repo.
 > Reuses and extends the Airymax `commons` module for OS-level packaging and configuration.
+
+Copyright (c) 2025-2026 SPHARX Ltd. All Rights Reserved.
 
 ---
 
-## Overview
+## Positioning
 
-The **agentrt-linux System (AirymaxOS System)** (`airymaxos-system`) is the system layer subsystem of agentrt-linux（AirymaxOS）, the AI Agent Operating System. It provides RPM packaging, the dnf package manager, system configuration, the shell environment, and the DevStation developer experience — the user-facing surface that packages and configures every other agentrt-linux subsystem.
+The **system** leaf repository is the system layer subsystem of agentrt-linux
+(AirymaxOS). It provides system initialization, RPM packaging, the dnf package
+manager, system configuration, the shell environment, and the DevStation developer
+experience — the user-facing surface that packages, configures and brings up every
+other agentrt-linux subsystem.
 
-In agentrt-linux 0.1.1, this repository is **documentation complete** (文档体系完成) containing design documents, reference distribution specifications, and architectural drafts. Actual kernel and OS development takes place in version 1.0.1.
+## Core Responsibilities
 
-### Core Technologies
+- **System initialization** — bootstrapping and first-boot configuration of an agentrt-linux image.
+- **RPM packaging** for reproducible, signed, dependency-aware OS components.
+- **dnf package manager** aligned with Euler-standard repository and update models.
+- **System configuration** covering networking, services, users and locale.
+- **Shell environment** providing a consistent developer and operator experience.
+- **DevStation** — integrated developer workstation image for agentrt-linux contributors.
 
-- **RPM packaging** for reproducible, signed, dependency-aware OS components
-- **dnf package manager** aligned with Euler standard repository and update models
-- **System configuration** covering networking, services, users and locale
-- **Shell environment** providing a consistent developer and operator experience
-- **DevStation** — integrated developer workstation image for agentrt-linux contributors
+## Relationship with Airymax `commons`
 
-### Relationship with Airymax commons
+The system leaf repo reuses and extends the `commons` module from the Airymax
+runtime platform. The shared configuration, packaging helpers and shell utilities
+are shared between the user-space runtime (`agentrt`) and the OS-level system
+layer, ensuring architectural homology with no adaptation layer.
 
-The agentrt-linux System (AirymaxOS System) reuses and extends the `commons` module from the Airymax runtime platform. The shared configuration, packaging helpers and shell utilities are shared between the user-space runtime (agentrt) and the OS-level system layer (agentrt-linux), ensuring architectural homology with no adaptation layer.
-
-## Repository Structure (0.1.1 Documentation Complete)
+## Document & File List
 
 ```
 system/
@@ -37,30 +45,46 @@ system/
 ├── README_zh.md        # Chinese translation
 ├── LICENSE             # AGPL-3.0 + Apache-2.0 dual license
 ├── NOTICE              # Copyright, trademark and third-party notices
-└── .gitignore
+├── .gitignore
+└── .github/
+    └── README.md       # GitHub automation for this leaf repo
 ```
 
-Design documents and reference distribution specifications are maintained in the `docs/AirymaxAgentOS/` directory of the umbrella repository.
+Design documents and reference distribution specifications are maintained in the
+`docs/AirymaxOS/` directory of the umbrella documentation repository.
 
-## Upstream & Downstream Dependencies
+## CI Status
 
-### Upstream
+System changes are governed by management-repository workflows (each ≤ 2 jobs):
 
-- **agentrt-linux Kernel (AirymaxOS Kernel)** — provides the kernel image and modules that the system layer packages
-- **agentrt-linux Services (AirymaxOS Services)** — provides the service set that the system layer configures and ships
-- **Airymax commons** — provides the shared configuration and packaging helpers that are reused and extended
+| Workflow | Jobs | Applies to system via |
+|----------|------|------------------------|
+| `mgmt-orchestrator.yml` | `file-integrity` + `orchestrate-leaf-ci` | Verifies the `system/` submodule dir; aggregates this repo's CI status |
+| `release.yml` | `build-and-sign` (kernel RPM via `make binrpm-pkg`; SBOM scan of `system/`; GPG signing) + `publish-release` (publish dnf repo via `createrepo` + rsync) | Release tag |
+| `nightly.yml` | `nightly-test-suite` + `nightly-revert-or-budget` | Nightly cron |
+| `ssot-validate.yml` | `ssot-syntax-and-rules` + `ssot-cross-ref` | When docs reference system/packaging rules |
 
-### Downstream
+Language-level CI (RPM spec lint, shell, config validation) is delegated to this
+leaf repository's own `.github/workflows/`.
 
-- **End users** — install agentrt-linux via the RPM/dnf surface produced by this subsystem
-- **DevStation users** — developers booting the DevStation image for agentrt-linux contribution
+## Development Guide
 
-## Branch Strategy
+- **Branch**: `feature/official-hubs-01` (the management repo stays on `main`).
+- **DCO**: every commit must be `Signed-off-by` (`git commit -s`).
+- **Commit prefix**: `system:`.
+- **Code style**: shell — `shellcheck`; RPM spec — `rpmlint`; Python — PEP 8 (`ruff`).
+- **Release signing**: RPM artifacts are signed with GPG (CI secrets
+  `GPG_PRIVATE_KEY` / `GPG_PASSPHRASE`); never log these.
+- **Function prefix**: `airy_*` for any kernel-adjacent helpers.
 
-This leaf repository is developed on **`feature/official-hubs-01`**. The aggregating `agentrt-linux` management repo stays on `main`.
+## Upstream & Downstream
+
+- **Upstream** — `kernel` (kernel image and modules packaged here); `services` (service set configured and shipped); Airymax `commons`.
+- **Downstream** — end users (install agentrt-linux via the RPM/dnf surface); DevStation users (developers booting the DevStation image); `cloudnative` (consumes the packaging surface for the hyper-node OS image).
 
 ## License
 
-Dual-licensed under **AGPL v3 + Apache 2.0** (SPDX: `AGPL-3.0-or-later OR Apache-2.0`). See [LICENSE](LICENSE) for the full text.
+Dual-licensed under **AGPL v3 + Apache 2.0** (SPDX: `AGPL-3.0-or-later OR Apache-2.0`).
+See [LICENSE](LICENSE) for the full text.
 
 Copyright (c) 2025-2026 SPHARX Ltd. All Rights Reserved.
