@@ -1,0 +1,68 @@
+# ===========================================================================
+# agentrt-linux (AirymaxOS) system submodule EditorConfig
+# https://editorconfig.org
+# Identical to top-level agentrt-linux/.editorconfig
+# ===========================================================================
+
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = tab
+indent_size = 8
+max_line_length = 80
+
+[*.{c,h,cpp,hpp,cc,hh}]
+indent_style = tab
+indent_size = 8
+tab_width = 8
+max_line_length = 80
+
+[*.rs]
+indent_style = space
+indent_size = 4
+max_line_length = 100
+
+[*.py]
+indent_style = space
+indent_size = 4
+max_line_length = 79
+
+[*.go]
+indent_style = tab
+indent_size = 8
+max_line_length = 100
+
+[*.{yml,yaml,toml}]
+indent_style = space
+indent_size = 2
+max_line_length = 120
+
+[*.json]
+indent_style = space
+indent_size = 2
+max_line_length = 120
+
+[*.md]
+indent_style = space
+indent_size = 4
+trim_trailing_whitespace = false
+max_line_length = off
+
+[*.sh]
+indent_style = tab
+indent_size = 8
+max_line_length = 80
+
+[{Makefile,Makefile.*,Kbuild,Kconfig}]
+indent_style = tab
+indent_size = 8
+max_line_length = 80
+
+[{CMakeLists.txt,*.cmake}]
+indent_style = tab
+indent_size = 8
+max_line_length = 80
