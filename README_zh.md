@@ -15,7 +15,7 @@
 
 **agentrt-linux 系统（AirymaxOS System）**（`airymaxos-system`）是 agentrt-linux（AirymaxOS）（智能体操作系统）的系统层子系统。它提供 RPM 打包、dnf 包管理器、系统配置、shell 环境与 DevStation 开发者体验——这是打包并配置其他所有 agentrt-linux 子系统的用户面。
 
-在 agentrt-linux 0.1.1 中，本仓库为**文档体系完成**，包含设计文档、参考发行版规范及架构草案。实际的内核与 OS 开发在 1.0.1 版本进行。
+在 Airymax 0.1.1 中，本仓库为**文档体系完成**，包含设计文档、参考发行版规范及架构草案。实际的内核与 OS 开发在 1.0.1 版本进行。
 
 ### 核心技术
 
