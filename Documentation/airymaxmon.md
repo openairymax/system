@@ -118,7 +118,7 @@ airymaxmon > /var/log/airy/airymaxmon.log 2>&1 &
 | `[SC]` | `AIRY_FAULT_*` 故障码 | 与 agentrt 共享 |
 | `[SC]` | `AIRY_CAP_MAX_AGENTS` | 与 LSM 共享 |
 | `[SC]` | `struct airy_task_sec` | Agent 安全上下文（参考） |
-| `[IND]` | airymaxmon 实现本身 | agentrt-linux 专属 |
+| `[IND]` | airymaxmon 实现本身 | agent-linux 专属 |
 
 agentrt 用户态有对应的 `airyobservability` 工具（ecosystem/airyobservability），
 两者通过 [SC] 共享故障码与 Agent 上限，但实现完全独立。

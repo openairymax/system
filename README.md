@@ -1,12 +1,12 @@
 **Language:** English | [简体中文](README_zh.md)
 
-# system — agentrt-linux (AirymaxOS) System
+# system — agent-linux (AirymaxOS) System
 
 [![Version](https://img.shields.io/badge/version-0.1.1-5a6b7e)](https://atomgit.com/openairymax/system)
 [![License](https://img.shields.io/badge/license-AGPL--3.0+Apache--2.0-4a90d9)](LICENSE)
 
-> System subsystem of [agentrt-linux (AirymaxOS)](https://atomgit.com/openairymax/agentrt-linux) — the AI Agent Operating System.
-> One of the 8 leaf repositories aggregated by the [agentrt-linux](https://atomgit.com/openairymax/agentrt-linux) management repo.
+> System subsystem of [agent-linux (AirymaxOS)](https://atomgit.com/openairymax/agent-linux) — the AI Agent Operating System.
+> One of the 8 leaf repositories aggregated by the [agent-linux](https://atomgit.com/openairymax/agent-linux) management repo.
 > Reuses and extends the Airymax `commons` module for OS-level packaging and configuration.
 
 Copyright (c) 2025-2026 SPHARX Ltd. All Rights Reserved.
@@ -15,20 +15,20 @@ Copyright (c) 2025-2026 SPHARX Ltd. All Rights Reserved.
 
 ## Positioning
 
-The **system** leaf repository is the system layer subsystem of agentrt-linux
+The **system** leaf repository is the system layer subsystem of agent-linux
 (AirymaxOS). It provides system initialization, RPM packaging, the dnf package
 manager, system configuration, the shell environment, and the DevStation developer
 experience — the user-facing surface that packages, configures and brings up every
-other agentrt-linux subsystem.
+other agent-linux subsystem.
 
 ## Core Responsibilities
 
-- **System initialization** — bootstrapping and first-boot configuration of an agentrt-linux image.
+- **System initialization** — bootstrapping and first-boot configuration of an agent-linux image.
 - **RPM packaging** for reproducible, signed, dependency-aware OS components.
 - **dnf package manager** aligned with Euler-standard repository and update models.
 - **System configuration** covering networking, services, users and locale.
 - **Shell environment** providing a consistent developer and operator experience.
-- **DevStation** — integrated developer workstation image for agentrt-linux contributors.
+- **DevStation** — integrated developer workstation image for agent-linux contributors.
 
 ## Relationship with Airymax `commons`
 
@@ -80,7 +80,7 @@ leaf repository's own `.github/workflows/`.
 ## Upstream & Downstream
 
 - **Upstream** — `kernel` (kernel image and modules packaged here); `services` (service set configured and shipped); Airymax `commons`.
-- **Downstream** — end users (install agentrt-linux via the RPM/dnf surface); DevStation users (developers booting the DevStation image); `cloudnative` (consumes the packaging surface for the hyper-node OS image).
+- **Downstream** — end users (install agent-linux via the RPM/dnf surface); DevStation users (developers booting the DevStation image); `cloudnative` (consumes the packaging surface for the hyper-node OS image).
 
 ## License
 

@@ -1,5 +1,5 @@
 # ===========================================================================
-# agentrt-linux (AirymaxOS) system submodule CMakeLists.txt
+# agent-linux (AirymaxOS) system submodule CMakeLists.txt
 # 构建入口：airymaxmon + metrics + tracing + logging + health + perf
 # 决策 F1：最小可编译骨架（非桩）
 # ===========================================================================

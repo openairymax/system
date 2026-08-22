@@ -3,7 +3,7 @@ List of maintainers
 
 system submodule (AirymaxOS) — airymaxmon + metrics + tracing + logging + health + perf + sysdump.
 Field format inherited from Linux 6.6 MAINTAINERS. See top-level
-agentrt-linux/MAINTAINERS for field semantics.
+agent-linux/MAINTAINERS for field semantics.
 
 	M: *Mail* patches to: FullName <address@domain>
 	R: Designated *Reviewer*: FullName <address@domain>
@@ -44,7 +44,7 @@ F:	tools/
 F:	tests/
 F:	Documentation/
 H:	ecosystem/airyobservability
-V:	agentrt-linux 0.1.1 / Linux 6.6
+V:	agent-linux 0.1.1 / Linux 6.6
 License:	GPL-2.0-only
 
 [SC] SHARED CONTRACT LAYER (referenced via -I, no physical copy)
@@ -53,6 +53,6 @@ R:	Kernel Core Lead <kernel-lead@spharx.com>
 L:	airy-dev@spharx.com
 S:	Supported
 F:	../kernel/include/uapi/linux/airymax/
-Note:	[SC] changes require dual CI validation (agentrt-linux + agentrt)
+Note:	[SC] changes require dual CI validation (agent-linux + agentrt)
 	and final approval by L3 top maintainer (SPHARX Engineering).
 	OS-IRON-014 forbids physical copies of [SC] headers in this submodule.
