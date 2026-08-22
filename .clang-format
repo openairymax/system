@@ -1,5 +1,5 @@
 # ===========================================================================
-# agentrt-linux (AirymaxOS) system submodule .clang-format
+# agent-linux (AirymaxOS) system submodule .clang-format
 # OS-STD-FMT-001: Tab-8 indentation, 80-column limit
 # Based on Linux 6.6 kernel .clang-format (identical to top-level)
 # ===========================================================================

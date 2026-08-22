@@ -97,7 +97,7 @@ system 子仓提供 AirymaxOS 的端到端可观测性，覆盖三大支柱：
 | 层级 | 实体 | 说明 |
 |------|------|------|
 | `[SC]` | 故障码 / Agent 上限 / IPC magic | 与 agentrt 共享 |
-| `[IND]` | airymaxmon + metrics + tracing 实现 | agentrt-linux 专属 |
+| `[IND]` | airymaxmon + metrics + tracing 实现 | agent-linux 专属 |
 
 ## 6. 当前实现状态
 
