@@ -2,7 +2,7 @@
 
 > **子仓**：`system/`
 > **范围**：monitoring + metrics + tracing + logging + health + perf
-> **设计文档**：`docs/AirymaxOS/10-architecture/07-directory-structure.md` §4.7
+> **设计文档**：`docs/docs-linux/10-architecture/07-directory-structure.md` §4.7
 
 Copyright (c) 2025-2026 SPHARX Ltd. All Rights Reserved.
 

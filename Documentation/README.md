@@ -29,7 +29,7 @@ License: GPL-2.0-only
 
 ## 相关文档
 
-- [07-directory-structure.md](../../../docs/AirymaxOS/10-architecture/07-directory-structure.md) §4.7 — system 子仓完整目录结构
+- [07-directory-structure.md](../../../docs/docs-linux/10-architecture/07-directory-structure.md) §4.7 — system 子仓完整目录结构
 - [error.h](../../kernel/include/uapi/linux/airymax/error.h) — [SC] 故障码契约
 - [lsm_types.h](../../kernel/include/uapi/linux/airymax/lsm_types.h) — [SC] Agent 安全上下文
 - 顶层 [CONTRIBUTING.md](../CONTRIBUTING.md) — system 子仓贡献指南
