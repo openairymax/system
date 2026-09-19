@@ -4,7 +4,7 @@
 > **组件**：`monitoring/`
 > **可编译入口**：`monitoring/airymaxmon.c` → `airymaxmon`
 > **[SC] 依赖**：`kernel/include/uapi/linux/airymax/error.h`、`lsm_types.h`
-> **设计文档**：`docs/AirymaxOS/10-architecture/07-directory-structure.md` §4.7
+> **设计文档**：`docs/docs-linux/10-architecture/07-directory-structure.md` §4.7
 
 Copyright (c) 2025-2026 SPHARX Ltd. All Rights Reserved.
 
