@@ -1,7 +1,7 @@
 [Unit]
 Description=AirymaxOS Complete Stack
 Documentation=https://docs.agentrt.local/100-operations/07-systemd-integration
-Requires=agentrt-macro-superv.service agentrt-logger.service agentrt-config.service agentrt-gateway.service agentrt-sched.service agentrt-vfs.service agentrt-net.service agentrt-mem.service agentrt-cogn.service agentrt-sec.service agentrt-audit.service agentrt-dev.service agentrt-firstboot.service
+Requires=sysinit.target agentrt-macro-superv.service agentrt-logger.service agentrt-config.service agentrt-gateway.service agentrt-sched.service agentrt-vfs.service agentrt-net.service agentrt-mem.service agentrt-cogn.service agentrt-sec.service agentrt-audit.service agentrt-dev.service agentrt-firstboot.service
 After=sysinit.target network-online.target
 AllowIsolate=yes
 
