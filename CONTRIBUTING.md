@@ -30,17 +30,22 @@ system 子仓负责 AirymaxOS 的系统可观测性，包括：
 - **C 标准**：GNU C11（用户态 daemon）
 - **编译器**：gcc ≥ 11 或 clang ≥ 14
 - **构建系统**：CMake ≥ 3.20
-- **内核头**：通过 `-I../kernel/include` 引用 [SC] 头文件
+- **内核头**：通过 `-idirafter ../kernel/include/uapi` 引用 [SC] 头文件
 
 ### [SC] 头文件引用约束（OS-IRON-014）
 
 - [SC] 头文件**唯一物理宿主**：`../kernel/include/uapi/linux/airymax/`
-- 本子仓通过 `-I` 引用，**禁止物理副本**
+- 本子仓通过 `-idirafter` 引用，**禁止物理副本**
+- 源码内一律写作 `<linux/airymax/...>`
 - CMakeLists.txt 配置：
   ```cmake
-  include_directories(${CMAKE_SOURCE_DIR}/../kernel/include)
-  include_directories(${CMAKE_SOURCE_DIR}/../kernel/include/uapi/linux)
+  add_compile_options(-idirafter ${CMAKE_SOURCE_DIR}/../kernel/include/uapi)
   ```
+
+`-idirafter` 将 in-tree 目录置于系统头之后：`<time.h>`、`<linux/types.h>`
+等标准头仍由系统提供，仅 `<linux/airymax/...>` 这类 [SC] 头从源码树解析。
+禁止使用 `-I ../kernel/include`：该目录包含内核内部头，会以 `timer_t`
+冲突等方式破坏 libc 声明。
 
 ## 3. 构建命令
 

@@ -33,9 +33,9 @@
 #include <time.h>
 #include <unistd.h>
 
-/* [SC] 共享契约头文件（通过 -I../kernel/include/uapi/linux 引用） */
-#include <airymax/error.h>
-#include <airymax/lsm_types.h>
+/* [SC] 共享契约头文件（通过 -idirafter ../kernel/include/uapi 引用） */
+#include <linux/airymax/error.h>
+#include <linux/airymax/lsm_types.h>
 
 /* ─── 常量 ──────────────────────────────────────────────────────────── */
 
