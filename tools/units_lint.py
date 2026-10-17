@@ -22,6 +22,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 __all__ = [
+    "FIRSTBOOT",
     "SERVICES",
     "TARGETS",
     "TEMPLATES",
@@ -39,8 +40,10 @@ UNIT_DIR = ROOT / "units"
 SHEBANG = "#!/usr/bin/env bash"
 
 SYSTEM_UNITS = frozenset({
+    "local-fs.target",
     "multi-user.target",
     "network-online.target",
+    "sysinit.target",
     "systemd-journald.service",
 })
 
@@ -334,10 +337,12 @@ SERVICES: dict[str, Service] = {
     ),
 }
 
+FIRSTBOOT = "agentrt-firstboot.service"
+
 TARGETS: dict[str, Target] = {
     "agentrt.target": Target(
-        requires=tuple(SERVICES),
-        after="network-online.target",
+        requires=tuple(SERVICES) + (FIRSTBOOT,),
+        after="sysinit.target network-online.target",
     ),
     "agentrt-dsl.target": Target(
         requires=(
@@ -385,7 +390,23 @@ HEALTH_PAIRS: dict[tuple[str, str], str] = {
 
 SCRIPT = ROOT / "scripts" / "health_check.sh"
 
+FIRSTBOOT_PAIRS: dict[tuple[str, str], str] = {
+    ("Unit", "After"): "sysinit.target",
+    ("Unit", "Before"): "agentrt.target multi-user.target",
+    ("Service", "Type"): "oneshot",
+    ("Service", "ExecStart"): (
+        "/usr/lib/airymaxos/scripts/firstboot.sh"
+    ),
+    ("Service", "RemainAfterExit"): "yes",
+    ("Service", "TimeoutStartSec"): "300",
+    ("Service", "TimeoutStopSec"): "30",
+    ("Install", "WantedBy"): "multi-user.target",
+}
+
+FIRSTBOOT_SCRIPT = ROOT / "scripts" / "firstboot.sh"
+
 UNITS = frozenset(SERVICES) | frozenset(TARGETS) | frozenset(TEMPLATES) | {
+    FIRSTBOOT,
     HEALTH,
 }
 
@@ -394,7 +415,7 @@ _META = frozenset({
     ("Unit", "Description"),
     ("Unit", "Documentation"),
 })
-_DEPS = ("After", "Requires", "Wants", "Conflicts")
+_DEPS = ("After", "Requires", "Wants", "Conflicts", "Before")
 
 
 def _tokens(value: str | None) -> list[str]:
@@ -417,8 +438,8 @@ def _pairs(spec: Service) -> dict[tuple[str, str], str | None]:
         f" --config=/etc/agentrt/daemons/{spec.daemon}_d.conf"
     )
     pairs: dict[tuple[str, str], str | None] = {
-        ("Unit", "After"): spec.after or None,
-        ("Unit", "Requires"): spec.requires or None,
+        ("Unit", "After"): f"{spec.after} {FIRSTBOOT}".strip(),
+        ("Unit", "Requires"): f"{spec.requires} {FIRSTBOOT}".strip(),
         ("Unit", "Wants"): spec.wants or None,
         ("Unit", "PartOf"): "agentrt.target",
         ("Unit", "OnFailure"): "airy-incident@%n.service",
@@ -529,10 +550,14 @@ def _ref_bad(
 
 def _graph(parsed: dict[str, ConfigParser]) -> dict[str, set[str]]:
     names = set(parsed)
-    return {
-        name: {unit for unit in _deps(cfg)["After"] if unit in names}
-        for name, cfg in parsed.items()
-    }
+    edges: dict[str, set[str]] = {name: set() for name in names}
+    for name, cfg in parsed.items():
+        deps = _deps(cfg)
+        edges[name] |= {unit for unit in deps["After"] if unit in names}
+        for unit in deps["Before"]:
+            if unit in names:
+                edges[unit].add(name)
+    return edges
 
 
 def _cycle_bad(edges: dict[str, set[str]]) -> list[str]:
@@ -597,8 +622,11 @@ def _incident_bad(name: str, cfg: ConfigParser) -> list[str]:
     return _diff(name, cfg, pairs) + _extra_bad(name, cfg, pairs)
 
 
-def _health_bad(name: str, cfg: ConfigParser) -> list[str]:
-    pairs = dict(HEALTH_PAIRS)
+def _oneshot_bad(
+    name: str,
+    cfg: ConfigParser,
+    pairs: dict[tuple[str, str], str | None],
+) -> list[str]:
     return (
         _diff(name, cfg, pairs)
         + _extra_bad(name, cfg, pairs)
@@ -606,11 +634,21 @@ def _health_bad(name: str, cfg: ConfigParser) -> list[str]:
     )
 
 
+def _health_bad(name: str, cfg: ConfigParser) -> list[str]:
+    return _oneshot_bad(name, cfg, dict(HEALTH_PAIRS))
+
+
+def _firstboot_bad(name: str, cfg: ConfigParser) -> list[str]:
+    return _oneshot_bad(name, cfg, dict(FIRSTBOOT_PAIRS))
+
+
 def _body_bad(name: str, cfg: ConfigParser) -> list[str]:
     if name in SERVICES:
         return _service_bad(name, cfg)
     if name in TARGETS:
         return _target_bad(name, cfg)
+    if name == FIRSTBOOT:
+        return _firstboot_bad(name, cfg)
     if name == HEALTH:
         return _health_bad(name, cfg)
     return _incident_bad(name, cfg)
@@ -729,6 +767,7 @@ def check_dir(path: Path) -> list[str]:
             errs.extend(_doc_bad(item.name, cfg))
             errs.extend(_body_bad(item.name, cfg))
     errs.extend(check_script())
+    errs.extend(check_script(FIRSTBOOT_SCRIPT))
     return errs
 
 

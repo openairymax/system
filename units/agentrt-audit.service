@@ -1,8 +1,8 @@
 [Unit]
 Description=AirymaxOS Audit and Incident Daemon
 Documentation=man:audit_d(8)
-After=agentrt-sched.service
-Requires=agentrt-sched.service
+After=agentrt-sched.service agentrt-firstboot.service
+Requires=agentrt-sched.service agentrt-firstboot.service
 Wants=agentrt-gateway.service
 PartOf=agentrt.target
 OnFailure=airy-incident@%n.service

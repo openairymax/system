@@ -58,7 +58,9 @@ if(AIRY_INSTALL_SYSTEMD_UNITS)
 		PATTERN "*.service"
 		PATTERN "*.target"
 	)
-	install(PROGRAMS scripts/health_check.sh
+	install(PROGRAMS
+		scripts/firstboot.sh
+		scripts/health_check.sh
 		DESTINATION lib/airymaxos/scripts
 	)
 endif()

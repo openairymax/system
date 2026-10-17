@@ -25,6 +25,7 @@ SCHED = "agentrt-sched.service"
 TARGET = "agentrt.target"
 INCIDENT = "airy-incident@.service"
 HEALTH = "agentrt-health-check.service"
+FIRSTBOOT = "agentrt-firstboot.service"
 
 
 class UnitsCase(unittest.TestCase):
@@ -152,7 +153,11 @@ class DepsCase(UnitsCase):
     """依赖矩阵与无环约束。"""
 
     def test_req_order(self) -> None:
-        self.edit(SCHED, "After=agentrt-gateway.service\n", "")
+        self.edit(
+            SCHED,
+            "After=agentrt-gateway.service agentrt-firstboot.service\n",
+            "After=agentrt-firstboot.service\n",
+        )
         self.assert_bad("Requires without After")
 
     def test_unknown(self) -> None:
@@ -210,6 +215,30 @@ class HealthCase(UnitsCase):
     def test_hc_type(self) -> None:
         self.edit(HEALTH, "Type=oneshot", "Type=simple")
         self.assert_bad("Type")
+
+
+class FirstbootCase(UnitsCase):
+    """首启初始化单元与门控契约。"""
+
+    def test_fb_after(self) -> None:
+        self.edit(FIRSTBOOT, "After=sysinit.target\n", "")
+        self.assert_bad("After")
+
+    def test_fb_before(self) -> None:
+        self.edit(FIRSTBOOT, "Before=agentrt.target multi-user.target\n", "")
+        self.assert_bad("Before")
+
+    def test_fb_exec(self) -> None:
+        self.edit(FIRSTBOOT, "firstboot.sh", "firstboot2.sh")
+        self.assert_bad("ExecStart")
+
+    def test_fb_type(self) -> None:
+        self.edit(FIRSTBOOT, "Type=oneshot", "Type=simple")
+        self.assert_bad("Type")
+
+    def test_fb_dep(self) -> None:
+        self.edit(GATEWAY, "Requires=agentrt-firstboot.service\n", "")
+        self.assert_bad("Requires")
 
 
 if __name__ == "__main__":

@@ -1,0 +1,15 @@
+[Unit]
+Description=AirymaxOS First Boot Initialization
+Documentation=https://docs.agentrt.local/100-operations/01-deployment
+After=sysinit.target
+Before=agentrt.target multi-user.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/airymaxos/scripts/firstboot.sh
+RemainAfterExit=yes
+TimeoutStartSec=300
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target

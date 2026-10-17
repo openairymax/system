@@ -1,7 +1,8 @@
 [Unit]
 Description=AirymaxOS Virtual File System Daemon
 Documentation=man:vfs_d(8)
-After=agentrt-net.service agentrt-sec.service
+After=agentrt-net.service agentrt-sec.service agentrt-firstboot.service
+Requires=agentrt-firstboot.service
 Wants=agentrt-net.service agentrt-sec.service
 PartOf=agentrt.target
 OnFailure=airy-incident@%n.service

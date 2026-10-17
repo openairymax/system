@@ -1,8 +1,8 @@
 [Unit]
 Description=AirymaxOS Network Services Daemon
 Documentation=man:net_d(8)
-After=agentrt-gateway.service agentrt-sched.service
-Requires=agentrt-gateway.service
+After=agentrt-gateway.service agentrt-sched.service agentrt-firstboot.service
+Requires=agentrt-gateway.service agentrt-firstboot.service
 Wants=agentrt-sched.service
 PartOf=agentrt.target
 OnFailure=airy-incident@%n.service

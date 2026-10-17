@@ -1,8 +1,8 @@
 [Unit]
 Description=AirymaxOS Unified Logging Daemon
 Documentation=man:logger_d(8)
-After=agentrt-audit.service
-Requires=agentrt-audit.service
+After=agentrt-audit.service agentrt-firstboot.service
+Requires=agentrt-audit.service agentrt-firstboot.service
 PartOf=agentrt.target
 OnFailure=airy-incident@%n.service
 
