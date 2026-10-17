@@ -43,6 +43,7 @@ F:	include/
 F:	tools/
 F:	tests/
 F:	units/
+F:	scripts/
 F:	Documentation/
 H:	ecosystem/airyobservability
 V:	agent-linux 0.1.1 / Linux 6.6

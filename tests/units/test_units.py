@@ -24,6 +24,7 @@ GATEWAY = "agentrt-gateway.service"
 SCHED = "agentrt-sched.service"
 TARGET = "agentrt.target"
 INCIDENT = "airy-incident@.service"
+HEALTH = "agentrt-health-check.service"
 
 
 class UnitsCase(unittest.TestCase):
@@ -189,6 +190,26 @@ class TemplateCase(UnitsCase):
     def test_incident(self) -> None:
         self.edit(INCIDENT, "--status failed", "--status ok")
         self.assert_bad("ExecStart")
+
+
+class HealthCase(UnitsCase):
+    """启动自检单元契约。"""
+
+    def test_hc_after(self) -> None:
+        self.edit(HEALTH, "After=agentrt.target\n", "")
+        self.assert_bad("After")
+
+    def test_hc_wants(self) -> None:
+        self.edit(HEALTH, "Wants=agentrt.target", "Requires=agentrt.target")
+        self.assert_bad("unexpected directive")
+
+    def test_hc_exec(self) -> None:
+        self.edit(HEALTH, "health_check.sh", "health.sh")
+        self.assert_bad("ExecStart")
+
+    def test_hc_type(self) -> None:
+        self.edit(HEALTH, "Type=oneshot", "Type=simple")
+        self.assert_bad("Type")
 
 
 if __name__ == "__main__":
