@@ -1,8 +1,8 @@
 [Unit]
 Description=AirymaxOS Unified Supervision Daemon (A-ULS)
 Documentation=man:macro_d(8)
-After=systemd-journald.service agentrt-sched.service
-Requires=systemd-journald.service agentrt-sched.service
+After=systemd-journald.service agentrt-sched.service agentrt-firstboot.service
+Requires=systemd-journald.service agentrt-sched.service agentrt-firstboot.service
 Wants=agentrt-gateway.service
 PartOf=agentrt.target
 OnFailure=airy-incident@%n.service

@@ -1,7 +1,8 @@
 [Unit]
 Description=AirymaxOS Unified Configuration Subsystem (A-UCS)
 Documentation=man:config_d(8)
-After=agentrt-vfs.service
+After=agentrt-vfs.service agentrt-firstboot.service
+Requires=agentrt-firstboot.service
 Wants=agentrt-vfs.service
 PartOf=agentrt.target
 OnFailure=airy-incident@%n.service

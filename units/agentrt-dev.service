@@ -1,8 +1,8 @@
 [Unit]
 Description=AirymaxOS Device Management Daemon
 Documentation=man:dev_d(8)
-After=agentrt-gateway.service
-Requires=agentrt-gateway.service
+After=agentrt-gateway.service agentrt-firstboot.service
+Requires=agentrt-gateway.service agentrt-firstboot.service
 PartOf=agentrt.target
 OnFailure=airy-incident@%n.service
 
