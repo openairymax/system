@@ -45,6 +45,36 @@ add_compile_options(
 add_subdirectory(monitoring)
 
 # ---------------------------------------------------------------------------
+# systemd 单元（M-18）
+# 包级路径固定为 /usr/lib/systemd/system
+# ---------------------------------------------------------------------------
+option(AIRY_INSTALL_SYSTEMD_UNITS
+	"Install AirymaxOS systemd units" ON)
+
+if(AIRY_INSTALL_SYSTEMD_UNITS)
+	install(DIRECTORY units/
+		DESTINATION lib/systemd/system
+		FILES_MATCHING
+		PATTERN "*.service"
+		PATTERN "*.target"
+	)
+endif()
+
+# ---------------------------------------------------------------------------
+# 单元静态契约校验：无需 root，不依赖 systemd 运行时
+# ---------------------------------------------------------------------------
+include(CTest)
+find_package(Python3 COMPONENTS Interpreter)
+
+if(BUILD_TESTING AND Python3_Interpreter_FOUND)
+	add_test(NAME units-lint
+		COMMAND ${Python3_EXECUTABLE}
+			${CMAKE_CURRENT_SOURCE_DIR}/tools/units_lint.py
+			${CMAKE_CURRENT_SOURCE_DIR}/units
+	)
+endif()
+
+# ---------------------------------------------------------------------------
 # 安装规则
 # ---------------------------------------------------------------------------
 install(TARGETS airymaxmon

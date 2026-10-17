@@ -1,0 +1,55 @@
+[Unit]
+Description=AirymaxOS Unified Supervision Daemon (A-ULS)
+Documentation=man:macro_d(8)
+After=systemd-journald.service agentrt-sched.service
+Requires=systemd-journald.service agentrt-sched.service
+Wants=agentrt-gateway.service
+PartOf=agentrt.target
+OnFailure=airy-incident@%n.service
+
+[Service]
+Type=notify
+NotifyAccess=main
+ExecStart=/usr/sbin/macro_d --config=/etc/agentrt/daemons/macro_d.conf
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=always
+RestartSec=1s
+StartLimitBurst=3
+StartLimitIntervalSec=300
+WatchdogSec=30s
+TimeoutStartSec=30
+TimeoutStopSec=15
+KillMode=mixed
+KillSignal=SIGTERM
+SendSIGKILL=yes
+
+User=airy
+Group=airy
+SupplementaryGroups=airy-monitor airy-alert airy-backup
+
+MemoryMax=512M
+MemoryHigh=400M
+CPUQuota=200%
+TasksMax=512
+LimitNOFILE=65536
+LimitNPROC=512
+
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+NoNewPrivileges=yes
+CapabilityBoundingSet=CAP_SYS_PTRACE CAP_KILL CAP_SETUID CAP_SETGID
+AmbientCapabilities=CAP_SYS_PTRACE CAP_KILL
+
+IOSchedulingClass=realtime
+IOSchedulingPriority=4
+
+SyslogIdentifier=macro_d
+LogLevelMax=info
+StandardOutput=journal
+StandardError=journal
+OOMPolicy=stop
+
+[Install]
+WantedBy=agentrt.target

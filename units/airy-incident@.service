@@ -1,0 +1,9 @@
+[Unit]
+Description=Handle failure of %i
+After=%i
+
+[Service]
+Type=oneshot
+ExecStart=/usr/sbin/airyctl incident create --source systemd --unit %i --status failed
+User=airy
+Group=airy

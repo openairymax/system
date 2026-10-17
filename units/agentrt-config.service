@@ -1,0 +1,48 @@
+[Unit]
+Description=AirymaxOS Unified Configuration Subsystem (A-UCS)
+Documentation=man:config_d(8)
+After=agentrt-vfs.service
+Wants=agentrt-vfs.service
+PartOf=agentrt.target
+OnFailure=airy-incident@%n.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/sbin/config_d --load --config=/etc/agentrt/airy.conf
+ExecReload=/usr/sbin/config_d --reload
+ExecStop=/bin/true
+Restart=on-failure
+RestartSec=5s
+StartLimitBurst=3
+StartLimitIntervalSec=300
+
+User=airy
+Group=airy
+SupplementaryGroups=airy-config
+
+MemoryMax=256M
+MemoryHigh=200M
+CPUQuota=50%
+TasksMax=128
+LimitNOFILE=65536
+
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ReadWritePaths=/etc/agentrt /var/lib/agentrt/config
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+
+IOSchedulingClass=best-effort
+IOSchedulingPriority=4
+
+SyslogIdentifier=config_d
+LogLevelMax=info
+StandardOutput=journal
+StandardError=journal
+OOMPolicy=stop
+
+[Install]
+WantedBy=agentrt.target

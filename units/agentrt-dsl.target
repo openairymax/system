@@ -1,0 +1,8 @@
+[Unit]
+Description=AirymaxOS Degraded Service Layer (DSL)
+Requires=agentrt-macro-superv.service agentrt-logger.service agentrt-config.service agentrt-sec.service agentrt-audit.service agentrt-mem.service
+Conflicts=agentrt.target
+AllowIsolate=yes
+
+[Install]
+WantedBy=multi-user.target
