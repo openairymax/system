@@ -1,0 +1,53 @@
+[Unit]
+Description=AirymaxOS Security Policy Daemon
+Documentation=man:sec_d(8)
+After=agentrt-audit.service
+Requires=agentrt-audit.service
+PartOf=agentrt.target
+OnFailure=airy-incident@%n.service
+
+[Service]
+Type=notify
+NotifyAccess=main
+ExecStartPre=/sbin/modprobe airy_lsm
+ExecStart=/usr/sbin/sec_d --config=/etc/agentrt/daemons/sec_d.conf
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=always
+RestartSec=1s
+StartLimitBurst=2
+StartLimitIntervalSec=300
+WatchdogSec=30s
+TimeoutStartSec=30
+TimeoutStopSec=15
+KillMode=mixed
+
+User=airy
+Group=airy
+SupplementaryGroups=airy-security airy-alert
+
+MemoryMax=512M
+MemoryHigh=400M
+CPUQuota=100%
+TasksMax=256
+LimitNOFILE=65536
+Nice=-10
+
+ProtectSystem=no
+ProtectHome=yes
+PrivateTmp=yes
+ReadWritePaths=/etc/agentrt/keys /var/log/agentrt /var/lib/agentrt/security
+NoNewPrivileges=yes
+CapabilityBoundingSet=CAP_MAC_ADMIN CAP_SYSLOG CAP_SETUID
+AmbientCapabilities=CAP_MAC_ADMIN CAP_SYSLOG CAP_SETUID
+
+IOSchedulingClass=realtime
+IOSchedulingPriority=1
+
+SyslogIdentifier=sec_d
+LogLevelMax=info
+StandardOutput=journal
+StandardError=journal
+OOMPolicy=stop
+
+[Install]
+WantedBy=agentrt.target

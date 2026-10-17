@@ -1,0 +1,53 @@
+[Unit]
+Description=AirymaxOS Audit and Incident Daemon
+Documentation=man:audit_d(8)
+After=agentrt-sched.service
+Requires=agentrt-sched.service
+Wants=agentrt-gateway.service
+PartOf=agentrt.target
+OnFailure=airy-incident@%n.service
+
+[Service]
+Type=notify
+NotifyAccess=main
+ExecStart=/usr/sbin/audit_d --config=/etc/agentrt/daemons/audit_d.conf
+ExecStartPost=/usr/sbin/audit_d --restore
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=always
+RestartSec=2s
+StartLimitBurst=3
+StartLimitIntervalSec=300
+WatchdogSec=30s
+TimeoutStartSec=30
+TimeoutStopSec=15
+KillMode=mixed
+
+User=airy
+Group=airy
+SupplementaryGroups=airy-monitor airy-backup
+
+MemoryMax=1G
+MemoryHigh=800M
+CPUQuota=200%
+TasksMax=512
+LimitNOFILE=65536
+
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ReadWritePaths=/var/lib/agentrt/monitor /var/lib/agentrt/incidents /var/lib/agentrt/backup /var/lib/agentrt/alerts
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+
+IOSchedulingClass=best-effort
+IOSchedulingPriority=2
+
+SyslogIdentifier=audit_d
+LogLevelMax=info
+StandardOutput=journal
+StandardError=journal
+OOMPolicy=stop
+
+[Install]
+WantedBy=agentrt.target
