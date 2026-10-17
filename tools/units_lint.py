@@ -341,7 +341,7 @@ FIRSTBOOT = "agentrt-firstboot.service"
 
 TARGETS: dict[str, Target] = {
     "agentrt.target": Target(
-        requires=tuple(SERVICES) + (FIRSTBOOT,),
+        requires=("sysinit.target",) + tuple(SERVICES) + (FIRSTBOOT,),
         after="sysinit.target network-online.target",
     ),
     "agentrt-dsl.target": Target(
