@@ -28,6 +28,7 @@ __all__ = [
     "UNITS",
     "check_dir",
     "check_file",
+    "check_script",
     "main",
 ]
 
@@ -35,6 +36,7 @@ LOG = logging.getLogger("units_lint")
 
 ROOT = Path(__file__).resolve().parent.parent
 UNIT_DIR = ROOT / "units"
+SHEBANG = "#!/usr/bin/env bash"
 
 SYSTEM_UNITS = frozenset({
     "multi-user.target",
@@ -366,7 +368,26 @@ TEMPLATES: dict[str, tuple[tuple[str, str, str], ...]] = {
     ),
 }
 
-UNITS = frozenset(SERVICES) | frozenset(TARGETS) | frozenset(TEMPLATES)
+HEALTH = "agentrt-health-check.service"
+
+HEALTH_PAIRS: dict[tuple[str, str], str] = {
+    ("Unit", "After"): "agentrt.target",
+    ("Unit", "Wants"): "agentrt.target",
+    ("Service", "Type"): "oneshot",
+    (
+        "Service",
+        "ExecStart",
+    ): "/usr/lib/airymaxos/scripts/health_check.sh",
+    ("Service", "RemainAfterExit"): "yes",
+    ("Service", "TimeoutStartSec"): "120",
+    ("Install", "WantedBy"): "multi-user.target",
+}
+
+SCRIPT = ROOT / "scripts" / "health_check.sh"
+
+UNITS = frozenset(SERVICES) | frozenset(TARGETS) | frozenset(TEMPLATES) | {
+    HEALTH,
+}
 
 _SECTIONS = frozenset({"Unit", "Service", "Install"})
 _META = frozenset({
@@ -576,11 +597,22 @@ def _incident_bad(name: str, cfg: ConfigParser) -> list[str]:
     return _diff(name, cfg, pairs) + _extra_bad(name, cfg, pairs)
 
 
+def _health_bad(name: str, cfg: ConfigParser) -> list[str]:
+    pairs = dict(HEALTH_PAIRS)
+    return (
+        _diff(name, cfg, pairs)
+        + _extra_bad(name, cfg, pairs)
+        + _order_bad(name, _deps(cfg))
+    )
+
+
 def _body_bad(name: str, cfg: ConfigParser) -> list[str]:
     if name in SERVICES:
         return _service_bad(name, cfg)
     if name in TARGETS:
         return _target_bad(name, cfg)
+    if name == HEALTH:
+        return _health_bad(name, cfg)
     return _incident_bad(name, cfg)
 
 
@@ -592,23 +624,27 @@ def _doc_bad(name: str, cfg: ConfigParser) -> list[str]:
     )
 
 
-def _file_bad(path: Path) -> list[str]:
-    raw = path.read_bytes()
+def _text_bad(name: str, raw: bytes) -> list[str]:
     errs: list[str] = []
-    if path.stat().st_mode & 0o777 != 0o644:
-        errs.append(f"{path.name}: mode must be 0644")
     if b"\r" in raw:
-        errs.append(f"{path.name}: CRLF line endings")
+        errs.append(f"{name}: CRLF line endings")
     if b"\t" in raw:
-        errs.append(f"{path.name}: tab characters")
+        errs.append(f"{name}: tab characters")
     if not raw.endswith(b"\n"):
-        errs.append(f"{path.name}: missing final newline")
+        errs.append(f"{name}: missing final newline")
     text = raw.decode("utf-8")
     errs.extend(
-        f"{path.name}:{line_no}: trailing whitespace"
+        f"{name}:{line_no}: trailing whitespace"
         for line_no, line in enumerate(text.splitlines(), 1)
         if line != line.rstrip()
     )
+    return errs
+
+
+def _file_bad(path: Path) -> list[str]:
+    errs = _text_bad(path.name, path.read_bytes())
+    if path.stat().st_mode & 0o777 != 0o644:
+        errs.append(f"{path.name}: mode must be 0644")
     return errs
 
 
@@ -637,6 +673,29 @@ def check_file(path: Path) -> list[str]:
     if cfg is None:
         return errs
     return errs + _doc_bad(path.name, cfg) + _body_bad(path.name, cfg)
+
+
+def check_script(path: Path = SCRIPT) -> list[str]:
+    """校验随单元交付的运行时脚本。
+
+    Args:
+        path: 脚本路径，缺省为健康自检脚本。
+
+    Returns:
+        违约描述列表，空列表表示通过。
+    """
+    if not path.is_file():
+        return [f"{path.name}: missing script"]
+    errs = _text_bad(path.name, path.read_bytes())
+    mode = path.stat().st_mode & 0o777
+    if mode != 0o755:
+        errs.append(f"{path.name}: mode must be 0755, got {mode:04o}")
+    lines = path.read_text(encoding="utf-8").splitlines()
+    if not lines or lines[0] != SHEBANG:
+        errs.append(f"{path.name}: shebang must be {SHEBANG!r}")
+    if "set -euo pipefail" not in lines:
+        errs.append(f"{path.name}: missing 'set -euo pipefail'")
+    return errs
 
 
 def check_dir(path: Path) -> list[str]:
@@ -669,6 +728,7 @@ def check_dir(path: Path) -> list[str]:
         if cfg is not None:
             errs.extend(_doc_bad(item.name, cfg))
             errs.extend(_body_bad(item.name, cfg))
+    errs.extend(check_script())
     return errs
 
 

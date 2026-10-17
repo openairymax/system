@@ -58,6 +58,9 @@ if(AIRY_INSTALL_SYSTEMD_UNITS)
 		PATTERN "*.service"
 		PATTERN "*.target"
 	)
+	install(PROGRAMS scripts/health_check.sh
+		DESTINATION lib/airymaxos/scripts
+	)
 endif()
 
 # ---------------------------------------------------------------------------
@@ -71,6 +74,16 @@ if(BUILD_TESTING AND Python3_Interpreter_FOUND)
 		COMMAND ${Python3_EXECUTABLE}
 			${CMAKE_CURRENT_SOURCE_DIR}/tools/units_lint.py
 			${CMAKE_CURRENT_SOURCE_DIR}/units
+	)
+	add_test(NAME units-tests
+		COMMAND ${Python3_EXECUTABLE} -m unittest discover
+			-s ${CMAKE_CURRENT_SOURCE_DIR}/tests/units
+			-p "test_*.py"
+	)
+	add_test(NAME health-script
+		COMMAND ${Python3_EXECUTABLE} -m unittest discover
+			-s ${CMAKE_CURRENT_SOURCE_DIR}/tests/scripts
+			-p "test_*.py"
 	)
 endif()
 

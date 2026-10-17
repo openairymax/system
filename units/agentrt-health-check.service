@@ -1,0 +1,14 @@
+[Unit]
+Description=AirymaxOS Boot Health Check
+Documentation=https://docs.agentrt.local/190-distribution/04-update-mechanism
+After=agentrt.target
+Wants=agentrt.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/airymaxos/scripts/health_check.sh
+RemainAfterExit=yes
+TimeoutStartSec=120
+
+[Install]
+WantedBy=multi-user.target
