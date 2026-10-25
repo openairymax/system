@@ -6,6 +6,10 @@ Requires=agentrt-gateway.service agentrt-firstboot.service
 Wants=agentrt-sched.service
 PartOf=agentrt.target
 OnFailure=airy-incident@%n.service
+# StartLimit* belongs to [Unit]; StartLimitIntervalSec in [Service] is
+# silently ignored and the window falls back to the 10s default.
+StartLimitBurst=3
+StartLimitIntervalSec=300
 
 [Service]
 Type=notify
@@ -14,8 +18,6 @@ ExecStart=/usr/sbin/mem_d --config=/etc/agentrt/daemons/mem_d.conf
 ExecReload=/bin/kill -HUP $MAINPID
 Restart=always
 RestartSec=2s
-StartLimitBurst=3
-StartLimitIntervalSec=300
 WatchdogSec=30s
 TimeoutStartSec=30
 TimeoutStopSec=15

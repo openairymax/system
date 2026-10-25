@@ -6,6 +6,10 @@ Requires=agentrt-firstboot.service
 Wants=agentrt-vfs.service
 PartOf=agentrt.target
 OnFailure=airy-incident@%n.service
+# StartLimit* belongs to [Unit]; StartLimitIntervalSec in [Service] is
+# silently ignored and the window falls back to the 10s default.
+StartLimitBurst=3
+StartLimitIntervalSec=300
 
 [Service]
 Type=oneshot
@@ -15,8 +19,6 @@ ExecReload=/usr/sbin/config_d --reload
 ExecStop=/bin/true
 Restart=on-failure
 RestartSec=5s
-StartLimitBurst=3
-StartLimitIntervalSec=300
 
 User=airy
 Group=airy

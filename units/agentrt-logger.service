@@ -5,6 +5,10 @@ After=agentrt-audit.service agentrt-firstboot.service
 Requires=agentrt-audit.service agentrt-firstboot.service
 PartOf=agentrt.target
 OnFailure=airy-incident@%n.service
+# StartLimit* belongs to [Unit]; StartLimitIntervalSec in [Service] is
+# silently ignored and the window falls back to the 10s default.
+StartLimitBurst=5
+StartLimitIntervalSec=300
 
 [Service]
 Type=notify
@@ -13,8 +17,6 @@ ExecStart=/usr/sbin/logger_d --config=/etc/agentrt/daemons/logger_d.conf
 ExecReload=/bin/kill -HUP $MAINPID
 Restart=always
 RestartSec=1s
-StartLimitBurst=5
-StartLimitIntervalSec=300
 WatchdogSec=30s
 TimeoutStartSec=20
 TimeoutStopSec=10
