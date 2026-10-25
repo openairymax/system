@@ -148,6 +148,20 @@ class ServiceCase(UnitsCase):
         )
         self.assert_bad("WantedBy")
 
+    def test_startlimit_section(self) -> None:
+        """限速键从 [Unit] 挪回 [Service] 必须被拒绝（B50 实测回退 10s）。"""
+        self.edit(
+            GATEWAY,
+            "StartLimitBurst=3\nStartLimitIntervalSec=300\n",
+            "",
+        )
+        self.edit(
+            GATEWAY,
+            "RestartSec=2s\n",
+            "RestartSec=2s\nStartLimitBurst=3\nStartLimitIntervalSec=300\n",
+        )
+        self.assert_bad("unexpected directive [Service] StartLimitBurst")
+
 
 class DepsCase(UnitsCase):
     """依赖矩阵与无环约束。"""

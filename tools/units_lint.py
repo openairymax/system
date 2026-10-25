@@ -449,8 +449,11 @@ def _pairs(spec: Service) -> dict[tuple[str, str], str | None]:
         ("Service", "ExecReload"): "/bin/kill -HUP $MAINPID",
         ("Service", "Restart"): spec.restart,
         ("Service", "RestartSec"): spec.restart_sec,
-        ("Service", "StartLimitBurst"): spec.burst,
-        ("Service", "StartLimitIntervalSec"): "300",
+        # StartLimit* belongs to [Unit] since systemd v229; declared in
+        # [Service] they are ignored (StartLimitIntervalSec) and the
+        # restart window silently falls back to the 10s default.
+        ("Unit", "StartLimitBurst"): spec.burst,
+        ("Unit", "StartLimitIntervalSec"): "300",
         ("Service", "WatchdogSec"): "30s",
         ("Service", "TimeoutStartSec"): "30",
         ("Service", "TimeoutStopSec"): "15",
