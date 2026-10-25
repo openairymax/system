@@ -6,9 +6,13 @@
 # 在 agentrt.target 就绪后校验内核、控制面与内存子系统的真实状态：
 #   1. 内核版本可获取；
 #   2. agentrt.target 处于 active；
-#   3. 12 个 agentrt daemon 全部处于 active；
+#   3. 已安装的 agentrt daemon 全部处于 active；
 #   4. 具备 PMEM 设备时 memoryrovol/pmem 已挂载，无设备时跳过；
 #   5. 内核暴露 lru_gen 时 MGLRU 已启用，未暴露时跳过。
+#
+# 第 3 项按「unit 的 ExecStart 载荷是否存在」分档：0.0.3 只交付 unit 接口面，
+# daemon 可执行体属于另一个子仓，尚未纳入本版镜像。载荷缺失记跳过（不适用），
+# 载荷在而进程不在记失败，否则「本版不交付」会被误报成「运行故障」。
 #
 # 失败数达到阈值且存在 /var/lib/agentrt/.pending-upgrade 时执行
 # 原子回滚；回滚工具缺失按 ENOTSUP 显式降级并保留标记，不伪造
@@ -80,18 +84,31 @@ check_target() {
     fi
 }
 
+daemon_binary() {
+    local spec
+    if ! spec=$(systemctl show --property=ExecStart --value "$1" 2>/dev/null); then
+        return 0
+    fi
+    sed -n 's/.*path=\([^ ;]*\).*/\1/p' <<<"$spec"
+}
+
 check_daemons() {
-    local down=0 name unit
+    local name unit bin down=0 absent=0
     for name in "${DAEMONS[@]}"; do
         unit="agentrt-${name}.service"
-        if ! systemctl is-active --quiet "$unit"; then
+        bin=$(daemon_binary "$unit")
+        if [[ -z $bin || $bin == '(null)' || ! -x $bin ]]; then
+            absent=$((absent + 1))
+        elif ! systemctl is-active --quiet "$unit"; then
             down=$((down + 1))
         fi
     done
-    if ((down == 0)); then
+    if ((down == 0 && absent == 0)); then
         mark_pass 3 "${#DAEMONS[@]} daemons"
+    elif ((down == 0)); then
+        mark_skip 3 daemons "${absent} without payload"
     else
-        mark_fail 3 daemons "${down} down"
+        mark_fail 3 daemons "${down} down, ${absent} without payload"
     fi
 }
 

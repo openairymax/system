@@ -25,13 +25,30 @@ SCRIPT = ROOT / "scripts" / "health_check.sh"
 
 SYSTEMCTL = """#!/usr/bin/env bash
 set -euo pipefail
-[[ ${1:-} == is-active && ${2:-} == --quiet ]] || exit 2
-unit=${3:-}
-case " ${FAKE_DOWN:-} " in
-    *" ${unit} "*) exit 3 ;;
+case "${1:-}" in
+    show)
+        unit=${!#}
+        name=${unit%.service}
+        name=${name#agentrt-}
+        printf '{ path=%s/%s_d ; argv[]=%s/%s_d ; ignore_errors=no ; }\\n' \\
+            "${FAKE_SBIN:?}" "$name" "${FAKE_SBIN:?}" "$name"
+        ;;
+    is-active)
+        [[ ${2:-} == --quiet ]] || exit 2
+        unit=${3:-}
+        case " ${FAKE_DOWN:-} " in
+            *" ${unit} "*) exit 3 ;;
+        esac
+        ;;
+    *) exit 2 ;;
 esac
 exit 0
 """
+
+DAEMONS = (
+    "gateway", "cogn", "dev", "sched", "macro-superv", "audit",
+    "net", "mem", "sec", "logger", "vfs", "config",
+)
 
 OSTREE = """#!/usr/bin/env bash
 set -euo pipefail
@@ -48,9 +65,15 @@ class HealthCase(unittest.TestCase):
         base = Path(self.tmp.name)
         self.root = base / "root"
         self.bin = base / "bin"
+        self.sbin = base / "sbin"
         self.state = self.root / "var" / "lib" / "agentrt"
         self.state.mkdir(parents=True)
         self.bin.mkdir()
+        self.sbin.mkdir()
+        for name in DAEMONS:
+            payload = self.sbin / f"{name}_d"
+            payload.write_text("#!/bin/sh\n", encoding="utf-8")
+            payload.chmod(0o755)
         self.log = base / "ostree.log"
         self.fake("systemctl", SYSTEMCTL)
         self.fake("rpm-ostree", OSTREE)
@@ -69,6 +92,7 @@ class HealthCase(unittest.TestCase):
             "AIRY_HEALTH_ROOT": str(self.root),
             "AIRY_HEALTH_OSTREE": "rpm-ostree",
             "FAKE_LOG": str(self.log),
+            "FAKE_SBIN": str(self.sbin),
         }
         extra.update(env)
         return subprocess.run(
@@ -186,6 +210,17 @@ class CheckCase(HealthCase):
     def test_no_pmem(self) -> None:
         res = self.run_check()
         self.assertIn("no PMEM device", res.stdout)
+
+    def test_no_payload(self) -> None:
+        res = self.run_check(FAKE_SBIN=str(self.root / "no-such-sbin"))
+        self.assertEqual(res.returncode, 0, res.stderr)
+        self.assertIn("12 without payload", res.stdout)
+
+    def test_payload_and_down(self) -> None:
+        (self.sbin / "mem_d").unlink()
+        res = self.run_check(FAKE_DOWN="agentrt-sched.service")
+        self.assertEqual(res.returncode, 1, res.stderr)
+        self.assertIn("1 down, 1 without payload", res.stderr)
 
     def test_mglru_on(self) -> None:
         self.mglru("0x0007")
