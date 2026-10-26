@@ -1,7 +1,7 @@
 # `.github/` — system Leaf Repository Automation
 
 > GitHub automation directory for the **system** leaf repository of
-> [agentrt-linux (AirymaxOS)](https://atomgit.com/openairymax/agentrt-linux).
+> [agent-linux (AirymaxOS)](https://atomgit.com/openairymax/agent-linux).
 
 Copyright (c) 2025-2026 SPHARX Ltd. All Rights Reserved.
 
@@ -26,10 +26,10 @@ system/.github/
 
 | Workflow | Jobs | Relevance to system |
 |----------|------|----------------------|
-| `mgmt-orchestrator.yml` | `file-integrity` + `orchestrate-leaf-ci` | Verifies the `system/` submodule dir exists; aggregates this repo's CI status |
+| `mgmt-verify.yml` | `file-integrity` + `orchestrate-leaf-ci` | Verifies the `system/` submodule dir exists; aggregates this repo's CI status |
 | `release.yml` | `build-and-sign` + `publish-release` | `make binrpm-pkg` builds the kernel RPM; `syft system/` SBOM; GPG-signed artifacts; dnf repo published via `createrepo` + rsync |
 | `nightly.yml` | `nightly-test-suite` + `nightly-revert-or-budget` | Soak and chaos validate boot/config stability |
-| `ssot-validate.yml` | `ssot-syntax-and-rules` + `ssot-cross-ref` | Validates rule IDs referenced in system/packaging documentation |
+| `ssot-verify.yml` | `ssot-syntax-and-rules` + `doc-links` | Validates rule IDs referenced in system/packaging documentation |
 
 ## Development Guide
 
