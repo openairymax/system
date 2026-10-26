@@ -59,10 +59,10 @@ System changes are governed by management-repository workflows (each ≤ 2 jobs)
 
 | Workflow | Jobs | Applies to system via |
 |----------|------|------------------------|
-| `mgmt-orchestrator.yml` | `file-integrity` + `orchestrate-leaf-ci` | Verifies the `system/` submodule dir; aggregates this repo's CI status |
+| `mgmt-verify.yml` | `file-integrity` + `orchestrate-leaf-ci` | Verifies the `system/` submodule dir; aggregates this repo's CI status |
 | `release.yml` | `build-and-sign` (kernel RPM via `make binrpm-pkg`; SBOM scan of `system/`; GPG signing) + `publish-release` (publish dnf repo via `createrepo` + rsync) | Release tag |
 | `nightly.yml` | `nightly-test-suite` + `nightly-revert-or-budget` | Nightly cron |
-| `ssot-validate.yml` | `ssot-syntax-and-rules` + `ssot-cross-ref` | When docs reference system/packaging rules |
+| `ssot-verify.yml` | `ssot-syntax-and-rules` + `doc-links` | When docs reference system/packaging rules |
 
 Language-level CI (RPM spec lint, shell, config validation) is delegated to this
 leaf repository's own `.github/workflows/`.
