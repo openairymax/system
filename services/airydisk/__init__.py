@@ -3,9 +3,9 @@
 # AirymaxOS 磁盘管理服务包
 #
 # 设备模型（model）、探测层（probe）与操作层（ops）的命名空间入口。
-# 对外只导出数据契约，探测与操作由各自的实现段补入后再导出。
+# 对外只导出数据契约与护栏判定，外部命令的执行不在此包初始化即生效。
 
-"""AirymaxOS disk management service package (M-30).
+"""AirymaxOS disk management service package (M-30, M-31).
 
 设计依据：docs-linux/190-distribution/03-installer-design.md §3。
 """
@@ -24,16 +24,22 @@ from .model import (
     TopoKind,
     Topology,
 )
+from .ops import Action, Plan, Refusal, Step, refuse
 
 __all__ = [
     "SCHEMA_VERSION",
     "SYSTEM_MOUNTS",
+    "Action",
     "Bus",
     "Disk",
     "FsKind",
     "Partition",
+    "Plan",
+    "Refusal",
     "Role",
+    "Step",
     "TableKind",
     "TopoKind",
     "Topology",
+    "refuse",
 ]
