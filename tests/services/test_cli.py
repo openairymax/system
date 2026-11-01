@@ -186,6 +186,67 @@ class LayoutTest(Case):
         self.assertEqual(json.loads(out)["verdict"], "no-data")
 
 
+class FstabTest(Case):
+    """--fstab：布局成立还要看重启后挂得上，二者任一不成立即拒绝。"""
+
+    def write(self, text: str) -> str:
+        handle = tempfile.NamedTemporaryFile("w", suffix=".fstab",
+                                             delete=False, encoding="utf-8")
+        with handle:
+            handle.write(text)
+        self.addCleanup(Path(handle.name).unlink)
+        return handle.name
+
+    def test_ok(self) -> None:
+        path = self.write("UUID=a / ext4 defaults 0 1\n"
+                          "UUID=b /data xfs defaults 0 2\n")
+        code, out, _ = self.call("--json", "layout", "--fstab", path)
+        self.assertEqual(code, 0)
+        self.assertEqual(json.loads(out)["persist"], "ok")
+
+    def test_no_data(self) -> None:
+        path = self.write("UUID=a / ext4 defaults 0 1\n")
+        code, out, _ = self.call("--json", "layout", "--fstab", path)
+        self.assertEqual(code, cli.EXIT_REFUSED)
+        self.assertEqual(json.loads(out)["persist"], "no-data")
+
+    def test_unstable(self) -> None:
+        path = self.write("/dev/sda2 / ext4 defaults 0 1\n"
+                          "UUID=b /data xfs defaults 0 2\n")
+        code, out, _ = self.call("--json", "layout", "--fstab", path)
+        self.assertEqual(code, cli.EXIT_REFUSED)
+        self.assertEqual(json.loads(out)["persist"], "unstable")
+
+    def test_human(self) -> None:
+        path = self.write("UUID=a / ext4 defaults 0 1\n"
+                          "UUID=b /data xfs defaults 0 2\n")
+        code, out, _ = self.call("layout", "--fstab", path)
+        self.assertEqual(code, 0)
+        self.assertIn("persist=ok", out)
+
+    def test_missing(self) -> None:
+        path = str(Path(tempfile.mkdtemp()) / "absent.fstab")
+        code, _, err = self.call("layout", "--fstab", path)
+        self.assertEqual(code, cli.EXIT_USAGE)
+        self.assertIn("fstab 不可用", err)
+
+    def test_layout_refused(self) -> None:
+        """fstab 合规但拓扑缺 /data 时仍拒绝，二者都要成立。"""
+        bare = model.Topology(
+            kind=model.TopoKind.SINGLE,
+            disks=(model.Disk(name="nvme0n1", size=1024**3,
+                              bus=model.Bus.NVME,
+                              table=model.TableKind.GPT,
+                              parts=(part("nvme0n1p1", "/"),)),),
+        )
+        path = self.write("UUID=a / ext4 defaults 0 1\n"
+                          "UUID=b /data xfs defaults 0 2\n")
+        code, out, _ = self.call("--json", "layout", "--fstab", path,
+                                 topo=bare)
+        self.assertEqual(code, cli.EXIT_REFUSED)
+        self.assertEqual(json.loads(out)["verdict"], "no-data")
+
+
 class SnapshotTest(Case):
     """--snapshot：重放已存证据；结果只取决于快照，不取决于本机。"""
 
