@@ -2,10 +2,11 @@
 #
 # AirymaxOS 磁盘命令行入口
 #
-# 三个子命令对应契约里的一张表：status 出拓扑、check 出护栏判定、
-# apply 执行计划并要求 --confirm 与计划盘名逐字一致。JSON 输出与人类
-# 输出共用同一份数据，判定 token 不翻译成自由文本后再被解析；退出码
-# 0 成功、1 执行失败、2 用法错误、3 拒绝执行，供门禁直接判读。
+# 四个子命令对应契约里的一张表：status 出拓扑、layout 出系统与数据分区
+# 的布局判定、check 出护栏判定、apply 执行计划并要求 --confirm 与计划盘
+# 名逐字一致。JSON 输出与人类输出共用同一份数据，判定 token 不翻译成
+# 自由文本后再被解析；退出码 0 成功、1 执行失败、2 用法错误、3 拒绝执行
+# 或判定未通过，供门禁直接判读。
 #
 # status 同时把现场拓扑与安装期选盘记录比对（判据③）：记录里是哪块盘、
 # 多大、什么总线，与此刻探测到的同一块盘逐字段核对，结论以 match /
@@ -28,7 +29,7 @@ import os
 import sys
 from collections.abc import Sequence
 
-from . import model, ops, probe, record, runner
+from . import layout, model, ops, probe, record, runner
 
 __all__ = ["EXIT_FAIL", "EXIT_REFUSED", "EXIT_USAGE", "main"]
 
@@ -75,6 +76,8 @@ def _args(argv: Sequence[str] | None) -> argparse.Namespace:
     parser.set_defaults(json=False)
     sub = parser.add_subparsers(dest="cmd", required=True)
     sub.add_parser("status", parents=[_json_opt()], help="列出磁盘拓扑")
+    sub.add_parser("layout", parents=[_json_opt()],
+                   help="判定系统与数据分区布局")
     check = sub.add_parser("check", parents=[_json_opt()], help="判定能否改写")
     check.add_argument("--disk", required=True, metavar="NAME")
     act = sub.add_parser("apply", parents=[_json_opt()], help="执行磁盘计划")
@@ -105,6 +108,16 @@ def _status(args: argparse.Namespace) -> int:
     _show(topo)
     _install(install, agree)
     return 0
+
+
+def _layout(args: argparse.Namespace) -> int:
+    found = layout.inspect(probe.probe())
+    if args.json:
+        print(json.dumps(layout.dump(found), ensure_ascii=False))
+    else:
+        print(f"layout  {found.kind}  {found.state.value}  "
+              f"root={found.root or '-'} data={found.data or '-'}")
+    return 0 if found.ok else EXIT_REFUSED
 
 
 def _check(args: argparse.Namespace) -> int:
@@ -260,6 +273,7 @@ def _obj(outcome: runner.Outcome) -> dict[str, object]:
 
 _HANDLERS = {
     "status": _status,
+    "layout": _layout,
     "check": _check,
     "apply": _apply,
 }
