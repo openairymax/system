@@ -10,7 +10,9 @@
 #
 # status 同时把现场拓扑与安装期选盘记录比对（判据③）：记录里是哪块盘、
 # 多大、什么总线，与此刻探测到的同一块盘逐字段核对，结论以 match /
-# mismatch / absent / invalid 四个 token 之一出现在 install 段。
+# mismatch / absent / invalid 四个 token 之一出现在 install 段。status 与
+# layout 另接受 --snapshot：重放一份已保存的 status 输出，让 CI 在没有受
+# 测机器可用时也能复算同一份证据。
 
 """AirymaxOS disk command line (M-31).
 
@@ -67,16 +69,28 @@ def _json_opt() -> argparse.ArgumentParser:
     return opt
 
 
+def _snap_opt() -> argparse.ArgumentParser:
+    """只读子命令的 --snapshot：复算一份已保存的 status 输出。"""
+    opt = argparse.ArgumentParser(add_help=False)
+    opt.add_argument(
+        "--snapshot",
+        metavar="FILE",
+        help="复算一份 status 快照，- 为标准输入；缺省探测本机",
+    )
+    return opt
+
+
 def _args(argv: Sequence[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="airy-disk",
         parents=[_json_opt()],
         description="AirymaxOS 磁盘管理",
     )
-    parser.set_defaults(json=False)
+    parser.set_defaults(json=False, snapshot=None)
     sub = parser.add_subparsers(dest="cmd", required=True)
-    sub.add_parser("status", parents=[_json_opt()], help="列出磁盘拓扑")
-    sub.add_parser("layout", parents=[_json_opt()],
+    sub.add_parser("status", parents=[_json_opt(), _snap_opt()],
+                   help="列出磁盘拓扑")
+    sub.add_parser("layout", parents=[_json_opt(), _snap_opt()],
                    help="判定系统与数据分区布局")
     check = sub.add_parser("check", parents=[_json_opt()], help="判定能否改写")
     check.add_argument("--disk", required=True, metavar="NAME")
@@ -97,7 +111,9 @@ def _args(argv: Sequence[str] | None) -> argparse.Namespace:
 
 
 def _status(args: argparse.Namespace) -> int:
-    topo = probe.probe()
+    topo = _snap(args)
+    if topo is None:
+        return EXIT_USAGE
     install = record.load()
     agree = record.compare(install, topo)
     if args.json:
@@ -111,13 +127,34 @@ def _status(args: argparse.Namespace) -> int:
 
 
 def _layout(args: argparse.Namespace) -> int:
-    found = layout.inspect(probe.probe())
+    topo = _snap(args)
+    if topo is None:
+        return EXIT_USAGE
+    found = layout.inspect(topo)
     if args.json:
         print(json.dumps(layout.dump(found), ensure_ascii=False))
     else:
         print(f"layout  {found.kind}  {found.state.value}  "
               f"root={found.root or '-'} data={found.data or '-'}")
     return 0 if found.ok else EXIT_REFUSED
+
+
+def _snap(args: argparse.Namespace) -> model.Topology | None:
+    """取现场拓扑；给了 --snapshot 就复算快照，不探测本机。
+
+    受测机器不在 runner 上，CI 只能重放 285H 实机取证的 status 输出。
+    """
+    if not args.snapshot:
+        return probe.probe()
+    try:
+        if args.snapshot == "-":
+            text = sys.stdin.read()
+        else:
+            text = _read(args.snapshot)
+        return model.load(json.loads(text))
+    except (OSError, ValueError) as exc:
+        _err(f"快照不可用：{exc}", EXIT_USAGE)
+        return None
 
 
 def _check(args: argparse.Namespace) -> int:
