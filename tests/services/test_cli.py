@@ -179,6 +179,34 @@ class ApplyTest(Case):
         self.assertFalse(obj["unclean"])
         self.assertEqual(len(obj["undone"]), 1)
 
+    def test_dry_run_skips_exec(self) -> None:
+        mark = Path(tempfile.mkdtemp()) / "touched"
+        step = ops.Step(action=ops.Action.WIPE, target="/dev/sdb",
+                        argv=("/usr/bin/touch", str(mark)))
+        path = self.write(ops.Plan(disk="sdb", steps=(step,)))
+        code, out, _ = self.call("apply", "--plan", path,
+                                 "--confirm", "sdb", "--dry-run")
+        self.assertEqual(code, 0)
+        self.assertIn("dry-run", out)
+        self.assertFalse(mark.exists())
+
+    def test_dry_run_json(self) -> None:
+        path = self.write(plan())
+        code, out, _ = self.call("--json", "apply", "--plan", path,
+                                 "--confirm", "sdb", "--dry-run")
+        self.assertEqual(code, 0)
+        obj = json.loads(out)
+        self.assertTrue(obj["dry_run"])
+        self.assertEqual(obj["plan"]["disk"], "sdb")
+        self.assertEqual(len(obj["plan"]["steps"]), 1)
+
+    def test_dry_run_refused(self) -> None:
+        path = self.write(plan("nvme0n1"))
+        code, _, err = self.call("apply", "--plan", path,
+                                 "--confirm", "nvme0n1", "--dry-run")
+        self.assertEqual(code, cli.EXIT_REFUSED)
+        self.assertIn("承载正在运行的系统", err)
+
     def test_bad_plan(self) -> None:
         handle = tempfile.NamedTemporaryFile(
             "w", suffix=".json", delete=False, encoding="utf-8")
