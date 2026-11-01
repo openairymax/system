@@ -41,10 +41,15 @@ def sample() -> model.Topology:
     spare = model.Disk(
         name="sdb", size=2 * 1024**3, bus=model.Bus.SATA,
         table=model.TableKind.GPT,
-        parts=(part("sdb1", model.DATA_MOUNT, model.FsKind.XFS,
+    )
+    data = model.Disk(
+        name="sdc", size=2 * 1024**3, bus=model.Bus.SATA,
+        table=model.TableKind.GPT,
+        parts=(part("sdc1", model.DATA_MOUNT, model.FsKind.XFS,
                     model.Role.DATA),),
     )
-    return model.Topology(kind=model.TopoKind.MULTI, disks=(host, spare))
+    return model.Topology(kind=model.TopoKind.MULTI,
+                          disks=(host, spare, data))
 
 
 def plan(disk: str = "sdb") -> ops.Plan:
@@ -84,7 +89,7 @@ class StatusTest(Case):
         self.assertEqual(code, 0)
         obj = json.loads(out)
         self.assertEqual(obj["kind"], "multi")
-        self.assertEqual(len(obj["disks"]), 2)
+        self.assertEqual(len(obj["disks"]), 3)
 
 
 class CheckTest(Case):
@@ -105,6 +110,11 @@ class CheckTest(Case):
         code, out, _ = self.call("--json", "check", "--disk", "nvme0n1")
         self.assertEqual(code, cli.EXIT_REFUSED)
         self.assertEqual(json.loads(out)["refusal"], "hosts-system")
+
+    def test_busy(self) -> None:
+        code, out, _ = self.call("--json", "check", "--disk", "sdc")
+        self.assertEqual(code, cli.EXIT_REFUSED)
+        self.assertEqual(json.loads(out)["refusal"], "busy")
 
     def test_missing(self) -> None:
         code, _, err = self.call("check", "--disk", "sdz")

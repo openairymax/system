@@ -7,12 +7,12 @@
 # 交给用户二次确认；护栏把不可改写的盘挡在计划生成之前，拒绝理由以
 # 稳定 token 输出，避免上层用自由文本判断（M-31、M4-4）。
 
-"""AirymaxOS disk operation contract (M-31-01).
+"""AirymaxOS disk operation contract (M-31).
 
 设计依据：docs-linux/190-distribution/03-installer-design.md §3 与
 0.0.4 方案 §6.3 M-31，达成判据见同文档 M4-4「破坏性操作需二次确认」。
-本切片只定义计划类型与护栏判定，不执行任何外部命令：执行与回滚在
-后续切片补入，判定保持纯函数以便离线复算。
+本模块只定义计划类型、序列化与护栏判定，执行与回滚在 ``runner``，
+判定保持纯函数以便离线复算。
 
 """
 
@@ -56,12 +56,14 @@ class Refusal(Enum):
     READ_ONLY = "read-only"
     REMOVABLE = "removable"
     HOSTS_SYSTEM = "hosts-system"
+    BUSY = "busy"
 
 
 REFUSAL_TEXT = {
     Refusal.READ_ONLY: "磁盘为只读，无法写入分区表",
     Refusal.REMOVABLE: "磁盘为可移动介质，不作为改写目标",
     Refusal.HOSTS_SYSTEM: "磁盘承载正在运行的系统，拒绝改写",
+    Refusal.BUSY: "磁盘上有已挂载的分区，先 umount 再重试",
 }
 
 
@@ -164,4 +166,6 @@ def refuse(disk: Disk, host: str | None) -> Refusal | None:
         return Refusal.REMOVABLE
     if disk.name == host:
         return Refusal.HOSTS_SYSTEM
+    if any(part.mount for part in disk.parts):
+        return Refusal.BUSY
     return None

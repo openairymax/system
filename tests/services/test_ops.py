@@ -48,7 +48,7 @@ class TokenTest(unittest.TestCase):
     def test_refusal_tokens(self) -> None:
         self.assertEqual(
             [item.value for item in ops.Refusal],
-            ["read-only", "removable", "hosts-system"],
+            ["read-only", "removable", "hosts-system", "busy"],
         )
 
     def test_no_alias(self) -> None:
@@ -158,7 +158,7 @@ class SerializeTest(unittest.TestCase):
 
 
 class RefuseTest(unittest.TestCase):
-    """护栏判定：只读、可移动与承载系统三种盘无条件拒绝。"""
+    """护栏判定：只读、可移动、承载系统与已挂载四种盘无条件拒绝。"""
 
     def test_pass(self) -> None:
         self.assertIsNone(ops.refuse(disk(), "nvme0n1"))
@@ -180,12 +180,26 @@ class RefuseTest(unittest.TestCase):
         self.assertIs(ops.refuse(disk(ro=True, removable=True), "sdb"),
                       ops.Refusal.READ_ONLY)
 
-    def test_foreign_allowed(self) -> None:
+    def test_busy(self) -> None:
         part = model.Partition(name="sdb1", size=100,
                                fs=model.FsKind.NTFS, mount="/mnt/win")
         item = model.Disk(name="sdb", size=1000, bus=model.Bus.SATA,
                           table=model.TableKind.GPT, parts=(part,))
+        self.assertIs(ops.refuse(item, "nvme0n1"), ops.Refusal.BUSY)
+
+    def test_unmounted_allowed(self) -> None:
+        part = model.Partition(name="sdb1", size=100,
+                               fs=model.FsKind.NTFS)
+        item = model.Disk(name="sdb", size=1000, bus=model.Bus.SATA,
+                          table=model.TableKind.GPT, parts=(part,))
         self.assertIsNone(ops.refuse(item, "nvme0n1"))
+
+    def test_hosts_system_before_busy(self) -> None:
+        part = model.Partition(name="sdb1", size=100,
+                               fs=model.FsKind.EXT4, mount="/")
+        item = model.Disk(name="sdb", size=1000, bus=model.Bus.SATA,
+                          table=model.TableKind.GPT, parts=(part,))
+        self.assertIs(ops.refuse(item, "sdb"), ops.Refusal.HOSTS_SYSTEM)
 
 
 if __name__ == "__main__":
