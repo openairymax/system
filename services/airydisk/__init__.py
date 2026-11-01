@@ -25,6 +25,7 @@ from .model import (
     Topology,
 )
 from .ops import Action, Plan, Refusal, Step, refuse
+from .runner import Outcome, Result, apply, run
 
 __all__ = [
     "SCHEMA_VERSION",
@@ -33,13 +34,17 @@ __all__ = [
     "Bus",
     "Disk",
     "FsKind",
+    "Outcome",
     "Partition",
     "Plan",
     "Refusal",
+    "Result",
     "Role",
     "Step",
     "TableKind",
     "TopoKind",
     "Topology",
+    "apply",
     "refuse",
+    "run",
 ]
