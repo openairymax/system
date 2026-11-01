@@ -221,6 +221,41 @@ class TopoTest(unittest.TestCase):
         self.assertIs(topo(node).kind, model.TopoKind.SINGLE)
 
 
+class HostTest(unittest.TestCase):
+    """挂载点反查承载磁盘：系统盘识别与安全护栏的共同前置。"""
+
+    def layout(self) -> dict:
+        node = disk("nvme0n1")
+        node["children"] = [
+            part("nvme0n1p1", fstype="vfat",
+                 mountpoint=model.ESP_MOUNT),
+            part("nvme0n1p2", fstype="btrfs", mountpoint="/"),
+            part("nvme0n1p3", fstype="xfs", mountpoint=model.DATA_MOUNT),
+        ]
+        return node
+
+    def test_root(self) -> None:
+        topo_ = topo(self.layout())
+        self.assertEqual(probe.host(topo_, "/").name, "nvme0n1")
+
+    def test_esp_on_second(self) -> None:
+        node = disk("sda")
+        node["children"] = [part("sda1", fstype="btrfs", mountpoint="/")]
+        esp = disk("sdb")
+        esp["children"] = [part("sdb1", fstype="vfat",
+                                mountpoint=model.ESP_MOUNT)]
+        topo_ = topo(node, esp)
+        self.assertEqual(probe.host(topo_, model.ESP_MOUNT).name, "sdb")
+        self.assertEqual(probe.host(topo_, "/").name, "sda")
+
+    def test_absent(self) -> None:
+        topo_ = topo(self.layout())
+        self.assertIsNone(probe.host(topo_, "/home"))
+
+    def test_blank(self) -> None:
+        self.assertIsNone(probe.host(topo(), "/"))
+
+
 class ProbeTest(unittest.TestCase):
     """真实执行路径：宿主无 lsblk 时跳过，有则只要求形态合法。"""
 
