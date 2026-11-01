@@ -109,3 +109,6 @@ install(DIRECTORY services/airydisk
 	DESTINATION ${Python3_SITELIB}
 	PATTERN "__pycache__" EXCLUDE
 )
+install(PROGRAMS bin/airy-disk
+	DESTINATION bin
+)
