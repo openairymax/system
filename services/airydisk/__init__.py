@@ -25,15 +25,18 @@ from .model import (
     Topology,
 )
 from .ops import Action, Plan, Refusal, Step, refuse
+from .record import Agree, Install, Verdict
 from .runner import Outcome, Result, apply, run
 
 __all__ = [
     "SCHEMA_VERSION",
     "SYSTEM_MOUNTS",
     "Action",
+    "Agree",
     "Bus",
     "Disk",
     "FsKind",
+    "Install",
     "Outcome",
     "Partition",
     "Plan",
@@ -44,6 +47,7 @@ __all__ = [
     "TableKind",
     "TopoKind",
     "Topology",
+    "Verdict",
     "apply",
     "refuse",
     "run",

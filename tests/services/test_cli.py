@@ -62,13 +62,18 @@ class Case(unittest.TestCase):
     """统一注入拓扑、捕获输出，并让 root 判定可控。"""
 
     def call(self, *argv: str, topo: model.Topology | None = None,
-             root: bool = True) -> tuple[int, str, str]:
+             root: bool = True,
+             record: Path | None = None) -> tuple[int, str, str]:
         out, err = io.StringIO(), io.StringIO()
         with contextlib.ExitStack() as stack:
             stack.enter_context(mock.patch("airydisk.probe.probe",
                                            return_value=topo or sample()))
             stack.enter_context(mock.patch("airydisk.cli.os.geteuid",
                                            return_value=0 if root else 1000))
+            path = record or (Path(stack.enter_context(
+                tempfile.TemporaryDirectory())) / "install-disk.json")
+            stack.enter_context(mock.patch("airydisk.record.PATH",
+                                           str(path)))
             stack.enter_context(contextlib.redirect_stdout(out))
             stack.enter_context(contextlib.redirect_stderr(err))
             code = cli.main(list(argv))
@@ -90,6 +95,41 @@ class StatusTest(Case):
         obj = json.loads(out)
         self.assertEqual(obj["kind"], "multi")
         self.assertEqual(len(obj["disks"]), 3)
+
+    def test_install_absent(self) -> None:
+        """没有选盘记录时说 absent，不把缺失当成不一致。"""
+        code, out, _ = self.call("--json", "status")
+        self.assertEqual(code, 0)
+        self.assertEqual(json.loads(out)["install"]["verdict"], "absent")
+
+    def test_install_match(self) -> None:
+        """记录与现场一致时 verdict 为 match，且不列 diff。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            rec = Path(tmp) / "install-disk.json"
+            rec.write_text(json.dumps({
+                "schema": 1, "disk": "nvme0n1", "bytes": 1024**3,
+                "bus": "nvme", "firmware": "uefi", "layout": "single",
+                "medium": "sda",
+            }), encoding="utf-8")
+            code, out, _ = self.call("--json", "status", record=rec)
+        self.assertEqual(code, 0)
+        install = json.loads(out)["install"]
+        self.assertEqual(install["verdict"], "match")
+        self.assertEqual(install["diff"], [])
+        self.assertEqual(install["layout"], "single")
+
+    def test_install_mismatch(self) -> None:
+        """容量与记录不符时列出差异字段。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            rec = Path(tmp) / "install-disk.json"
+            rec.write_text(json.dumps({
+                "schema": 1, "disk": "nvme0n1", "bytes": 2 * 1024**3,
+                "bus": "nvme",
+            }), encoding="utf-8")
+            code, out, _ = self.call("status", record=rec)
+        self.assertEqual(code, 0)
+        self.assertIn("mismatch", out)
+        self.assertIn("diff=size", out)
 
 
 class CheckTest(Case):

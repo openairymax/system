@@ -6,12 +6,17 @@
 # apply 执行计划并要求 --confirm 与计划盘名逐字一致。JSON 输出与人类
 # 输出共用同一份数据，判定 token 不翻译成自由文本后再被解析；退出码
 # 0 成功、1 执行失败、2 用法错误、3 拒绝执行，供门禁直接判读。
+#
+# status 同时把现场拓扑与安装期选盘记录比对（判据③）：记录里是哪块盘、
+# 多大、什么总线，与此刻探测到的同一块盘逐字段核对，结论以 match /
+# mismatch / absent / invalid 四个 token 之一出现在 install 段。
 
 """AirymaxOS disk command line (M-31).
 
 设计依据：docs-linux/190-distribution/03-installer-design.md §3 与
-0.0.4 方案 §6.3 M-31。``airy-disk --json status`` 输出拓扑快照，
-``--json check`` 输出拒绝 token，``--json apply`` 输出逐步结果。
+0.0.4 方案 §6.3 M-31。``airy-disk --json status`` 输出拓扑快照与安装期
+选盘记录的比对，``--json check`` 输出拒绝 token，``--json apply`` 输出
+逐步结果。
 
 """
 
@@ -23,7 +28,7 @@ import os
 import sys
 from collections.abc import Sequence
 
-from . import model, ops, probe, runner
+from . import model, ops, probe, record, runner
 
 __all__ = ["EXIT_FAIL", "EXIT_REFUSED", "EXIT_USAGE", "main"]
 
@@ -90,10 +95,15 @@ def _args(argv: Sequence[str] | None) -> argparse.Namespace:
 
 def _status(args: argparse.Namespace) -> int:
     topo = probe.probe()
+    install = record.load()
+    agree = record.compare(install, topo)
     if args.json:
-        print(json.dumps(model.dump(topo), ensure_ascii=False))
+        payload = model.dump(topo)
+        payload["install"] = record.dump(install, agree)
+        print(json.dumps(payload, ensure_ascii=False))
         return 0
     _show(topo)
+    _install(install, agree)
     return 0
 
 
@@ -177,6 +187,15 @@ def _show(topo: model.Topology) -> None:
             print(f"  {part.name}  {_size(part.size)}  "
                   f"{part.fs.value or '-'}  {part.role.value}  "
                   f"{part.mount or '-'}")
+
+
+def _install(install: record.Install, agree: record.Agree) -> None:
+    """打印安装期记录比对；不一致时把差异字段一并列出。"""
+    line = (f"install  {install.disk or '-'}  {install.layout or '-'}  "
+            f"{agree.verdict.value}")
+    if agree.diff:
+        line = f"{line}  diff={','.join(agree.diff)}"
+    print(line)
 
 
 def _flags(disk: model.Disk) -> str:
