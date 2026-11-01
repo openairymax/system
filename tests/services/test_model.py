@@ -25,7 +25,7 @@ class TokenTest(unittest.TestCase):
     def test_bus_tokens(self) -> None:
         self.assertEqual(
             [bus.value for bus in model.Bus],
-            ["nvme", "ata", "scsi", "usb", "mmc", "virtio", "other"],
+            ["nvme", "sata", "scsi", "usb", "mmc", "virtio", "other"],
         )
 
     def test_table_tokens(self) -> None:
@@ -128,7 +128,8 @@ class ComposeTest(unittest.TestCase):
     def test_system_mounts(self) -> None:
         self.assertIsInstance(model.SYSTEM_MOUNTS, tuple)
         self.assertIn("/", model.SYSTEM_MOUNTS)
-        self.assertIn("/boot/efi", model.SYSTEM_MOUNTS)
+        self.assertIn(model.ESP_MOUNT, model.SYSTEM_MOUNTS)
+        self.assertNotIn(model.DATA_MOUNT, model.SYSTEM_MOUNTS)
         for mount in model.SYSTEM_MOUNTS:
             self.assertTrue(mount.startswith("/"))
 
