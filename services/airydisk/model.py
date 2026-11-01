@@ -11,19 +11,26 @@
 
 设计依据：docs-linux/190-distribution/03-installer-design.md §3
 （分区方案）与 0.0.4 方案 §6.3 M-30。序列化形态由 ``SCHEMA_VERSION``
-钉住，供 ``airy-disk status --json`` 与安装器 ``%pre`` 共用。
+钉住，供 ``airy-disk status --json`` 与安装器 ``%pre`` 共用：
+:func:`dump` 与 :func:`load` 互为逆运算，token 映射表由本模块持有，
+探测层只做字段读取。
+
 """
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import Enum, unique
 
 __all__ = [
+    "BUS_TOKENS",
     "DATA_MOUNT",
     "ESP_MOUNT",
+    "FS_TOKENS",
     "SCHEMA_VERSION",
     "SYSTEM_MOUNTS",
+    "TABLE_TOKENS",
     "Bus",
     "Disk",
     "FsKind",
@@ -32,6 +39,8 @@ __all__ = [
     "TableKind",
     "TopoKind",
     "Topology",
+    "dump",
+    "load",
 ]
 
 SCHEMA_VERSION = 1
@@ -101,6 +110,13 @@ class TopoKind(Enum):
     DUAL_BOOT = "dual-boot"
 
 
+BUS_TOKENS = {bus.value: bus for bus in Bus}
+
+FS_TOKENS = {fs.value: fs for fs in FsKind}
+
+TABLE_TOKENS = {table.value: table for table in TableKind}
+
+
 @dataclass(frozen=True, slots=True)
 class Partition:
     """单个分区的观测结果；``size`` 单位为字节。"""
@@ -136,3 +152,85 @@ class Topology:
     kind: TopoKind
     disks: tuple[Disk, ...] = ()
     schema: int = SCHEMA_VERSION
+
+
+def dump(topo: Topology) -> dict[str, object]:
+    """把拓扑序列化为 JSON 可编码的字典。"""
+    return {
+        "schema": topo.schema,
+        "kind": topo.kind.value,
+        "disks": [_disk_obj(disk) for disk in topo.disks],
+    }
+
+
+def load(obj: Mapping[str, object]) -> Topology:
+    """从 :func:`dump` 的产物重建拓扑；schema 不符即拒绝。"""
+    schema = obj.get("schema")
+    if schema != SCHEMA_VERSION:
+        raise ValueError(f"schema {schema!r} != {SCHEMA_VERSION}")
+    return Topology(
+        kind=TopoKind(str(obj.get("kind"))),
+        disks=tuple(_disk_from(item) for item in _items(obj.get("disks"))),
+    )
+
+
+def _items(value: object) -> tuple[Mapping[str, object], ...]:
+    """取出子对象序列；缺失或非序列都当空，避免调用方逐个判空。"""
+    return tuple(value) if isinstance(value, list) else ()
+
+
+def _disk_obj(disk: Disk) -> dict[str, object]:
+    return {
+        "name": disk.name,
+        "size": disk.size,
+        "bus": disk.bus.value,
+        "table": disk.table.value,
+        "ro": disk.ro,
+        "removable": disk.removable,
+        "model": disk.model,
+        "serial": disk.serial,
+        "parts": [_part_obj(part) for part in disk.parts],
+    }
+
+
+def _part_obj(part: Partition) -> dict[str, object]:
+    return {
+        "name": part.name,
+        "size": part.size,
+        "fs": part.fs.value,
+        "mount": part.mount,
+        "label": part.label,
+        "partuuid": part.partuuid,
+        "role": part.role.value,
+    }
+
+
+def _disk_from(obj: Mapping[str, object]) -> Disk:
+    return Disk(
+        name=str(obj.get("name", "")),
+        size=int(obj.get("size") or 0),
+        bus=BUS_TOKENS.get(str(obj.get("bus")), Bus.OTHER),
+        table=TABLE_TOKENS.get(str(obj.get("table")), TableKind.UNKNOWN),
+        ro=bool(obj.get("ro")),
+        removable=bool(obj.get("removable")),
+        model=str(obj.get("model", "")),
+        serial=str(obj.get("serial", "")),
+        parts=tuple(_part_from(item) for item in _items(obj.get("parts"))),
+    )
+
+
+def _part_from(obj: Mapping[str, object]) -> Partition:
+    return Partition(
+        name=str(obj.get("name", "")),
+        size=int(obj.get("size") or 0),
+        fs=FS_TOKENS.get(str(obj.get("fs")), FsKind.OTHER),
+        mount=_opt(obj.get("mount")),
+        label=_opt(obj.get("label")),
+        partuuid=_opt(obj.get("partuuid")),
+        role=Role(str(obj.get("role", Role.FOREIGN.value))),
+    )
+
+
+def _opt(value: object) -> str | None:
+    return None if value is None else str(value)
+
