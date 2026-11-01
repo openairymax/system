@@ -20,6 +20,8 @@ from dataclasses import dataclass
 from enum import Enum, unique
 
 __all__ = [
+    "DATA_MOUNT",
+    "ESP_MOUNT",
     "SCHEMA_VERSION",
     "SYSTEM_MOUNTS",
     "Bus",
@@ -34,7 +36,11 @@ __all__ = [
 
 SCHEMA_VERSION = 1
 
-SYSTEM_MOUNTS = ("/", "/boot", "/boot/efi", "/usr", "/var")
+DATA_MOUNT = "/data"
+
+ESP_MOUNT = "/boot/efi"
+
+SYSTEM_MOUNTS = ("/", "/boot", ESP_MOUNT, "/usr", "/var")
 
 
 @unique
@@ -42,7 +48,7 @@ class Bus(Enum):
     """块设备承载总线。"""
 
     NVME = "nvme"
-    SATA = "ata"
+    SATA = "sata"
     SCSI = "scsi"
     USB = "usb"
     MMC = "mmc"
