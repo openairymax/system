@@ -93,6 +93,19 @@ class ShapeTest(unittest.TestCase):
             ["sda1", "sda2"],
         )
 
+    def test_parts_sorted_by_number(self) -> None:
+        """parts 的契约是分区号升序，不能沿用 lsblk 的文本顺序。"""
+        node = disk("nvme0n1")
+        node["children"] = [
+            part("nvme0n1p10"),
+            part("nvme0n1p2"),
+            part("nvme0n1p1"),
+        ]
+        self.assertEqual(
+            [item.name for item in topo(node).disks[0].parts],
+            ["nvme0n1p1", "nvme0n1p2", "nvme0n1p10"],
+        )
+
 
 class TokenTest(unittest.TestCase):
     """上游 token 到枚举的归一，未知值不得抛错。"""
