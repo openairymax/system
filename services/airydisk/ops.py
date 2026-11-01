@@ -18,6 +18,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import Enum, unique
 
@@ -30,6 +31,8 @@ __all__ = [
     "REFUSAL_TEXT",
     "Refusal",
     "Step",
+    "dump",
+    "load",
     "refuse",
 ]
 
@@ -81,7 +84,11 @@ class Step:
 
 @dataclass(frozen=True, slots=True)
 class Plan:
-    """针对单块磁盘的完整计划；步骤按给定顺序执行，回滚反向。"""
+    """针对单块磁盘的完整计划；步骤按给定顺序执行，回滚反向。
+
+    每个步骤的目标都必须落在 ``disk`` 名下：计划是由外部数据加载的，
+    这一条把「计划拿了 A 盘的名字却写 B 盘」挡在构造期。
+    """
 
     disk: str
     steps: tuple[Step, ...] = ()
@@ -90,11 +97,59 @@ class Plan:
     def __post_init__(self) -> None:
         if not self.disk:
             raise ValueError("plan needs a disk")
+        prefix = f"/dev/{self.disk}"
+        if any(not item.target.startswith(prefix) for item in self.steps):
+            raise ValueError(f"step target outside /dev/{self.disk}")
 
     @property
     def empty(self) -> bool:
         """无动作的计划是合法结果：磁盘已是目标布局。"""
         return not self.steps
+
+
+def dump(plan: Plan) -> dict[str, object]:
+    """把计划序列化为 JSON 可编码的字典，供二次确认与离线复算。"""
+    return {
+        "schema": plan.schema,
+        "disk": plan.disk,
+        "steps": [_step_obj(item) for item in plan.steps],
+    }
+
+
+def load(obj: Mapping[str, object]) -> Plan:
+    """从 :func:`dump` 的产物重建计划；schema 不符即拒绝。"""
+    schema = obj.get("schema")
+    if schema != SCHEMA_VERSION:
+        raise ValueError(f"schema {schema!r} != {SCHEMA_VERSION}")
+    steps = tuple(_step_from(item) for item in _list(obj.get("steps")))
+    return Plan(disk=str(obj.get("disk", "")), steps=steps)
+
+
+def _list(value: object) -> tuple[Mapping[str, object], ...]:
+    """取出子对象序列；缺失或非序列都当空，由 Plan 判空负责拒绝。"""
+    return tuple(value) if isinstance(value, list) else ()
+
+
+def _step_obj(item: Step) -> dict[str, object]:
+    return {
+        "action": item.action.value,
+        "target": item.target,
+        "argv": list(item.argv),
+        "undo": list(item.undo),
+    }
+
+
+def _step_from(obj: Mapping[str, object]) -> Step:
+    return Step(
+        action=Action(str(obj.get("action"))),
+        target=str(obj.get("target", "")),
+        argv=tuple(str(arg) for arg in _strings(obj.get("argv"))),
+        undo=tuple(str(arg) for arg in _strings(obj.get("undo"))),
+    )
+
+
+def _strings(value: object) -> tuple[object, ...]:
+    return tuple(value) if isinstance(value, list) else ()
 
 
 def refuse(disk: Disk, host: str | None) -> Refusal | None:

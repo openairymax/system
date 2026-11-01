@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import json
 import sys
 import unittest
 from dataclasses import FrozenInstanceError
@@ -100,9 +101,60 @@ class PlanTest(unittest.TestCase):
         self.assertFalse(plan.empty)
         self.assertEqual(plan.steps[0].argv[0], "mkfs.ext4")
 
+    def test_foreign_target(self) -> None:
+        other = ops.Step(action=ops.Action.WIPE, target="/dev/sdc",
+                         argv=("wipefs", "-a", "/dev/sdc"))
+        with self.assertRaises(ValueError):
+            ops.Plan(disk="sdb", steps=(other,))
+
     def test_frozen(self) -> None:
         with self.assertRaises(FrozenInstanceError):
             ops.Plan(disk="sdb").disk = "sdc"  # type: ignore[misc]
+
+
+class SerializeTest(unittest.TestCase):
+    """计划跨进程传递：dump 与 load 互为逆运算，越权目标一律拒绝。"""
+
+    def sample(self) -> ops.Plan:
+        wipe = ops.Step(action=ops.Action.WIPE, target="/dev/sdb",
+                        argv=("wipefs", "-a", "/dev/sdb"))
+        return ops.Plan(disk="sdb", steps=(wipe,))
+
+    def test_roundtrip(self) -> None:
+        plan = self.sample()
+        self.assertEqual(ops.load(ops.dump(plan)), plan)
+
+    def test_json(self) -> None:
+        text = json.dumps(ops.dump(self.sample()))
+        self.assertEqual(ops.load(json.loads(text)), self.sample())
+
+    def test_argv_list(self) -> None:
+        obj = ops.dump(self.sample())
+        steps = obj["steps"]
+        self.assertIsInstance(steps, list)
+        self.assertIsInstance(steps[0]["argv"], list)  # type: ignore[index]
+
+    def test_schema(self) -> None:
+        obj = ops.dump(self.sample())
+        obj["schema"] = ops.SCHEMA_VERSION + 1
+        with self.assertRaises(ValueError):
+            ops.load(obj)
+
+    def test_unknown_action(self) -> None:
+        obj = ops.dump(self.sample())
+        obj["steps"][0]["action"] = "resize"  # type: ignore[index]
+        with self.assertRaises(ValueError):
+            ops.load(obj)
+
+    def test_blank_steps(self) -> None:
+        self.assertTrue(ops.load({"schema": ops.SCHEMA_VERSION,
+                                  "disk": "sdb"}).empty)
+
+    def test_foreign_target(self) -> None:
+        obj = ops.dump(self.sample())
+        obj["steps"][0]["target"] = "/dev/sdc"  # type: ignore[index]
+        with self.assertRaises(ValueError):
+            ops.load(obj)
 
 
 class RefuseTest(unittest.TestCase):
