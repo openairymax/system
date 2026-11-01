@@ -3,10 +3,10 @@
 # AirymaxOS 磁盘命令行入口
 #
 # 四个子命令对应契约里的一张表：status 出拓扑、layout 出系统与数据分区
-# 的布局判定、check 出护栏判定、apply 执行计划并要求 --confirm 与计划盘
-# 名逐字一致。JSON 输出与人类输出共用同一份数据，判定 token 不翻译成
-# 自由文本后再被解析；退出码 0 成功、1 执行失败、2 用法错误、3 拒绝执行
-# 或判定未通过，供门禁直接判读。
+# 的布局判定（--fstab 一并判定已装系统的持久挂载）、check 出护栏判定、
+# apply 执行计划并要求 --confirm 与计划盘名逐字一致。JSON 输出与人类输出
+# 共用同一份数据，判定 token 不翻译成自由文本后再被解析；退出码 0 成功、
+# 1 执行失败、2 用法错误、3 拒绝执行或判定未通过，供门禁直接判读。
 #
 # status 同时把现场拓扑与安装期选盘记录比对（判据③）：记录里是哪块盘、
 # 多大、什么总线，与此刻探测到的同一块盘逐字段核对，结论以 match /
@@ -31,7 +31,7 @@ import os
 import sys
 from collections.abc import Sequence
 
-from . import layout, model, ops, probe, record, runner
+from . import fstab, layout, model, ops, probe, record, runner
 
 __all__ = ["EXIT_FAIL", "EXIT_REFUSED", "EXIT_USAGE", "main"]
 
@@ -90,8 +90,13 @@ def _args(argv: Sequence[str] | None) -> argparse.Namespace:
     sub = parser.add_subparsers(dest="cmd", required=True)
     sub.add_parser("status", parents=[_json_opt(), _snap_opt()],
                    help="列出磁盘拓扑")
-    sub.add_parser("layout", parents=[_json_opt(), _snap_opt()],
-                   help="判定系统与数据分区布局")
+    lay = sub.add_parser("layout", parents=[_json_opt(), _snap_opt()],
+                         help="判定系统与数据分区布局")
+    lay.add_argument(
+        "--fstab",
+        metavar="FILE",
+        help="一并判定已安装系统的 /etc/fstab 能否持久挂载",
+    )
     check = sub.add_parser("check", parents=[_json_opt()], help="判定能否改写")
     check.add_argument("--disk", required=True, metavar="NAME")
     act = sub.add_parser("apply", parents=[_json_opt()], help="执行磁盘计划")
@@ -131,12 +136,37 @@ def _layout(args: argparse.Namespace) -> int:
     if topo is None:
         return EXIT_USAGE
     found = layout.inspect(topo)
-    if args.json:
-        print(json.dumps(layout.dump(found), ensure_ascii=False))
-    else:
-        print(f"layout  {found.kind}  {found.state.value}  "
-              f"root={found.root or '-'} data={found.data or '-'}")
-    return 0 if found.ok else EXIT_REFUSED
+    persist = None
+    if args.fstab:
+        persist = _persist(args.fstab)
+        if persist is None:
+            return EXIT_USAGE
+    _layout_out(found, persist, args.json)
+    if not found.ok or (persist is not None and not persist.ok):
+        return EXIT_REFUSED
+    return 0
+
+
+def _layout_out(found: layout.Layout, persist: fstab.Persist | None,
+                as_json: bool) -> None:
+    payload = layout.dump(found)
+    if persist is not None:
+        payload.update(fstab.dump(persist))
+    if as_json:
+        print(json.dumps(payload, ensure_ascii=False))
+        return
+    tail = "" if persist is None else f"  persist={persist.state.value}"
+    print(f"layout  {found.kind}  {found.state.value}  "
+          f"root={found.root or '-'} data={found.data or '-'}{tail}")
+
+
+def _persist(path: str) -> fstab.Persist | None:
+    """读一份 fstab 取证；读不到按用法错误处理，不冒充判定不通过。"""
+    try:
+        return fstab.check(_read(path))
+    except OSError as exc:
+        _err(f"fstab 不可用：{exc}", EXIT_USAGE)
+        return None
 
 
 def _snap(args: argparse.Namespace) -> model.Topology | None:
