@@ -41,7 +41,7 @@ from .model import (
     Topology,
 )
 
-__all__ = ["COLUMNS", "TIMEOUT", "parse", "probe"]
+__all__ = ["COLUMNS", "TIMEOUT", "host", "parse", "probe"]
 
 COLUMNS = (
     "NAME,SIZE,TYPE,PTTYPE,FSTYPE,MOUNTPOINT,LABEL,PARTUUID,"
@@ -72,6 +72,18 @@ def probe(timeout: int = TIMEOUT) -> Topology:
         argv, capture_output=True, text=True, timeout=timeout, check=True
     )
     return parse(done.stdout)
+
+
+def host(topo: Topology, mount: str) -> Disk | None:
+    """返回承载某挂载点的磁盘，未挂载时为 None。
+
+    安装介质里 "/" 由 overlay 提供，本就没有承载磁盘，此时返回 None
+    是事实而非失败：调用方必须据此转入手工选盘，不能拿第一块盘顶替。
+    """
+    for disk in topo.disks:
+        if any(part.mount == mount for part in disk.parts):
+            return disk
+    return None
 
 
 def _text(node: dict, key: str) -> str:
