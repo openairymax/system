@@ -3,9 +3,9 @@
 # AirymaxOS 磁盘命令行回归测试
 #
 # 探测结果以固定拓扑注入，命令执行只用 /bin/true 与 /bin/false，
-# 不触任何块设备。覆盖三命令的退出码、JSON 形态与二次确认边界：
-# 确认名与计划盘名不一致、目标承载运行系统、非 root 都必须在执行前
-# 被挡住。
+# 不触任何块设备。覆盖四命令的退出码与 JSON 形态、--snapshot 重放，
+# 以及二次确认边界：确认名与计划盘名不一致、目标承载运行系统、非
+# root 都必须在执行前被挡住。
 
 from __future__ import annotations
 
@@ -56,6 +56,28 @@ def plan(disk: str = "sdb") -> ops.Plan:
     item = ops.Step(action=ops.Action.WIPE, target=f"/dev/{disk}",
                     argv=("/bin/true",))
     return ops.Plan(disk=disk, steps=(item,))
+
+
+def replay() -> dict[str, object]:
+    """一份与 sample() 不同的快照：单盘 virtio，/ 与 /data 同盘。"""
+    disk = model.Disk(
+        name="vda", size=1024**3, bus=model.Bus.VIRTIO,
+        table=model.TableKind.GPT,
+        parts=(part("vda1", "/", model.FsKind.BTRFS, model.Role.SYSTEM),
+               part("vda2", model.DATA_MOUNT, model.FsKind.XFS,
+                    model.Role.DATA)),
+    )
+    return model.dump(model.Topology(kind=model.TopoKind.SINGLE,
+                                     disks=(disk,)))
+
+
+def save(obj: dict[str, object]) -> str:
+    """把一份 status 快照落到临时文件，返回路径。"""
+    handle = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False,
+                                        encoding="utf-8")
+    with handle:
+        json.dump(obj, handle)
+    return handle.name
 
 
 class Case(unittest.TestCase):
@@ -162,6 +184,56 @@ class LayoutTest(Case):
         code, out, _ = self.call("--json", "layout", topo=bare)
         self.assertEqual(code, cli.EXIT_REFUSED)
         self.assertEqual(json.loads(out)["verdict"], "no-data")
+
+
+class SnapshotTest(Case):
+    """--snapshot：重放已存证据；结果只取决于快照，不取决于本机。"""
+
+    def snap(self, obj: dict[str, object] | None = None) -> str:
+        path = save(replay() if obj is None else obj)
+        self.addCleanup(Path(path).unlink)
+        return path
+
+    def test_layout_replay(self) -> None:
+        code, out, _ = self.call("--json", "layout",
+                                 "--snapshot", self.snap())
+        self.assertEqual(code, 0)
+        obj = json.loads(out)
+        self.assertEqual(obj["kind"], "single")
+        self.assertEqual(obj["root"], "vda")
+        self.assertEqual(obj["verdict"], "ok")
+
+    def test_status_replay(self) -> None:
+        code, out, _ = self.call("--json", "status",
+                                 "--snapshot", self.snap())
+        self.assertEqual(code, 0)
+        self.assertEqual(json.loads(out)["disks"][0]["name"], "vda")
+
+    def test_stdin(self) -> None:
+        with mock.patch("sys.stdin", io.StringIO(json.dumps(replay()))):
+            code, out, _ = self.call("--json", "layout", "--snapshot", "-")
+        self.assertEqual(code, 0)
+        self.assertEqual(json.loads(out)["data"], "vda")
+
+    def test_refused(self) -> None:
+        obj = replay()
+        obj["disks"][0]["parts"] = obj["disks"][0]["parts"][:1]
+        code, out, _ = self.call("--json", "layout",
+                                 "--snapshot", self.snap(obj))
+        self.assertEqual(code, cli.EXIT_REFUSED)
+        self.assertEqual(json.loads(out)["verdict"], "no-data")
+
+    def test_bad_schema(self) -> None:
+        code, _, err = self.call("layout", "--snapshot",
+                                 self.snap({"schema": 99}))
+        self.assertEqual(code, cli.EXIT_USAGE)
+        self.assertIn("快照不可用", err)
+
+    def test_missing_file(self) -> None:
+        path = str(Path(tempfile.mkdtemp()) / "absent.json")
+        code, _, err = self.call("layout", "--snapshot", path)
+        self.assertEqual(code, cli.EXIT_USAGE)
+        self.assertIn("快照不可用", err)
 
 
 class CheckTest(Case):
