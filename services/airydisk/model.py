@@ -19,7 +19,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+import re
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from enum import Enum, unique
 
@@ -41,6 +42,7 @@ __all__ = [
     "Topology",
     "dump",
     "load",
+    "order",
 ]
 
 SCHEMA_VERSION = 1
@@ -116,6 +118,8 @@ FS_TOKENS = {fs.value: fs for fs in FsKind}
 
 TABLE_TOKENS = {table.value: table for table in TableKind}
 
+PART_NUM = re.compile(r"(\d+)$")
+
 
 @dataclass(frozen=True, slots=True)
 class Partition:
@@ -152,6 +156,20 @@ class Topology:
     kind: TopoKind
     disks: tuple[Disk, ...] = ()
     schema: int = SCHEMA_VERSION
+
+
+def order(parts: Iterable[Partition]) -> tuple[Partition, ...]:
+    """按分区号升序排列：内核名末尾的数字是唯一序号来源。
+
+    扩容只对盘上最后一号分区成立，判定因此依赖次序；次序在这里归一，
+    探测层与快照反序列化共用同一实现，避免两处各排一次或各自漏排。
+    """
+    return tuple(sorted(parts, key=_num))
+
+
+def _num(part: Partition) -> int:
+    found = PART_NUM.search(part.name)
+    return int(found.group(1)) if found else 0
 
 
 def dump(topo: Topology) -> dict[str, object]:
@@ -215,7 +233,7 @@ def _disk_from(obj: Mapping[str, object]) -> Disk:
         removable=bool(obj.get("removable")),
         model=str(obj.get("model", "")),
         serial=str(obj.get("serial", "")),
-        parts=tuple(_part_from(item) for item in _items(obj.get("parts"))),
+        parts=order(_part_from(item) for item in _items(obj.get("parts"))),
     )
 
 

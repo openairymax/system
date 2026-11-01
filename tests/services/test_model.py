@@ -108,7 +108,7 @@ class ImmutableTest(unittest.TestCase):
 
 
 class ComposeTest(unittest.TestCase):
-    """磁盘、分区与拓扑必须能无损嵌套，分区顺序由调用方保证。"""
+    """磁盘、分区与拓扑必须能无损嵌套；次序归一由 order 与 load 负责。"""
 
     def test_nested(self) -> None:
         parts = (
@@ -185,6 +185,28 @@ class SerializeTest(unittest.TestCase):
         self.assertIs(topo.disks[0].table, model.TableKind.UNKNOWN)
         self.assertIs(topo.disks[0].parts[0].fs, model.FsKind.OTHER)
         self.assertIs(topo.disks[0].parts[0].role, model.Role.FOREIGN)
+
+    def test_load_orders_parts(self) -> None:
+        """快照里的分区次序也要归一，判定不能取决于文件的手写顺序。"""
+        obj = {
+            "schema": model.SCHEMA_VERSION,
+            "kind": "single",
+            "disks": [{
+                "name": "sda", "size": 1, "bus": "sata", "table": "gpt",
+                "parts": [{"name": "sda10", "size": 1, "fs": "xfs"},
+                          {"name": "sda2", "size": 1, "fs": "xfs"}],
+            }],
+        }
+        self.assertEqual(
+            [part.name for part in model.load(obj).disks[0].parts],
+            ["sda2", "sda10"],
+        )
+
+    def test_order_keeps_unnumbered(self) -> None:
+        parts = [model.Partition(name=name, size=1, fs=model.FsKind.OTHER)
+                 for name in ("md-x", "md-y")]
+        self.assertEqual([part.name for part in model.order(parts)],
+                         ["md-x", "md-y"])
 
 
 if __name__ == "__main__":

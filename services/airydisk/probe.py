@@ -3,6 +3,9 @@
 # AirymaxOS 磁盘拓扑探测层
 #
 # 以 lsblk -J -b 为唯一观测源，把块设备树归一为 model 的只读快照。
+# 分区的排列顺序由 model.order 按内核名末尾编号归一：lsblk 的文本顺序
+# 会随版本与分区数量变化（p10 排在 p2 之前），而扩容判据只认「盘上最后
+# 一号分区」，顺序外泄会让判定随文本漂移。
 # 归一用查表而非分支：上游 token 映射到枚举，未知值落 OTHER/UNKNOWN
 # 而不报错，新型总线或文件系统出现时探测仍可用；新增识别只扩表，
 # 不改判定路径（J-33）。
@@ -39,6 +42,7 @@ from .model import (
     TableKind,
     TopoKind,
     Topology,
+    order,
 )
 
 __all__ = ["COLUMNS", "TIMEOUT", "host", "parse", "probe"]
@@ -128,7 +132,7 @@ def _part(node: dict) -> Partition:
 
 
 def _disk(node: dict) -> Disk:
-    parts = tuple(
+    rows = (
         _part(child)
         for child in node.get("children") or ()
         if _kind_of(child) == "part"
@@ -142,7 +146,7 @@ def _disk(node: dict) -> Disk:
         removable=_flag(node, "rm"),
         model=_text(node, "model"),
         serial=_text(node, "serial"),
-        parts=parts,
+        parts=order(rows),
     )
 
 
