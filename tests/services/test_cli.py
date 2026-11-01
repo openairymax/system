@@ -132,6 +132,38 @@ class StatusTest(Case):
         self.assertIn("diff=size", out)
 
 
+class LayoutTest(Case):
+    """布局判定：通过返回 0，缺数据分区返回 3 并给出稳定 token。"""
+
+    def test_json(self) -> None:
+        code, out, _ = self.call("--json", "layout")
+        self.assertEqual(code, 0)
+        obj = json.loads(out)
+        self.assertEqual(obj["kind"], "dual")
+        self.assertEqual(obj["verdict"], "ok")
+        self.assertEqual(obj["root"], "nvme0n1")
+        self.assertEqual(obj["data"], "sdc")
+
+    def test_human(self) -> None:
+        code, out, _ = self.call("layout")
+        self.assertEqual(code, 0)
+        self.assertIn("ok", out)
+        self.assertIn("root=nvme0n1", out)
+        self.assertIn("data=sdc", out)
+
+    def test_no_data(self) -> None:
+        bare = model.Topology(
+            kind=model.TopoKind.SINGLE,
+            disks=(model.Disk(name="nvme0n1", size=1024**3,
+                              bus=model.Bus.NVME,
+                              table=model.TableKind.GPT,
+                              parts=(part("nvme0n1p1", "/"),)),),
+        )
+        code, out, _ = self.call("--json", "layout", topo=bare)
+        self.assertEqual(code, cli.EXIT_REFUSED)
+        self.assertEqual(json.loads(out)["verdict"], "no-data")
+
+
 class CheckTest(Case):
     """护栏判定：放行返回 0，拒绝返回 3 并给出稳定 token。"""
 
