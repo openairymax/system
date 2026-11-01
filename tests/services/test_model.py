@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import json
 import sys
 import unittest
 from dataclasses import FrozenInstanceError
@@ -132,6 +133,58 @@ class ComposeTest(unittest.TestCase):
         self.assertNotIn(model.DATA_MOUNT, model.SYSTEM_MOUNTS)
         for mount in model.SYSTEM_MOUNTS:
             self.assertTrue(mount.startswith("/"))
+
+
+class SerializeTest(unittest.TestCase):
+    """dump 与 load 互为逆运算：两个进程靠它共用同一份 schema。"""
+
+    def sample(self) -> model.Topology:
+        parts = (
+            model.Partition(name="nvme0n1p1", size=200,
+                            fs=model.FsKind.VFAT, mount=model.ESP_MOUNT,
+                            label="ESP", partuuid="AAAA",
+                            role=model.Role.ESP),
+            model.Partition(name="nvme0n1p2", size=800,
+                            fs=model.FsKind.BTRFS, mount="/",
+                            role=model.Role.SYSTEM),
+        )
+        disk = model.Disk(name="nvme0n1", size=1000, bus=model.Bus.NVME,
+                          table=model.TableKind.GPT, model="Sample",
+                          serial="S1", parts=parts)
+        return model.Topology(kind=model.TopoKind.SINGLE, disks=(disk,))
+
+    def test_roundtrip(self) -> None:
+        topo = self.sample()
+        self.assertEqual(model.load(model.dump(topo)), topo)
+
+    def test_json(self) -> None:
+        text = json.dumps(model.dump(self.sample()))
+        self.assertEqual(model.load(json.loads(text)), self.sample())
+
+    def test_schema(self) -> None:
+        obj = model.dump(self.sample())
+        obj["schema"] = model.SCHEMA_VERSION + 1
+        with self.assertRaises(ValueError):
+            model.load(obj)
+
+    def test_kind_required(self) -> None:
+        with self.assertRaises(ValueError):
+            model.load({"schema": model.SCHEMA_VERSION})
+
+    def test_unknown_tokens(self) -> None:
+        obj = {
+            "schema": model.SCHEMA_VERSION,
+            "kind": "single",
+            "disks": [{
+                "name": "sda", "size": 1, "bus": "fc", "table": "sun",
+                "parts": [{"name": "sda1", "size": 1, "fs": "zfs"}],
+            }],
+        }
+        topo = model.load(obj)
+        self.assertIs(topo.disks[0].bus, model.Bus.OTHER)
+        self.assertIs(topo.disks[0].table, model.TableKind.UNKNOWN)
+        self.assertIs(topo.disks[0].parts[0].fs, model.FsKind.OTHER)
+        self.assertIs(topo.disks[0].parts[0].role, model.Role.FOREIGN)
 
 
 if __name__ == "__main__":

@@ -25,9 +25,12 @@ import json
 import subprocess
 
 from .model import (
+    BUS_TOKENS,
     DATA_MOUNT,
     ESP_MOUNT,
+    FS_TOKENS,
     SYSTEM_MOUNTS,
+    TABLE_TOKENS,
     Bus,
     Disk,
     FsKind,
@@ -48,12 +51,6 @@ COLUMNS = (
 TIMEOUT = 30
 
 TRUE = frozenset({"true", "1", "yes"})
-
-BUS = {bus.value: bus for bus in Bus}
-
-FS = {fs.value: fs for fs in FsKind}
-
-TABLE = {table.value: table for table in TableKind}
 
 MOUNT_ROLE = {ESP_MOUNT: Role.ESP, DATA_MOUNT: Role.DATA}
 
@@ -103,7 +100,7 @@ def _role(mount: str | None, fs: FsKind) -> Role:
 
 
 def _part(node: dict) -> Partition:
-    fs = FS.get(_text(node, "fstype"), FsKind.OTHER)
+    fs = FS_TOKENS.get(_text(node, "fstype"), FsKind.OTHER)
     mount = _text(node, "mountpoint") or None
     if mount == "[SWAP]":
         mount = None
@@ -127,8 +124,8 @@ def _disk(node: dict) -> Disk:
     return Disk(
         name=_text(node, "name"),
         size=int(node.get("size") or 0),
-        bus=BUS.get(_text(node, "tran"), Bus.OTHER),
-        table=TABLE.get(_text(node, "pttype"), TableKind.UNKNOWN),
+        bus=BUS_TOKENS.get(_text(node, "tran"), Bus.OTHER),
+        table=TABLE_TOKENS.get(_text(node, "pttype"), TableKind.UNKNOWN),
         ro=_flag(node, "ro"),
         removable=_flag(node, "rm"),
         model=_text(node, "model"),
