@@ -2,8 +2,9 @@
 #
 # AirymaxOS 磁盘命令行入口
 #
-# 四个子命令对应契约里的一张表：status 出拓扑、layout 出系统与数据分区
-# 的布局判定（--fstab 一并判定已装系统的持久挂载）、check 出护栏判定、
+# 五个子命令对应契约里的一张表：status 出拓扑、layout 出系统与数据分区
+# 的布局判定（--fstab 一并判定已装系统的持久挂载）、persist 单独判定一份
+# fstab（装机 chroot 内没有可信拓扑，只能判持久挂载）、check 出护栏判定、
 # apply 执行计划并要求 --confirm 与计划盘名逐字一致。JSON 输出与人类输出
 # 共用同一份数据，判定 token 不翻译成自由文本后再被解析；退出码 0 成功、
 # 1 执行失败、2 用法错误、3 拒绝执行或判定未通过，供门禁直接判读。
@@ -44,6 +45,8 @@ EXIT_REFUSED = 3
 GiB = 1024**3
 
 MiB = 1024**2
+
+DEFAULT_FSTAB = "/etc/fstab"
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -96,6 +99,17 @@ def _args(argv: Sequence[str] | None) -> argparse.Namespace:
         "--fstab",
         metavar="FILE",
         help="一并判定已安装系统的 /etc/fstab 能否持久挂载",
+    )
+    per = sub.add_parser(
+        "persist",
+        parents=[_json_opt()],
+        help="只判定一份 fstab 能否持久挂载",
+    )
+    per.add_argument(
+        "--file",
+        default=DEFAULT_FSTAB,
+        metavar="FILE",
+        help=f"fstab 路径，缺省 {DEFAULT_FSTAB}",
     )
     check = sub.add_parser("check", parents=[_json_opt()], help="判定能否改写")
     check.add_argument("--disk", required=True, metavar="NAME")
@@ -158,6 +172,18 @@ def _layout_out(found: layout.Layout, persist: fstab.Persist | None,
     tail = "" if persist is None else f"  persist={persist.state.value}"
     print(f"layout  {found.kind}  {found.state.value}  "
           f"root={found.root or '-'} data={found.data or '-'}{tail}")
+
+
+def _persist_cmd(args: argparse.Namespace) -> int:
+    """只判一份 fstab：装机 chroot 内拓扑不可信，持久挂载仍可判。"""
+    found = _persist(args.file)
+    if found is None:
+        return EXIT_USAGE
+    if args.json:
+        print(json.dumps(fstab.dump(found), ensure_ascii=False))
+    else:
+        print(f"persist={found.state.value}")
+    return 0 if found.ok else EXIT_REFUSED
 
 
 def _persist(path: str) -> fstab.Persist | None:
@@ -341,6 +367,7 @@ def _obj(outcome: runner.Outcome) -> dict[str, object]:
 _HANDLERS = {
     "status": _status,
     "layout": _layout,
+    "persist": _persist_cmd,
     "check": _check,
     "apply": _apply,
 }
