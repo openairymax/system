@@ -69,9 +69,9 @@ endif()
 # 单元静态契约校验：无需 root，不依赖 systemd 运行时
 # ---------------------------------------------------------------------------
 include(CTest)
-find_package(Python3 COMPONENTS Interpreter)
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
 
-if(BUILD_TESTING AND Python3_Interpreter_FOUND)
+if(BUILD_TESTING)
 	add_test(NAME units-lint
 		COMMAND ${Python3_EXECUTABLE}
 			${CMAKE_CURRENT_SOURCE_DIR}/tools/units_lint.py
@@ -87,6 +87,11 @@ if(BUILD_TESTING AND Python3_Interpreter_FOUND)
 			-s ${CMAKE_CURRENT_SOURCE_DIR}/tests/scripts
 			-p "test_*.py"
 	)
+	add_test(NAME airydisk-model
+		COMMAND ${Python3_EXECUTABLE} -m unittest discover
+			-s ${CMAKE_CURRENT_SOURCE_DIR}/tests/services
+			-p "test_*.py"
+	)
 endif()
 
 # ---------------------------------------------------------------------------
@@ -94,4 +99,13 @@ endif()
 # ---------------------------------------------------------------------------
 install(TARGETS airymaxmon
 	RUNTIME DESTINATION bin
+)
+
+# ---------------------------------------------------------------------------
+# 磁盘管理服务（M-30/M-31）：Python 包安装到 site-packages，
+# 由 system/bin/airy-disk 与磁盘服务共同导入
+# ---------------------------------------------------------------------------
+install(DIRECTORY services/airydisk
+	DESTINATION ${Python3_SITELIB}
+	PATTERN "__pycache__" EXCLUDE
 )
