@@ -80,6 +80,11 @@ def _args(argv: Sequence[str] | None) -> argparse.Namespace:
         metavar="NAME",
         help="二次确认：与计划中的磁盘名逐字一致",
     )
+    act.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="只复算并列出步骤，不执行任何外部命令",
+    )
     return parser.parse_args(argv)
 
 
@@ -121,6 +126,9 @@ def _apply(args: argparse.Namespace) -> int:
         return _err(ops.REFUSAL_TEXT[verdict], EXIT_REFUSED)
     if os.geteuid() != 0:
         return _err("改写磁盘需要 root 权限", EXIT_REFUSED)
+    if args.dry_run:
+        _dry(plan, args.json)
+        return 0
     outcome = runner.apply(plan)
     _report(outcome, args.json)
     return 0 if outcome.ok else EXIT_FAIL
@@ -186,6 +194,18 @@ def _size(num: int) -> str:
     if num >= MiB:
         return f"{num / MiB:.0f}M"
     return f"{num}B"
+
+
+def _dry(plan: ops.Plan, as_json: bool) -> None:
+    """复算并列出计划步骤，不触碰设备。"""
+    if as_json:
+        print(json.dumps({"dry_run": True, "plan": ops.dump(plan)},
+                         ensure_ascii=False))
+        return
+    for step in plan.steps:
+        print(f"plan  {step.action.value}  {step.target}  "
+              f"{' '.join(step.argv)}")
+    print("dry-run：未执行任何命令")
 
 
 def _report(outcome: runner.Outcome, as_json: bool) -> None:
