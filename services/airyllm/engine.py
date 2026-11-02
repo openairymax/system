@@ -8,6 +8,10 @@
 #
 # 判定结果无论好坏都落盘：服务起不来时，外部工具唯一的线索就是这份
 # 状态文件，失败路径不写状态等于把根因留在日志里。
+#
+# 已经落盘的结论可以复用，但只在清单摘要未变时复用：换了一版权重却仍
+# 报上一版的结果，等于给用户一份比没有记录更坏的答复。因此复用与否
+# 由摘要判定，不设时效，也不信任文件的修改时间。
 
 """AirymaxOS model runtime resolution (K-20-07).
 
@@ -23,7 +27,7 @@ from pathlib import Path
 from . import accel, manifest, model, paths, runtime, status, verify
 from .failure import Failure
 
-__all__ = ["assess", "resolve"]
+__all__ = ["assess", "cached", "resolve"]
 
 
 def assess(root: str | Path | None = None,
@@ -76,6 +80,42 @@ def resolve(root: str | Path | None = None,
         本次判定；失败时不抛异常，改为 ``FAILED`` 加归因。
     """
     return assess(root, present)[1]
+
+
+def cached(root: str | Path | None = None,
+           present: frozenset[model.Backend] | None = None) -> model.Status:
+    """给出可对外展示的判定，尽量不做整份资产的摘要计算。
+
+    查询状态的调用方不承担校验职责：权重有数 GB，每次查询都通读一遍
+    只为了让用户看一眼结论。因此清单未变时直接复用上一次判定，变了
+    就按当前清单重算。
+
+    Args:
+        root: 运行根；``None`` 时取契约根。
+        present: 可用的加速后端；非 ``None`` 表示调用方要求按这份后端
+            集合重新判定，此时不复用缓存。
+
+    Returns:
+        与 :func:`resolve` 同形的判定。
+    """
+    home = paths.base(root)
+    kept = status.load(home)
+    if _fresh(home, kept, present):
+        return kept
+    return resolve(home, present)
+
+
+def _fresh(home: Path, kept: model.Status | None,
+           present: frozenset[model.Backend] | None) -> bool:
+    return (present is None and kept is not None
+            and kept.digest != "" and kept.digest == _digest(home))
+
+
+def _digest(home: Path) -> str | None:
+    try:
+        return verify.digest(paths.manifest(home))
+    except OSError:
+        return None
 
 
 def _seen(present: frozenset[model.Backend] | None) -> frozenset:
