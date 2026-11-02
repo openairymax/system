@@ -16,6 +16,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from . import throttle
+from .duty import Duty
 from .supply import Source
 from .thermal import Severity, Thermal, Zone, peak
 from .tuning import Knob, State
@@ -31,6 +32,7 @@ class Report:
     heat: Thermal
     knobs: tuple[Knob, ...]
     rate: float | None = None
+    duty: Duty = Duty.NONE
 
     @property
     def present(self) -> int:
@@ -49,6 +51,7 @@ class Report:
             "state": self.state.value,
             "source": self.source.value,
             "charge": self.charge,
+            "duty": self.duty.value,
             "severity": self.severity.value,
             "present": self.present,
             "landed": self.landed,

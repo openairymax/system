@@ -9,6 +9,7 @@
 """AirymaxOS power and thermal management."""
 
 from .cli import main
+from .duty import Duty, decide
 from .guard import apply, assess, choose, inspect
 from .policy import COOL, NORMAL_AC, NORMAL_BATTERY, Policy, Tuning
 from .report import Report
@@ -18,6 +19,7 @@ from .tuning import Knob, State, verdict
 
 __all__ = [
     "COOL",
+    "Duty",
     "NORMAL_AC",
     "NORMAL_BATTERY",
     "Knob",
@@ -33,6 +35,7 @@ __all__ = [
     "assess",
     "choose",
     "collect",
+    "decide",
     "detect",
     "grade",
     "inspect",

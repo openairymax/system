@@ -20,6 +20,7 @@
 from __future__ import annotations
 
 from . import supply, thermal, throttle, tuning
+from .duty import Duty, decide, enforce
 from .policy import Policy, Tuning
 from .report import Report
 from .supply import LOW_CHARGE, Source
@@ -47,14 +48,23 @@ def assess(policy: Policy, push: bool) -> Report:
     heat = thermal.collect(policy)
     speed = throttle.rate(throttle.measure(_total(heat)),
                           throttle.load(policy.state))
+    action = decide(source, level)
     wanted = choose(source, thermal.peak(heat.severity, throttle.grade(speed)),
                     level, policy)
     if push:
         knobs = tuning.apply(policy, wanted)
         throttle.save(policy.state, _total(heat))
+        _enforce(action, level, policy)
     else:
         knobs = tuning.inspect(policy, wanted)
-    return Report(tuning.verdict(knobs), source, level, heat, knobs, speed)
+    return Report(tuning.verdict(knobs), source, level, heat, knobs, speed,
+                  action)
+
+
+def _enforce(action: Duty, level: int | None, policy: Policy) -> None:
+    if action is Duty.NONE or level is None:
+        return
+    enforce(action, level, policy)
 
 
 def _total(heat: thermal.Thermal) -> int:

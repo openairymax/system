@@ -38,6 +38,8 @@ class Tree(unittest.TestCase):
         self.zone("x86_pkg_temp", 50000)
         self.cpu()
         self.throttle()
+        self.poweroff = self.fake("poweroff")
+        self.wall = self.fake("wall")
 
     def policy(self, **over: object) -> policy.Policy:
         fields = {
@@ -48,6 +50,9 @@ class Tree(unittest.TestCase):
             "thermal": str(self.base / "thermal"),
             "throttle": str(self.base / "throttle"),
             "state": str(self.base / "state"),
+            "duty": str(self.base / "duty"),
+            "poweroff": self.poweroff,
+            "wall": self.wall,
         }
         fields.update(over)
         return policy.Policy(**fields)
@@ -110,7 +115,31 @@ class Tree(unittest.TestCase):
             "--thermal", str(self.base / "thermal"),
             "--throttle", str(self.base / "throttle"),
             "--state", str(self.base / "state"),
+            "--duty", str(self.base / "duty"),
+            "--poweroff", self.poweroff,
+            "--wall", self.wall,
         ]
+
+    def fake(self, name: str) -> str:
+        """生成一个把参数追加到日志的假命令，避免真的关机或广播。"""
+        path = self.base / f"fake-{name}"
+        path.write_text(
+            "#!/bin/sh\n"
+            f"printf '%s\\n' \"$*\" >> '{self.log(name)}'\n",
+            encoding="ascii",
+        )
+        path.chmod(0o755)
+        return str(path)
+
+    def log(self, name: str) -> Path:
+        return self.base / f"{name}.log"
+
+    def calls(self, name: str) -> list[str]:
+        """读回假命令收到的参数行；没有调用返回空表。"""
+        path = self.log(name)
+        if not path.exists():
+            return []
+        return path.read_text(encoding="utf-8").splitlines()
 
     def _supply(self, name: str, kind: str, fields: dict[str, str]) -> None:
         path = self.base / "supply" / name

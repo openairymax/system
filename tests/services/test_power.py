@@ -2,9 +2,10 @@
 #
 # 电源与温度判定回归测试
 #
-# 覆盖四条判定链：热区余量分级、供电来源识别、控制点落地回读、以及
-# 供电加热状态到档位选择。用例全部在临时机器上跑，不需要 root，也不碰
-# 宿主机的真实 sysfs。
+# 覆盖五条判定链：热区余量分级、供电来源识别、低电量动作、控制点落地
+# 回读、以及供电加热状态到档位选择。用例全部在临时机器上跑，不需要 root，
+# 也不碰宿主机的真实 sysfs；关机与广播命令都指向假脚本，测试不会真的把
+# 机器关掉。
 
 from __future__ import annotations
 
@@ -18,6 +19,7 @@ sys.path.insert(0, str(ROOT / "services"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from airymax_power import guard, supply, sysfs, thermal  # noqa: E402
+from airymax_power.duty import CRITICAL_CHARGE, Duty, decide  # noqa: E402
 from airymax_power.supply import Source, charge, detect  # noqa: E402
 from airymax_power.thermal import Severity, grade  # noqa: E402
 from airymax_power.tuning import State  # noqa: E402
@@ -81,6 +83,54 @@ class SupplyTest(Tree):
     def test_charge_absent(self) -> None:
         """只有适配器时没有电量可读，返回 None 而不是 0。"""
         self.assertIsNone(charge(self.policy()))
+
+
+class DutyTest(Tree):
+    """低电量分级动作：只在电池或弱供电时动作，且只动一次。"""
+
+    def test_decide(self) -> None:
+        self.assertIs(decide(Source.BATTERY, 3), Duty.POWEROFF)
+        self.assertIs(decide(Source.BATTERY, CRITICAL_CHARGE),
+                      Duty.POWEROFF)
+        self.assertIs(decide(Source.BATTERY, CRITICAL_CHARGE + 1),
+                      Duty.NOTIFY)
+        self.assertIs(decide(Source.BATTERY, 80), Duty.NONE)
+        self.assertIs(decide(Source.WEAK, 4), Duty.POWEROFF)
+        self.assertIs(decide(Source.AC, 4), Duty.NONE)
+        self.assertIs(decide(Source.UNKNOWN, 4), Duty.NONE)
+        self.assertIs(decide(Source.BATTERY, None), Duty.NONE)
+
+    def test_poweroff(self) -> None:
+        """临界电量请求受控关机，且不再广播一遍。"""
+        self.battery(capacity=CRITICAL_CHARGE - 1)
+        found = guard.apply(self.policy())
+        self.assertIs(found.duty, Duty.POWEROFF)
+        self.assertEqual(self.calls("poweroff"), ["poweroff --no-block"])
+        self.assertEqual(self.calls("wall"), [])
+
+    def test_notify_once(self) -> None:
+        """同一等级连续评估只广播一次，免得每分钟刷屏。"""
+        self.battery(capacity=CRITICAL_CHARGE + 3)
+        guard.apply(self.policy())
+        guard.apply(self.policy())
+        self.assertEqual(len(self.calls("wall")), 1)
+        self.assertEqual(self.calls("poweroff"), [])
+
+    def test_charging(self) -> None:
+        """插电补电时电量再低也是充电过程，不动机器。"""
+        self.both(status="Charging", capacity=CRITICAL_CHARGE - 1)
+        found = guard.apply(self.policy())
+        self.assertIs(found.source, Source.AC)
+        self.assertIs(found.duty, Duty.NONE)
+        self.assertEqual((self.calls("poweroff"), self.calls("wall")),
+                         ([], []))
+
+    def test_inspect(self) -> None:
+        """只读评估报告动作但不执行。"""
+        self.battery(capacity=CRITICAL_CHARGE - 1)
+        found = guard.inspect(self.policy())
+        self.assertIs(found.duty, Duty.POWEROFF)
+        self.assertEqual(self.calls("poweroff"), [])
 
 
 class ThermalTest(Tree):

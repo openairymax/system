@@ -76,6 +76,7 @@ class StatusTest(Tree):
         self.assertEqual(found["state"], "failed")
         self.assertEqual(found["source"], "ac")
         self.assertIsNone(found["charge"])
+        self.assertEqual(found["duty"], "none")
         self.assertEqual(found["present"], 3)
         self.assertEqual(found["zones"][0]["name"], "x86_pkg_temp")
 
@@ -101,12 +102,16 @@ class ApplyTest(Tree):
         self.assertIn("low-power", self.profile.read_text(encoding="ascii"))
 
     def test_low_charge(self) -> None:
+        """临界电量在 JSON 里报 poweroff，并真的请求了受控关机。"""
         self.battery(capacity=5)
         run(self.args("apply"))
         code, out = run(self.args("status") + ["--json"])
         self.assertEqual(code, 0)
         found = json.loads(out)
         self.assertEqual((found["source"], found["charge"]), ("battery", 5))
+        self.assertEqual(found["duty"], "poweroff")
+        self.assertEqual(self.calls("poweroff"), ["poweroff --no-block"])
+        self.assertEqual(self.calls("wall"), [])
 
 
 class ConfigTest(unittest.TestCase):
@@ -119,6 +124,7 @@ class ConfigTest(unittest.TestCase):
         self.assertIn("schedutil", out)
         self.assertIn("critical", out)
         self.assertIn("10%", out)
+        self.assertIn("5%", out)
 
     def test_usage(self) -> None:
         with self.assertRaises(SystemExit) as caught:
