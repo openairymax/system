@@ -15,6 +15,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
+from . import files
+
 __all__ = ["Paths", "defaults"]
 
 TRACE = "/sys/kernel/tracing"
@@ -35,8 +37,8 @@ class Paths:
 
 def defaults() -> Paths:
     """按本机实际挂载点选择 tracefs 根。"""
-    if Path(TRACE).is_dir():
+    if files.kind(Path(TRACE)) == files.DIR:
         return Paths()
-    if Path(LEGACY).is_dir():
+    if files.kind(Path(LEGACY)) == files.DIR:
         return Paths(tracefs=LEGACY)
     return Paths()

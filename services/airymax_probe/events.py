@@ -62,8 +62,9 @@ def discover(root: Path) -> tuple[Event, ...]:
 
 def _event(base: Path, name: str) -> Event:
     node = base / name
-    if not node.is_dir():
-        return Event(name, None, None, UNAVAILABLE, "missing")
+    state = files.kind(node)
+    if state != files.DIR:
+        return Event(name, None, None, UNAVAILABLE, state)
     ident = files.num(node / "id")
     if ident is None:
         return Event(name, None, None, UNAVAILABLE, "malformed")

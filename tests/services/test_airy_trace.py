@@ -67,6 +67,15 @@ class RecordTest(Tree):
         self.assertEqual(shot.state, trace.UNAVAILABLE)
         self.assertEqual(shot.reason, "missing")
 
+    def test_denied(self) -> None:
+        # tracefs 对非特权用户是 0700：stat 抛 EACCES 不能被当成内核缺
+        # tracepoint，否则报告会把「没权限看」说成「没实现」。
+        with mock.patch.object(Path, "is_dir",
+                               side_effect=PermissionError(13, "denied")):
+            shot = trace.record(self.tracefs, 0.01, EVENTS)
+        self.assertEqual(shot.state, trace.UNAVAILABLE)
+        self.assertEqual(shot.reason, "denied")
+
     def test_arm_fail(self) -> None:
         self.drop("airy_lockdown_reject")
         shot = trace.record(self.tracefs, 0.01, EVENTS)

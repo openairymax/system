@@ -21,6 +21,7 @@ from enum import Enum, unique
 
 from .channels import Channel, Outcome
 from .events import Event
+from .files import DENIED
 from .stats import Stats, Table
 from .trace import UNAVAILABLE, Sample
 
@@ -45,6 +46,8 @@ WINDOW_HINT = "采样窗口失败，按 samples 的 reason 排查节点"
 IDLE_HINT = "十条通道可读但窗口内无事件，带业务负载重跑"
 
 BLOCKED_HINT = "本机没有 airy 取证面，换 AirymaxOS 内核或换机器"
+
+DENIED_HINT = "tracefs 需要 root 权限，改用 sudo 运行"
 
 
 @unique
@@ -97,6 +100,8 @@ class Report:
     @property
     def hint(self) -> str:
         """结论的处置建议；按首个成立的原因给出，不按状态笼统归类。"""
+        if any(item.reason == DENIED for item in self.events):
+            return DENIED_HINT
         if self.readable == 0:
             return BLOCKED_HINT
         if self.missing or not self.stats.facts:
