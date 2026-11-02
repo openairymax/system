@@ -26,6 +26,7 @@ __all__ = [
     "SERVICES",
     "TARGETS",
     "TEMPLATES",
+    "TIMERS",
     "UNITS",
     "check_dir",
     "check_file",
@@ -405,12 +406,41 @@ FIRSTBOOT_PAIRS: dict[tuple[str, str], str] = {
 
 FIRSTBOOT_SCRIPT = ROOT / "scripts" / "firstboot.sh"
 
+UPDATE_CHECK = "airymax-update-check.service"
+
+CHECK_PAIRS: dict[tuple[str, str], str] = {
+    ("Unit", "After"): "network-online.target",
+    ("Unit", "Wants"): "network-online.target",
+    ("Service", "Type"): "oneshot",
+    ("Service", "ExecStart"): "/usr/bin/airy-update check",
+    # 10 表示「有新版」：按失败上报会让每次发现更新都把单元记成 failed，
+    # 运维看到的是红点而不是「今天有更新」。
+    ("Service", "SuccessExitStatus"): "10",
+    ("Service", "StateDirectory"): "airy-update",
+    ("Service", "TimeoutStartSec"): "300",
+    ("Service", "ProtectSystem"): "strict",
+    ("Service", "ProtectHome"): "yes",
+    ("Service", "PrivateTmp"): "yes",
+    ("Service", "NoNewPrivileges"): "yes",
+}
+
+TIMERS: dict[str, dict[tuple[str, str], str]] = {
+    "airymax-update-check.timer": {
+        ("Unit", "Description"): "Daily AirymaxOS Update Check",
+        ("Timer", "OnCalendar"): "daily",
+        ("Timer", "RandomizedDelaySec"): "6h",
+        ("Timer", "Persistent"): "true",
+        ("Install", "WantedBy"): "timers.target",
+    },
+}
+
 UNITS = frozenset(SERVICES) | frozenset(TARGETS) | frozenset(TEMPLATES) | {
     FIRSTBOOT,
     HEALTH,
-}
+    UPDATE_CHECK,
+} | frozenset(TIMERS)
 
-_SECTIONS = frozenset({"Unit", "Service", "Install"})
+_SECTIONS = frozenset({"Unit", "Service", "Timer", "Install"})
 _META = frozenset({
     ("Unit", "Description"),
     ("Unit", "Documentation"),
@@ -625,7 +655,7 @@ def _incident_bad(name: str, cfg: ConfigParser) -> list[str]:
     return _diff(name, cfg, pairs) + _extra_bad(name, cfg, pairs)
 
 
-def _oneshot_bad(
+def _pairs_bad(
     name: str,
     cfg: ConfigParser,
     pairs: dict[tuple[str, str], str | None],
@@ -638,11 +668,19 @@ def _oneshot_bad(
 
 
 def _health_bad(name: str, cfg: ConfigParser) -> list[str]:
-    return _oneshot_bad(name, cfg, dict(HEALTH_PAIRS))
+    return _pairs_bad(name, cfg, dict(HEALTH_PAIRS))
 
 
 def _firstboot_bad(name: str, cfg: ConfigParser) -> list[str]:
-    return _oneshot_bad(name, cfg, dict(FIRSTBOOT_PAIRS))
+    return _pairs_bad(name, cfg, dict(FIRSTBOOT_PAIRS))
+
+
+def _check_bad(name: str, cfg: ConfigParser) -> list[str]:
+    return _pairs_bad(name, cfg, dict(CHECK_PAIRS))
+
+
+def _timer_bad(name: str, cfg: ConfigParser) -> list[str]:
+    return _pairs_bad(name, cfg, dict(TIMERS[name]))
 
 
 def _body_bad(name: str, cfg: ConfigParser) -> list[str]:
@@ -654,6 +692,10 @@ def _body_bad(name: str, cfg: ConfigParser) -> list[str]:
         return _firstboot_bad(name, cfg)
     if name == HEALTH:
         return _health_bad(name, cfg)
+    if name == UPDATE_CHECK:
+        return _check_bad(name, cfg)
+    if name in TIMERS:
+        return _timer_bad(name, cfg)
     return _incident_bad(name, cfg)
 
 

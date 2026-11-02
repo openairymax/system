@@ -57,6 +57,7 @@ if(AIRY_INSTALL_SYSTEMD_UNITS)
 		FILES_MATCHING
 		PATTERN "*.service"
 		PATTERN "*.target"
+		PATTERN "*.timer"
 	)
 	install(PROGRAMS
 		scripts/firstboot.sh

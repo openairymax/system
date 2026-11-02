@@ -26,6 +26,8 @@ TARGET = "agentrt.target"
 INCIDENT = "airy-incident@.service"
 HEALTH = "agentrt-health-check.service"
 FIRSTBOOT = "agentrt-firstboot.service"
+UPDATE_CHECK = "airymax-update-check.service"
+UPDATE_TIMER = "airymax-update-check.timer"
 
 
 class UnitsCase(unittest.TestCase):
@@ -253,6 +255,68 @@ class FirstbootCase(UnitsCase):
     def test_fb_dep(self) -> None:
         self.edit(GATEWAY, "Requires=agentrt-firstboot.service\n", "")
         self.assert_bad("Requires")
+
+
+class UpdateCheckCase(UnitsCase):
+    """升级检查单元契约。"""
+
+    def test_uc_after(self) -> None:
+        self.edit(UPDATE_CHECK, "After=network-online.target\n", "")
+        self.assert_bad("After")
+
+    def test_uc_type(self) -> None:
+        self.edit(UPDATE_CHECK, "Type=oneshot", "Type=simple")
+        self.assert_bad("Type")
+
+    def test_uc_exec(self) -> None:
+        self.edit(
+            UPDATE_CHECK,
+            "/usr/bin/airy-update check",
+            "/usr/bin/airy-update status",
+        )
+        self.assert_bad("ExecStart")
+
+    def test_uc_exit(self) -> None:
+        """10 是「有新版」而非失败，漏掉它每次发现更新都会报红。"""
+        self.edit(UPDATE_CHECK, "SuccessExitStatus=10\n", "")
+        self.assert_bad("SuccessExitStatus")
+
+    def test_uc_state(self) -> None:
+        self.edit(UPDATE_CHECK, "StateDirectory=airy-update\n", "")
+        self.assert_bad("StateDirectory")
+
+
+class TimerCase(UnitsCase):
+    """定时器单元契约。"""
+
+    def test_calendar(self) -> None:
+        self.edit(UPDATE_TIMER, "OnCalendar=daily", "OnCalendar=hourly")
+        self.assert_bad("OnCalendar")
+
+    def test_delay(self) -> None:
+        self.edit(UPDATE_TIMER, "RandomizedDelaySec=6h\n", "")
+        self.assert_bad("RandomizedDelaySec")
+
+    def test_persistent(self) -> None:
+        self.edit(UPDATE_TIMER, "Persistent=true", "Persistent=false")
+        self.assert_bad("Persistent")
+
+    def test_wantedby(self) -> None:
+        self.edit(
+            UPDATE_TIMER,
+            "WantedBy=timers.target",
+            "WantedBy=multi-user.target",
+        )
+        self.assert_bad("WantedBy")
+
+    def test_unit_key(self) -> None:
+        """绑定靠同名约定，显式 Unit= 会把两份事实拆到两处。"""
+        self.edit(
+            UPDATE_TIMER,
+            "Persistent=true",
+            "Unit=agentrt.target\nPersistent=true",
+        )
+        self.assert_bad("unexpected directive [Timer] Unit")
 
 
 if __name__ == "__main__":
