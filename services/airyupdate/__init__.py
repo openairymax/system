@@ -12,6 +12,7 @@
 
 from __future__ import annotations
 
+from .identity import Verdict, compare
 from .model import (
     CHANNELS,
     CHANNEL_STABLE,
@@ -54,4 +55,6 @@ __all__ = [
     "Identity",
     "Kernel",
     "Manifest",
+    "Verdict",
+    "compare",
 ]
