@@ -4,12 +4,13 @@
 #
 # status 只读评估，apply 落地并回读，config 打印档位与门限参考。三者共用
 # 同一套路径选项，缺省值来自 policy 模块，测试与救援环境可以整体改指到
-# 临时目录而不用改代码。
+# 临时目录而不用改代码。只读评估不写节流采样，连续巡检不会吃掉一次真实的
+# 降档判据。
 #
-# 退出码：0 档位落地且温度未到 hot；3 档位部分落地或温度已达 hot 以上；
-# 1 存在控制点但全部写入失败；2 用法错误。守护单元用 SuccessExitStatus=3
-# 把「已降档但机器仍热」与真正的失败分开，避免过热时每个周期都触发
-# incident。
+# 退出码：0 档位落地且严重度未到 hot；3 档位部分落地或严重度已达 hot 以上
+# （温度或节流增速任一够格）；1 存在控制点但全部写入失败；2 用法错误。守护
+# 单元用 SuccessExitStatus=3 把「已降档但机器仍热」与真正的失败分开，避免
+# 过热时每个周期都触发 incident。
 
 """AirymaxOS power command line."""
 
@@ -24,6 +25,7 @@ from .policy import (
     DEFAULT_CHOICES,
     DEFAULT_CPUFREQ,
     DEFAULT_PROFILE,
+    DEFAULT_STATE,
     DEFAULT_SUPPLY,
     DEFAULT_THERMAL,
     DEFAULT_THROTTLE,
@@ -74,6 +76,7 @@ def _paths() -> tuple[tuple[str, str], ...]:
         ("--supply", "power_supply 类目录"),
         ("--thermal", "thermal 类目录"),
         ("--throttle", "cpu0/thermal_throttle 目录"),
+        ("--state", "节流增速采样文件"),
     )
 
 
@@ -91,6 +94,7 @@ def _args(argv: Sequence[str] | None) -> argparse.Namespace:
         supply=DEFAULT_SUPPLY,
         thermal=DEFAULT_THERMAL,
         throttle=DEFAULT_THROTTLE,
+        state=DEFAULT_STATE,
     )
     sub = parser.add_subparsers(dest="cmd", required=True)
     sub.add_parser("status", parents=[_opt()], help="只读评估当前档位")
@@ -107,6 +111,7 @@ def _policy(args: argparse.Namespace) -> Policy:
         supply=args.supply,
         thermal=args.thermal,
         throttle=args.throttle,
+        state=args.state,
     )
 
 
@@ -128,6 +133,7 @@ def _emit(found: Report, as_json: bool) -> None:
     print(f"{MARK} state={found.state.value} source={found.source.value}"
           f" charge={_percent(found.charge)}"
           f" severity={found.severity.value}"
+          f" rate={_speed(found.rate)}"
           f" landed={found.landed}/{found.present}")
     for zone in found.heat.zones:
         print(f"  zone {zone.name} {zone.celsius:.1f}C"
@@ -143,6 +149,10 @@ def _emit(found: Report, as_json: bool) -> None:
 
 def _percent(charge: int | None) -> str:
     return "-" if charge is None else f"{charge}%"
+
+
+def _speed(rate: float | None) -> str:
+    return "-" if rate is None else f"{rate:.2f}/s"
 
 
 def _limit(zone: Zone) -> str:

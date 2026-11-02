@@ -47,6 +47,7 @@ class Tree(unittest.TestCase):
             "supply": str(self.base / "supply"),
             "thermal": str(self.base / "thermal"),
             "throttle": str(self.base / "throttle"),
+            "state": str(self.base / "state"),
         }
         fields.update(over)
         return policy.Policy(**fields)
@@ -62,6 +63,13 @@ class Tree(unittest.TestCase):
 
     def unplug(self) -> None:
         shutil.rmtree(self.base / "supply", ignore_errors=True)
+
+    def both(self, status: str = "Discharging", capacity: int = 80,
+             online: str = "1") -> None:
+        """适配器与电池同时存在，用于净放电与充电两种现场。"""
+        self.mains(online)
+        self._supply("bat", "Battery",
+                     {"status": status, "capacity": str(capacity)})
 
     def zone(self, name: str, temp: int, critical: int | None = None,
              mode: str = "enabled", index: int = 0) -> None:
@@ -101,6 +109,7 @@ class Tree(unittest.TestCase):
             "--supply", str(self.base / "supply"),
             "--thermal", str(self.base / "thermal"),
             "--throttle", str(self.base / "throttle"),
+            "--state", str(self.base / "state"),
         ]
 
     def _supply(self, name: str, kind: str, fields: dict[str, str]) -> None:

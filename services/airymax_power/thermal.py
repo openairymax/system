@@ -37,6 +37,7 @@ __all__ = [
     "Zone",
     "collect",
     "grade",
+    "peak",
     "worst",
 ]
 
@@ -144,7 +145,12 @@ def worst(zones: tuple[Zone, ...]) -> Severity:
     live = [zone.severity for zone in zones if zone.active]
     if not live:
         return Severity.UNKNOWN
-    return max(live, key=lambda item: item.rank)
+    return peak(*live)
+
+
+def peak(*levels: Severity) -> Severity:
+    """取若干结论中最严重的一档。"""
+    return max(levels, key=lambda item: item.rank)
 
 
 def collect(policy: Policy) -> Thermal:

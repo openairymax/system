@@ -7,9 +7,11 @@
 # online/status，不读机型、不依赖 upower 之类的用户态守护进程——开机早期
 # 那些服务还没起来，而这时正是最需要把固件从 performance 拉回来的时刻。
 #
-# 判据顺序：任一 Mains 在线即 AC；电池在充电或已充满也按 AC 处理，因为
-# 此时负载由适配器承担；只有电池处于放电才是 BATTERY。有电池但状态读不到
-# 时按电池处理，宁可降档也不把续航与发热赌在未知状态上。
+# 判据顺序：Mains 在线且电池同时放电，说明适配器功率不足以覆盖当前负载，
+# 记为 WEAK——此时仍按 AC 处理会让系统继续维持高功耗，电量在「已插电」的
+# 假象下持续流失；Mains 在线且电池不在放电才是 AC；电池在充电或已充满也
+# 按 AC 处理，因为此时负载由适配器承担；只有电池处于放电才是 BATTERY。
+# 有电池但状态读不到时按电池处理，宁可降档也不把续航与发热赌在未知状态上。
 #
 # 电量单独读出，不参与供电来源判定：285H 现场取证时适配器未在线、电池
 # 30% 且放电中，机器仍在跑满核负载，几十瓦的持续放电会把电量耗尽并以
@@ -53,23 +55,33 @@ LOW_CHARGE = 10
 class Source(Enum):
     AC = "ac"
     BATTERY = "battery"
+    WEAK = "weak"
     UNKNOWN = "unknown"
 
 
 def detect(policy: Policy) -> Source:
     """判定当前供电来源；没有 power_supply 的机器返回 UNKNOWN。"""
-    battery = False
+    mains, battery, charging, draining = _scan(policy)
+    if mains and draining:
+        return Source.WEAK
+    if mains or charging:
+        return Source.AC
+    return Source.BATTERY if battery else Source.UNKNOWN
+
+
+def _scan(policy: Policy) -> tuple[bool, bool, bool, bool]:
+    """一次遍历收集四类事实，避免边扫边返回漏掉后出现的电池。"""
+    mains = battery = charging = draining = False
     for entry in _entries(policy):
         kind = sysfs.read_text(entry / "type")
-        if kind == MAINS and sysfs.read_text(entry / "online") == "1":
-            return Source.AC
-        if kind == BATTERY:
+        if kind == MAINS:
+            mains = mains or sysfs.read_text(entry / "online") == "1"
+        elif kind == BATTERY:
             battery = True
-            if sysfs.read_text(entry / "status") in CHARGING:
-                return Source.AC
-            if sysfs.read_text(entry / "status") == DISCHARGING:
-                return Source.BATTERY
-    return Source.BATTERY if battery else Source.UNKNOWN
+            status = sysfs.read_text(entry / "status")
+            charging = charging or status in CHARGING
+            draining = draining or status == DISCHARGING
+    return mains, battery, charging, draining
 
 
 def charge(policy: Policy) -> int | None:
