@@ -83,6 +83,41 @@ class Case(unittest.TestCase):
         got = engine.resolve(self.home, frozenset({model.Backend.CUDA}))
         self.assertEqual(status.load(self.home), got)
 
+    def test_cached_reuse(self) -> None:
+        self.write(sample(str(self.exe)))
+        first = engine.resolve(self.home, frozenset({model.Backend.CUDA}))
+        with mock.patch.object(engine.verify, "check",
+                               side_effect=AssertionError("re-verified")), \
+                mock.patch.object(engine.accel, "detect",
+                                  side_effect=AssertionError("re-probed")):
+            got = engine.cached(self.home)
+        self.assertEqual(got, first)
+
+    def test_cached_manifest_changed(self) -> None:
+        self.write(sample(str(self.exe)))
+        engine.resolve(self.home, frozenset({model.Backend.CUDA}))
+        self.write(sample(str(self.exe), digest="0" * 64))
+        with mock.patch.object(engine.accel, "detect",
+                               return_value=frozenset({model.Backend.CUDA})):
+            got = engine.cached(self.home)
+        self.assertIs(got.state, model.State.FAILED)
+        self.assertIs(got.reason, model.Reason.DIGEST_MISMATCH)
+
+    def test_cached_cold(self) -> None:
+        self.write(sample(str(self.exe)))
+        with mock.patch.object(engine.accel, "detect",
+                               return_value=frozenset({model.Backend.CUDA})):
+            got = engine.cached(self.home)
+        self.assertIs(got.state, model.State.READY)
+        self.assertEqual(status.load(self.home), got)
+
+    def test_cached_present_recomputes(self) -> None:
+        self.write(sample(str(self.exe)))
+        engine.resolve(self.home, frozenset({model.Backend.CUDA}))
+        got = engine.cached(self.home, frozenset())
+        self.assertIs(got.state, model.State.DEGRADED)
+        self.assertIs(got.reason, model.Reason.NO_ACCEL)
+
     def test_manifest_missing(self) -> None:
         got = engine.resolve(self.home, frozenset())
         self.assertIs(got.state, model.State.FAILED)
