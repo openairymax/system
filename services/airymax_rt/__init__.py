@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 from .allocation import Entry, allocate
+from .bandwidth import apply, inspect
 from .cgroup import Kind, Layout, detect
 from .policy import (
     DEFAULT_CGROUP,
@@ -27,6 +28,7 @@ from .policy import (
     MARK,
     Policy,
 )
+from .report import Landing, Report, State
 from .sysctl import Budget, budget, read_value
 
 __all__ = [
@@ -39,10 +41,15 @@ __all__ = [
     "Budget",
     "Entry",
     "Kind",
+    "Landing",
     "Layout",
     "Policy",
+    "Report",
+    "State",
     "allocate",
+    "apply",
     "budget",
     "detect",
+    "inspect",
     "read_value",
 ]

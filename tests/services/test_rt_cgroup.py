@@ -73,7 +73,11 @@ class DetectTest(TempTree):
 
     def test_v2_without_cpu(self) -> None:
         (self.base / cgroup.CONTROLLER).write_text("io memory\n", "ascii")
-        self.assertIsNone(cgroup.detect(str(self.base)))
+        found = cgroup.detect(str(self.base))
+        assert found is not None
+        self.assertIs(found.kind, cgroup.Kind.V2)
+        self.assertFalse(found.supported)
+        self.assertFalse(found.routed)
 
     def test_empty_root(self) -> None:
         self.assertIsNone(cgroup.detect(str(self.base)))
@@ -101,7 +105,8 @@ class WriteTest(TempTree):
         found = self.v2()
         self.assertTrue(cgroup.write(found, "airymax.slice", 190000, 1000000))
         path = cgroup.target(found, "airymax.slice") / cgroup.V2_FILE
-        self.assertEqual(path.read_text(encoding="ascii").strip(), "190000 1000000")
+        text = path.read_text(encoding="ascii").strip()
+        self.assertEqual(text, "190000 1000000")
         self.assertEqual(cgroup.read(found, "airymax.slice"), 190000)
 
     def test_v2_distributes_cpu(self) -> None:
