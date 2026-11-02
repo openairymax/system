@@ -24,6 +24,7 @@ docs-linux/190-distribution/04-update-mechanism.md §5.3
 
 from __future__ import annotations
 
+from .steps import run
 from .verdict import CHECKS, Report, Result
 
-__all__ = ["CHECKS", "Report", "Result"]
+__all__ = ["CHECKS", "Report", "Result", "run"]

@@ -95,6 +95,7 @@ class Reason(Enum):
     NO_MANIFEST = "no-manifest"
     DIGEST_MISMATCH = "digest-mismatch"
     ASSET_CORRUPT = "asset-corrupt"
+    STATE_UNWRITABLE = "state-unwritable"
 
 
 @dataclass(frozen=True, slots=True)
