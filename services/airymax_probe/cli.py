@@ -40,12 +40,6 @@ MAX_WINDOW = 60.0
 
 MAX_ROUNDS = 10
 
-ADVICE = {
-    State.OK: "取证面完整，十点追踪与三处计数均可用",
-    State.PARTIAL: "取证面部分可用，按 missing 与 samples 逐项补齐",
-    State.BLOCKED: "本机没有 airy 取证面，换 AirymaxOS 内核或换机器",
-}
-
 
 def main(argv: Sequence[str] | None = None) -> int:
     """解析命令行并分派；返回值即进程退出码。"""
@@ -181,7 +175,7 @@ def _emit(found: Report, as_json: bool) -> None:
         print(f"  write {item.channel:<8}-> {result}")
     _stats(found)
     _shots(found)
-    print(f"advice {ADVICE[found.state]}")
+    print(f"advice {found.hint}")
 
 
 def _stats(found: Report) -> None:
