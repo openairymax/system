@@ -1,0 +1,46 @@
+[Unit]
+Description=AirymaxOS Local Model Runtime
+Documentation=https://docs.agentrt.local/140-application-development/06-agent-deployment
+After=agentrt-firstboot.service
+Requires=agentrt-firstboot.service
+PartOf=agentrt.target
+OnFailure=airy-incident@%n.service
+StartLimitBurst=3
+StartLimitIntervalSec=300
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/airy-model serve
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=30
+KillMode=mixed
+User=airy
+Group=airy
+SupplementaryGroups=airy-cogn
+TasksMax=512
+LimitNOFILE=65536
+StateDirectory=airy-llm
+StateDirectoryMode=0750
+ReadWritePaths=/var/lib/airy-llm
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+PrivateTmp=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictSUIDSGID=yes
+RemoveIPC=yes
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+IOSchedulingClass=best-effort
+IOSchedulingPriority=4
+SyslogIdentifier=airy-llm
+StandardOutput=journal
+StandardError=journal
+OOMPolicy=stop
+
+[Install]
+WantedBy=agentrt.target

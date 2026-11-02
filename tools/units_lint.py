@@ -424,6 +424,55 @@ CHECK_PAIRS: dict[tuple[str, str], str] = {
     ("Service", "NoNewPrivileges"): "yes",
 }
 
+LLM = "airy-llm.service"
+
+# 推理单元不是 agentrt 的 daemon：它只消费首启准备好的清单与资产，不参与
+# 依赖矩阵，也不申请任何 capability。内存与 CPU 不设上限——模型加载与
+# 推理的峰值取决于权重尺寸，按机型拍一个值只会在换机型时被 OOM 杀掉；
+# 需要限额的部署用单元 drop-in 覆盖。PrivateDevices 不能开：GPU 后端
+# 依赖 /dev 下的设备节点。
+LLM_PAIRS: dict[tuple[str, str], str] = {
+    ("Unit", "After"): "agentrt-firstboot.service",
+    ("Unit", "Requires"): "agentrt-firstboot.service",
+    ("Unit", "PartOf"): "agentrt.target",
+    ("Unit", "OnFailure"): "airy-incident@%n.service",
+    ("Unit", "StartLimitBurst"): "3",
+    ("Unit", "StartLimitIntervalSec"): "300",
+    ("Service", "Type"): "simple",
+    ("Service", "ExecStart"): "/usr/bin/airy-model serve",
+    ("Service", "Restart"): "on-failure",
+    ("Service", "RestartSec"): "5s",
+    ("Service", "TimeoutStopSec"): "30",
+    ("Service", "KillMode"): "mixed",
+    ("Service", "User"): "airy",
+    ("Service", "Group"): "airy",
+    ("Service", "SupplementaryGroups"): "airy-cogn",
+    ("Service", "TasksMax"): "512",
+    ("Service", "LimitNOFILE"): "65536",
+    ("Service", "StateDirectory"): "airy-llm",
+    ("Service", "StateDirectoryMode"): "0750",
+    ("Service", "ReadWritePaths"): "/var/lib/airy-llm",
+    ("Service", "ProtectSystem"): "strict",
+    ("Service", "ProtectHome"): "yes",
+    ("Service", "ProtectKernelTunables"): "yes",
+    ("Service", "ProtectKernelModules"): "yes",
+    ("Service", "ProtectControlGroups"): "yes",
+    ("Service", "PrivateTmp"): "yes",
+    ("Service", "RestrictAddressFamilies"): "AF_UNIX AF_INET AF_INET6",
+    ("Service", "RestrictSUIDSGID"): "yes",
+    ("Service", "RemoveIPC"): "yes",
+    ("Service", "NoNewPrivileges"): "yes",
+    ("Service", "CapabilityBoundingSet"): "",
+    ("Service", "AmbientCapabilities"): "",
+    ("Service", "IOSchedulingClass"): "best-effort",
+    ("Service", "IOSchedulingPriority"): "4",
+    ("Service", "SyslogIdentifier"): "airy-llm",
+    ("Service", "StandardOutput"): "journal",
+    ("Service", "StandardError"): "journal",
+    ("Service", "OOMPolicy"): "stop",
+    ("Install", "WantedBy"): "agentrt.target",
+}
+
 TIMERS: dict[str, dict[tuple[str, str], str]] = {
     "airymax-update-check.timer": {
         ("Unit", "Description"): "Daily AirymaxOS Update Check",
@@ -437,6 +486,7 @@ TIMERS: dict[str, dict[tuple[str, str], str]] = {
 UNITS = frozenset(SERVICES) | frozenset(TARGETS) | frozenset(TEMPLATES) | {
     FIRSTBOOT,
     HEALTH,
+    LLM,
     UPDATE_CHECK,
 } | frozenset(TIMERS)
 
@@ -679,6 +729,10 @@ def _check_bad(name: str, cfg: ConfigParser) -> list[str]:
     return _pairs_bad(name, cfg, dict(CHECK_PAIRS))
 
 
+def _llm_bad(name: str, cfg: ConfigParser) -> list[str]:
+    return _pairs_bad(name, cfg, dict(LLM_PAIRS))
+
+
 def _timer_bad(name: str, cfg: ConfigParser) -> list[str]:
     return _pairs_bad(name, cfg, dict(TIMERS[name]))
 
@@ -694,6 +748,8 @@ def _body_bad(name: str, cfg: ConfigParser) -> list[str]:
         return _health_bad(name, cfg)
     if name == UPDATE_CHECK:
         return _check_bad(name, cfg)
+    if name == LLM:
+        return _llm_bad(name, cfg)
     if name in TIMERS:
         return _timer_bad(name, cfg)
     return _incident_bad(name, cfg)
