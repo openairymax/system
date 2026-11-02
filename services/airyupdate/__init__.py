@@ -35,6 +35,18 @@ from .model import (
     Kernel,
     Manifest,
 )
+from .state import (
+    Corrupt,
+    Failure,
+    Finding,
+    State,
+    load,
+    record_error,
+    record_ok,
+    record_sent,
+    save,
+    state_path,
+)
 
 __all__ = [
     "CHANNELS",
@@ -53,11 +65,21 @@ __all__ = [
     "STATE_DIR",
     "STATE_FILE",
     "Asset",
+    "Corrupt",
+    "Failure",
+    "Finding",
     "Identity",
     "Kernel",
     "Manifest",
+    "State",
     "Untrusted",
     "Verdict",
     "compare",
+    "load",
     "load_manifest",
+    "record_error",
+    "record_ok",
+    "record_sent",
+    "save",
+    "state_path",
 ]
