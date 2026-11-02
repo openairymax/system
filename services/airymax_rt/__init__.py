@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 from .allocation import Entry, allocate
+from .cgroup import Kind, Layout, detect
 from .policy import (
     DEFAULT_CGROUP,
     DEFAULT_DIVISOR,
@@ -37,8 +38,11 @@ __all__ = [
     "MARK",
     "Budget",
     "Entry",
+    "Kind",
+    "Layout",
     "Policy",
     "allocate",
     "budget",
+    "detect",
     "read_value",
 ]
