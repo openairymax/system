@@ -1,0 +1,21 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# ===========================================================================
+# airy-rt-coexist.timer — 共存策略的周期重评
+#
+# 争用是时变的：登录、编译、模型推理都会把 PSI 推过阈值，也会在结束后
+# 落回基线。开机后先等桌面与带宽单元就位，再按分钟重评；每次评估只做两次
+# systemctl 查询与一次属性写入，权重未变时不写。
+# ===========================================================================
+
+[Unit]
+Description=Periodic AirymaxOS Desktop and Real-Time Coexistence Check
+Documentation=https://docs.agentrt.local/170-performance/07-rt-matrix
+
+[Timer]
+OnBootSec=90s
+OnUnitInactiveSec=60s
+AccuracySec=15s
+Unit=airy-rt-coexist.service
+
+[Install]
+WantedBy=timers.target

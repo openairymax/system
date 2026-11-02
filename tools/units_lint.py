@@ -22,6 +22,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 __all__ = [
+    "COEXIST",
     "FIRSTBOOT",
     "SERVICES",
     "TARGETS",
@@ -489,6 +490,28 @@ POWER_PAIRS: dict[tuple[str, str], str] = {
     ("Install", "WantedBy"): "multi-user.target",
 }
 
+COEXIST = "airy-rt-coexist.service"
+
+# 共存单元只经 D-Bus 让 systemd 改一个运行时属性，不直接写 cgroupfs：
+# --runtime 的语义只有 systemd 能保证，自己写文件会在单元重载后被冲掉。
+# 服务在桌面 slice 未加载时以 0 退出，因此不挂 incident——无桌面机器
+# 每一轮都会走到这条路径，挂上只会把正常状态记成故障。ProtectSystem
+# 不拦 D-Bus 套接字；单元本身是 oneshot，不设 RemainAfterExit，定时器
+# 的 OnUnitInactiveSec 才有下一次触发。
+COEXIST_PAIRS: dict[tuple[str, str], str] = {
+    ("Unit", "After"): "sysinit.target airy-rt-bandwidth.service",
+    ("Unit", "Before"): "display-manager.service",
+    ("Unit", "ConditionPathExists"): "/usr/bin/airy-rt-cap",
+    ("Service", "Type"): "oneshot",
+    ("Service", "ExecStart"): "/usr/bin/airy-rt-cap coexist --apply",
+    ("Service", "TimeoutStartSec"): "60",
+    ("Service", "ProtectSystem"): "strict",
+    ("Service", "ProtectHome"): "yes",
+    ("Service", "PrivateTmp"): "yes",
+    ("Service", "NoNewPrivileges"): "yes",
+    ("Install", "WantedBy"): "multi-user.target",
+}
+
 UPDATE_CHECK = "airymax-update-check.service"
 
 CHECK_PAIRS: dict[tuple[str, str], str] = {
@@ -584,9 +607,20 @@ TIMERS: dict[str, dict[tuple[str, str], str]] = {
         ("Timer", "Unit"): POWER,
         ("Install", "WantedBy"): "timers.target",
     },
+    "airy-rt-coexist.timer": {
+        ("Unit", "Description"): (
+            "Periodic AirymaxOS Desktop and Real-Time Coexistence Check"
+        ),
+        ("Timer", "OnBootSec"): "90s",
+        ("Timer", "OnUnitInactiveSec"): "60s",
+        ("Timer", "AccuracySec"): "15s",
+        ("Timer", "Unit"): COEXIST,
+        ("Install", "WantedBy"): "timers.target",
+    },
 }
 
 UNITS = frozenset(SERVICES) | frozenset(TARGETS) | frozenset(TEMPLATES) | {
+    COEXIST,
     DISK_HEALTH,
     DISK_MOUNT,
     FIRSTBOOT,
@@ -861,6 +895,8 @@ def _body_bad(name: str, cfg: ConfigParser) -> list[str]:
         return _pairs_bad(name, cfg, dict(RT_PAIRS))
     if name == POWER:
         return _pairs_bad(name, cfg, dict(POWER_PAIRS))
+    if name == COEXIST:
+        return _pairs_bad(name, cfg, dict(COEXIST_PAIRS))
     if name == UPDATE_CHECK:
         return _check_bad(name, cfg)
     if name == LLM:
