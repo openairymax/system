@@ -57,6 +57,15 @@ class SupplyTest(Tree):
         self.battery("Charging")
         self.assertIs(detect(self.policy()), Source.AC)
 
+    def test_weak(self) -> None:
+        """适配器在线仍放电说明功率不足，不能算 AC。"""
+        self.both()
+        self.assertIs(detect(self.policy()), Source.WEAK)
+
+    def test_mains_off(self) -> None:
+        self.both(online="0")
+        self.assertIs(detect(self.policy()), Source.BATTERY)
+
     def test_unknown_battery(self) -> None:
         self.battery("Unknown")
         self.assertIs(detect(self.policy()), Source.BATTERY)
@@ -149,6 +158,16 @@ class TuneTest(Tree):
         self.assertIs(found.state, State.OK)
         self.assertIs(found.severity, Severity.HOT)
         self.assertIn("low-power", self.profile.read_text())
+
+    def test_weak(self) -> None:
+        """适配器功率不足时按 cool 落地，回读证据里带上 source=weak。"""
+        self.both(capacity=60)
+        found = guard.apply(self.policy())
+        self.assertIs(found.state, State.OK)
+        self.assertEqual(found.source, Source.WEAK)
+        self.assertIn("low-power", self.profile.read_text())
+        node = self.base / "cpu" / "policy0" / "energy_performance_preference"
+        self.assertEqual(node.read_text("ascii"), "power\n")
 
     def test_unsupported(self) -> None:
         missing = str(self.base / "missing")

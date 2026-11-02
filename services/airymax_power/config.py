@@ -44,6 +44,7 @@ def temp_advice(severity: Severity) -> str:
 def reference(policy: Policy) -> str:
     rows = (
         ("ac", policy.ac),
+        ("weak", policy.cool),
         ("battery", policy.battery),
         ("cool", policy.cool),
     )

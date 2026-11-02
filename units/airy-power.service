@@ -13,6 +13,8 @@ TimeoutStartSec=60
 ProtectSystem=strict
 ProtectHome=yes
 PrivateTmp=yes
+RuntimeDirectory=airy-power
+RuntimeDirectoryPreserve=yes
 NoNewPrivileges=yes
 
 [Install]

@@ -24,6 +24,7 @@ __all__ = [
     "DEFAULT_SUPPLY",
     "DEFAULT_THERMAL",
     "DEFAULT_THROTTLE",
+    "DEFAULT_STATE",
     "MARK",
     "NORMAL_AC",
     "NORMAL_BATTERY",
@@ -42,6 +43,8 @@ DEFAULT_SUPPLY = "/sys/class/power_supply"
 DEFAULT_THERMAL = "/sys/class/thermal"
 
 DEFAULT_THROTTLE = "/sys/devices/system/cpu/cpu0/thermal_throttle"
+
+DEFAULT_STATE = "/run/airy-power/throttle"
 
 MARK = "AIRYMAX-POWER"
 
@@ -80,6 +83,7 @@ class Policy:
     supply: str = DEFAULT_SUPPLY
     thermal: str = DEFAULT_THERMAL
     throttle: str = DEFAULT_THROTTLE
+    state: str = DEFAULT_STATE
     ac: Tuning = NORMAL_AC
     battery: Tuning = NORMAL_BATTERY
     cool: Tuning = COOL
