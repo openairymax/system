@@ -2,11 +2,12 @@
 #
 # AirymaxOS 模型运行环境命令行入口
 #
-# 五个子命令对应五件事：status 读已落盘的判定，供监控轮询；verify 强制
+# 六个子命令对应六件事：status 读已落盘的判定，供监控轮询；verify 强制
 # 重算，供排障与门禁；install 把离线包收进运行根；serve 供 systemd 的
-# ExecStart 直接拉起引擎；probe 报加速后端与逐项依据。status 与 verify
-# 因此不共用一个实现——一个允许复用缓存，另一个不允许，混成一条命令就
-# 只能靠调用方记住该不该加参数。
+# ExecStart 直接拉起引擎；probe 报加速后端与逐项依据；selftest 在完全
+# 离线的前提下把前几件事串成一条可核对的链。status 与 verify 因此不共用
+# 一个实现——一个允许复用缓存，另一个不允许，混成一条命令就只能靠调用方
+# 记住该不该加参数。
 #
 # probe 不读运行根：它问的是这台机器有什么，与装了什么模型无关，因此
 # 没有对应的根参数，也不写状态文件。它是只读探针，任何机器上都返回 0，
@@ -32,7 +33,7 @@ import json
 import sys
 from collections.abc import Sequence
 
-from . import accel, channel, engine, launch, model, report
+from . import accel, channel, engine, launch, model, report, selftest
 from .failure import Failure
 
 __all__ = ["EXIT_DEGRADED", "EXIT_FAIL", "EXIT_OK", "main"]
@@ -86,6 +87,9 @@ def _args(argv: Sequence[str] | None) -> argparse.Namespace:
     probe = sub.add_parser("probe", help="探测加速后端并逐项列出依据")
     probe.add_argument("--json", action="store_true", help="以 JSON 输出")
     probe.set_defaults(func=_probe)
+    check = sub.add_parser("selftest", help="完全离线地自检运行环境")
+    check.add_argument("--json", action="store_true", help="以 JSON 输出")
+    check.set_defaults(func=_selftest)
     return parser.parse_args(argv)
 
 
@@ -132,3 +136,15 @@ def _probe(args: argparse.Namespace) -> int:
     else:
         print(report.probe_line(rows))
     return EXIT_OK
+
+
+def _selftest(args: argparse.Namespace) -> int:
+    """逐项自检并把判定落盘；退出码与 status/verify 同源。"""
+    result = selftest.run(args.root)
+    if args.json:
+        print(json.dumps(report.selftest_fields(result), ensure_ascii=False))
+    else:
+        for row in result.rows:
+            print(report.check_line(row))
+        print(report.line(result.status))
+    return _CODES[result.status.state]
