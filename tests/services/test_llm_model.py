@@ -44,6 +44,7 @@ class TokenTest(unittest.TestCase):
                 "no-manifest",
                 "digest-mismatch",
                 "asset-corrupt",
+                "state-unwritable",
             },
         )
 
