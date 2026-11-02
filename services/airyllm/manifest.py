@@ -38,8 +38,10 @@ def parse(payload: str) -> model.Manifest:
     if not isinstance(obj, dict):
         raise Failure("清单顶层必须是对象", model.Reason.NO_MANIFEST)
     _keys(obj, model.MANIFEST_FIELDS, model.Reason.NO_MANIFEST)
-    if obj["schema"] != model.SCHEMA_VERSION:
-        raise Failure(f"清单版本 {obj['schema']!r} 不受支持",
+    version = obj["schema"]
+    if not isinstance(version, int) or isinstance(version, bool) \
+            or version != model.SCHEMA_VERSION:
+        raise Failure(f"清单版本 {version!r} 不受支持",
                       model.Reason.NO_MANIFEST)
     return model.Manifest(
         schema=model.SCHEMA_VERSION,
