@@ -20,9 +20,21 @@ from unittest import mock
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "services"))
 
-from airyllm import launch, model, serve  # noqa: E402
+from airyllm import accel, launch, model, serve  # noqa: E402
 
 BODY = b"weight-bytes"
+
+MISSING = (
+    accel.Observation(model.Backend.CUDA, False,
+                      ("missing:dev/nvidiactl", "missing:dev/nvidia0")),
+    accel.Observation(model.Backend.CPU, True, ("builtin",)),
+)
+
+READY = (
+    accel.Observation(model.Backend.CUDA, True, ("ok:dev/nvidiactl",
+                                                 "ok:dev/nvidia0")),
+    accel.Observation(model.Backend.CPU, True, ("builtin",)),
+)
 
 
 def sample(engine: str) -> dict:
@@ -124,6 +136,33 @@ class RunTest(Base):
             with redirect_stderr(err):
                 launch.run(self.home, frozenset())
         self.assertIn("degraded:no-accel", err.getvalue())
+
+    def test_decline_evidence(self) -> None:
+        self.write(sample(str(self.exe)))
+        with mock.patch.object(launch.accel, "probe", return_value=MISSING), \
+                mock.patch.object(launch.os, "execv"):
+            err = io.StringIO()
+            with redirect_stderr(err):
+                launch.run(self.home)
+        self.assertIn("probe: cuda missing:dev/nvidiactl "
+                      "missing:dev/nvidia0", err.getvalue())
+
+    def test_probe_once(self) -> None:
+        self.write(sample(str(self.exe)))
+        with mock.patch.object(launch.accel, "probe",
+                               return_value=READY) as seen, \
+                mock.patch.object(launch.os, "execv"):
+            launch.run(self.home)
+        self.assertEqual(seen.call_count, 1)
+
+    def test_ready_silent(self) -> None:
+        self.write(sample(str(self.exe)))
+        with mock.patch.object(launch.accel, "probe", return_value=READY), \
+                mock.patch.object(launch.os, "execv"):
+            err = io.StringIO()
+            with redirect_stderr(err):
+                launch.run(self.home)
+        self.assertEqual(err.getvalue(), "")
 
 
 if __name__ == "__main__":

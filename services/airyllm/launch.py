@@ -8,6 +8,10 @@
 #
 # 判定失败时以区别于普通退出的码结束，让 systemd 把它记成配置错误而
 # 不是崩溃；两者在运维上的处置完全不同。
+#
+# 降级或失败时连探测依据一起写进日志：只报一句「没有加速后端」，用户
+# 无从判断是驱动缺失、设备节点不可访问，还是 ICD 清单指向了不存在的库。
+# 依据只在本层现场探测时才有，调用方给定后端集合时不再重复探测。
 
 """AirymaxOS inference service launcher (K-20-12).
 
@@ -22,7 +26,7 @@ import os
 import sys
 from pathlib import Path
 
-from . import engine, model, paths, report, serve
+from . import accel, engine, model, paths, report, serve
 
 __all__ = ["EXIT_UNAVAILABLE", "plan", "run"]
 
@@ -57,16 +61,28 @@ def run(root: str | Path | None = None,
 
     Returns:
         仅在无法启动时返回 :data:`EXIT_UNAVAILABLE`；降级启动照常进行，
-        但先把降级原因写进日志，避免用户以为在用加速后端。
+        但先把降级原因与探测依据写进日志，避免用户以为在用加速后端。
     """
-    result, argv = plan(root, present)
+    rows = accel.probe() if present is None else ()
+    result, argv = plan(root, present if present is not None
+                        else accel.present(rows))
     if not argv:
         print(f"airy-llm: {report.token(result)}", file=sys.stderr)
+        _decline(rows)
         return EXIT_UNAVAILABLE
     if result.state is model.State.DEGRADED:
         print(f"airy-llm: {report.token(result)}", file=sys.stderr)
+        _decline(rows)
     try:
         os.execv(argv[0], argv)
     except OSError as exc:
         print(f"airy-llm: exec: {exc}", file=sys.stderr)
     return EXIT_UNAVAILABLE
+
+
+def _decline(rows: tuple[accel.Observation, ...]) -> None:
+    """逐条打印未命中的后端及其探测依据；调用方给定集合时无依据可打。"""
+    for row in rows:
+        if not row.present:
+            print(f"airy-llm: probe: {row.backend.value} "
+                  f"{' '.join(row.evidence)}", file=sys.stderr)
