@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from .feed import Untrusted, load_manifest
 from .identity import Verdict, compare
+from .local import Probe, local_identity
 from .model import (
     CHANNELS,
     CHANNEL_STABLE,
@@ -71,12 +72,14 @@ __all__ = [
     "Identity",
     "Kernel",
     "Manifest",
+    "Probe",
     "State",
     "Untrusted",
     "Verdict",
     "compare",
     "load",
     "load_manifest",
+    "local_identity",
     "record_error",
     "record_ok",
     "record_sent",
