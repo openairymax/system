@@ -8,7 +8,7 @@
 # 一个把性能锁死或把保护关掉的档位。写入侧只回答「内核收没接受」，
 # 是否生效一律由调用方回读判定。
 
-"""AirymaxOS sysfs helpers (X-06)."""
+"""AirymaxOS sysfs helpers."""
 
 from __future__ import annotations
 

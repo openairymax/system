@@ -11,7 +11,7 @@
 # 把「已降档但机器仍热」与真正的失败分开，避免过热时每个周期都触发
 # incident。
 
-"""AirymaxOS power command line (X-06)."""
+"""AirymaxOS power command line."""
 
 from __future__ import annotations
 

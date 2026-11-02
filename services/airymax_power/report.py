@@ -7,7 +7,7 @@
 # 机器已经很热」是两类不同的故障，现场处置完全不同。报告只负责把这三块
 # 证据原样收敛成一份可序列化的结构，判定与退出码留在调用方。
 
-"""AirymaxOS power report (X-06)."""
+"""AirymaxOS power report."""
 
 from __future__ import annotations
 

@@ -1,0 +1,12 @@
+[Unit]
+Description=Periodic AirymaxOS Power and Thermal Re-evaluation
+Documentation=https://docs.agentrt.local/100-operations/02-configuration
+
+[Timer]
+OnBootSec=120s
+OnUnitInactiveSec=60s
+AccuracySec=15s
+Unit=airy-power.service
+
+[Install]
+WantedBy=timers.target

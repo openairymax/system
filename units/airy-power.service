@@ -1,0 +1,19 @@
+[Unit]
+Description=Apply AirymaxOS Power and Thermal Profile
+Documentation=https://docs.agentrt.local/100-operations/02-configuration
+After=sysinit.target
+Before=agentrt.target display-manager.service
+OnFailure=airy-incident@%n.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/airy-power apply
+SuccessExitStatus=3
+TimeoutStartSec=60
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=multi-user.target

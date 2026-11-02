@@ -12,7 +12,7 @@
 # governor 与 EPP，因为 platform_profile 会重置 EPP 的可用取值，反过来
 # 则不会。
 
-"""AirymaxOS power knobs (X-06)."""
+"""AirymaxOS power knobs."""
 
 from __future__ import annotations
 

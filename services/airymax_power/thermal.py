@@ -14,7 +14,7 @@
 # 低功耗档。所有温度以毫摄氏度整数参与计算，显示时才折算，避免浮点误差
 # 把 0.05°C 的余量算成跨级。
 
-"""AirymaxOS thermal sampling (X-06)."""
+"""AirymaxOS thermal sampling."""
 
 from __future__ import annotations
 

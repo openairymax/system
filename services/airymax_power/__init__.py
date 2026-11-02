@@ -6,7 +6,7 @@
 # 命令行入口。sysfs 读写与采样细节留在各自模块，避免调用方绕过回读直接
 # 写节点而制造第二套判定口径。
 
-"""AirymaxOS power and thermal management (X-06)."""
+"""AirymaxOS power and thermal management."""
 
 from .cli import main
 from .guard import apply, assess, choose, inspect
