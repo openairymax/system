@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import json
 import sys
 import unittest
 from pathlib import Path
@@ -17,6 +18,34 @@ sys.path.insert(0, str(ROOT / "services"))
 from airyllm import model, report  # noqa: E402
 
 DIGEST = "ab" * 32
+
+
+class FieldsTest(unittest.TestCase):
+    """``status --json`` 的字段集固定，缺省用 ``None`` 与空串表达。"""
+
+    def test_ready(self) -> None:
+        entry = model.Status(state=model.State.READY,
+                             backend=model.Backend.CUDA, digest=DIGEST)
+        self.assertEqual(report.fields(entry),
+                         {"state": "ready", "backend": "cuda",
+                          "reason": None, "digest": DIGEST})
+
+    def test_degraded(self) -> None:
+        entry = model.Status(state=model.State.DEGRADED,
+                             backend=model.Backend.CPU,
+                             reason=model.Reason.NO_ACCEL, digest=DIGEST)
+        self.assertEqual(report.fields(entry),
+                         {"state": "degraded", "backend": "cpu",
+                          "reason": "no-accel", "digest": DIGEST})
+
+    def test_json(self) -> None:
+        """映射必须可直出 JSON，原因取枚举 token 而非自由文本。"""
+        entry = model.Status(state=model.State.FAILED,
+                             backend=model.Backend.CPU,
+                             reason=model.Reason.NO_MANIFEST)
+        obj = json.loads(json.dumps(report.fields(entry)))
+        self.assertEqual(obj["reason"], "no-manifest")
+        self.assertEqual(obj["digest"], "")
 
 
 class TokenTest(unittest.TestCase):

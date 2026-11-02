@@ -8,6 +8,9 @@
 #
 # token 只由状态与原因组成，不带版本与摘要：它要能被 grep、被 systemd
 # 条件表达式直接引用；富字段留在行式输出里。
+#
+# 行式与 JSON 两种渲染共用一份字段映射：字段名一旦分头维护，CLI 与日志
+# 迟早会给出两套键名，排障时先要确认两处说的是不是同一件事。
 
 """AirymaxOS model runtime status rendering (K-20-08).
 
@@ -20,7 +23,25 @@ from __future__ import annotations
 
 from . import model
 
-__all__ = ["line", "token"]
+__all__ = ["fields", "line", "token"]
+
+
+def fields(entry: model.Status) -> dict[str, str | None]:
+    """把状态摊成对外字段映射。
+
+    Args:
+        entry: 状态对象。
+
+    Returns:
+        按 ``state``、``backend``、``reason``、``digest`` 顺序排列的映射；
+        无原因时 ``reason`` 为 ``None``，无摘要时 ``digest`` 为空串。
+    """
+    return {
+        "state": entry.state.value,
+        "backend": entry.backend.value,
+        "reason": None if entry.reason is None else entry.reason.value,
+        "digest": entry.digest,
+    }
 
 
 def token(entry: model.Status) -> str:
@@ -46,10 +67,6 @@ def line(entry: model.Status) -> str:
     Returns:
         以空格分隔的 ``key=value`` 序列；无原因与无摘要时省略对应字段。
     """
-    fields = [f"state={entry.state.value}",
-              f"backend={entry.backend.value}"]
-    if entry.reason is not None:
-        fields.append(f"reason={entry.reason.value}")
-    if entry.digest:
-        fields.append(f"digest={entry.digest}")
-    return " ".join(fields)
+    pairs = (f"{key}={value}" for key, value in fields(entry).items()
+             if value not in (None, ""))
+    return " ".join(pairs)
