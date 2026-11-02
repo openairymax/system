@@ -2,10 +2,15 @@
 #
 # AirymaxOS 模型运行环境命令行入口
 #
-# 四个子命令对应四件事：status 读已落盘的判定，供监控轮询；verify 强制
+# 五个子命令对应五件事：status 读已落盘的判定，供监控轮询；verify 强制
 # 重算，供排障与门禁；install 把离线包收进运行根；serve 供 systemd 的
-# ExecStart 直接拉起引擎。status 与 verify 因此不共用一个实现——一个允许
-# 复用缓存，另一个不允许，混成一条命令就只能靠调用方记住该不该加参数。
+# ExecStart 直接拉起引擎；probe 报加速后端与逐项依据。status 与 verify
+# 因此不共用一个实现——一个允许复用缓存，另一个不允许，混成一条命令就
+# 只能靠调用方记住该不该加参数。
+#
+# probe 不读运行根：它问的是这台机器有什么，与装了什么模型无关，因此
+# 没有对应的根参数，也不写状态文件。它是只读探针，任何机器上都返回 0，
+# 让调用方从输出里判断，而不是先从退出码里猜。
 #
 # 退出码 0 就绪、10 降级、1 失败：降级不是故障，服务仍在提供推理能力，
 # 只是慢一些；把两者并成一个非零码，监控就无法区分「该扩容显卡」与
@@ -27,7 +32,7 @@ import json
 import sys
 from collections.abc import Sequence
 
-from . import channel, engine, launch, model, report
+from . import accel, channel, engine, launch, model, report
 from .failure import Failure
 
 __all__ = ["EXIT_DEGRADED", "EXIT_FAIL", "EXIT_OK", "main"]
@@ -78,6 +83,9 @@ def _args(argv: Sequence[str] | None) -> argparse.Namespace:
     install.set_defaults(func=_install)
     serve = sub.add_parser("serve", help="按判定拉起推理引擎（systemd 用）")
     serve.set_defaults(func=_serve)
+    probe = sub.add_parser("probe", help="探测加速后端并逐项列出依据")
+    probe.add_argument("--json", action="store_true", help="以 JSON 输出")
+    probe.set_defaults(func=_probe)
     return parser.parse_args(argv)
 
 
@@ -114,3 +122,13 @@ def _install(args: argparse.Namespace) -> int:
 
 def _serve(args: argparse.Namespace) -> int:
     return launch.run(args.root)
+
+
+def _probe(args: argparse.Namespace) -> int:
+    """输出探测结论；探测本身不改变任何状态，故恒返回 0。"""
+    rows = accel.probe()
+    if args.json:
+        print(json.dumps(report.probe_fields(rows), ensure_ascii=False))
+    else:
+        print(report.probe_line(rows))
+    return EXIT_OK
