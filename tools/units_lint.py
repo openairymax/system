@@ -469,7 +469,9 @@ POWER = "airy-power.service"
 # RemainAfterExit——oneshot 退出后回到 inactive，timer 的 OnUnitInactiveSec
 # 才能继续排下一次；设成 active (exited) 会让周期重评永不触发。退出码 3
 # 表示「已降档但机器仍热」，按成功上报，只有真正的写入失败才交 incident。
-# ProtectSystem=strict 不覆盖 /dev、/proc、/sys，sysfs 写入照常。
+# ProtectSystem=strict 不覆盖 /dev、/proc、/sys，sysfs 写入照常。节流采样
+# 落在 /run/airy-power，oneshot 每次退出都会回收运行时目录；Preserve=yes
+# 才能把上一次的计数留到下一次，否则每轮都当作首次采样，永远算不出增速。
 POWER_PAIRS: dict[tuple[str, str], str] = {
     ("Unit", "After"): "sysinit.target",
     ("Unit", "Before"): "agentrt.target display-manager.service",
@@ -478,6 +480,8 @@ POWER_PAIRS: dict[tuple[str, str], str] = {
     ("Service", "ExecStart"): "/usr/bin/airy-power apply",
     ("Service", "SuccessExitStatus"): "3",
     ("Service", "TimeoutStartSec"): "60",
+    ("Service", "RuntimeDirectory"): "airy-power",
+    ("Service", "RuntimeDirectoryPreserve"): "yes",
     ("Service", "ProtectSystem"): "strict",
     ("Service", "ProtectHome"): "yes",
     ("Service", "PrivateTmp"): "yes",
