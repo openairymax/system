@@ -1,0 +1,31 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# ===========================================================================
+# airy-rt-coexist.service — 桌面与实时负载的共存评估
+#
+# 一次性评估：读实时能力矩阵与 PSI 的 CPU some avg10，决定桌面 slice
+# 的 CPUWeight，写入运行时属性并回读。--runtime 让改动只存在于本次启动，
+# 基线仍由 airymax-desktop.slice 钉住，重启后不会留下没有守护进程解释
+# 的权重。
+#
+# 由定时器周期触发；桌面 slice 只在登录后存在，未登录时单元报告
+# absent 并以 0 退出，不产生 failed 与 incident。
+# ===========================================================================
+
+[Unit]
+Description=Apply AirymaxOS desktop and real-time coexistence policy
+Documentation=https://docs.agentrt.local/170-performance/07-rt-matrix
+After=sysinit.target airy-rt-bandwidth.service
+Before=display-manager.service
+ConditionPathExists=/usr/bin/airy-rt-cap
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/airy-rt-cap coexist --apply
+TimeoutStartSec=60
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=multi-user.target

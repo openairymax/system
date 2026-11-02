@@ -21,65 +21,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "services"))
 
 from airymax_rt import cli, cgroup, matrix  # noqa: E402
-
-
-class Machine:
-    """一台临时机器：节点按用例增删，不依赖宿主内核。"""
-
-    def __init__(self, base: Path) -> None:
-        self.base = base
-        self.sys = base / "sys"
-        self.proc = base / "proc"
-        self.cgroup = base / "cgroup"
-        self.cmdline = self.proc / "cmdline"
-        self.sys.mkdir()
-        self.proc.mkdir()
-        self.cgroup.mkdir()
-        self.cmdline.write_text("", encoding="ascii")
-
-    def put(self, path: Path, text: str) -> None:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(text + "\n", encoding="ascii")
-
-    def realtime(self, value: str = "1") -> None:
-        self.put(self.sys / "kernel" / "realtime", value)
-
-    def budget(self, value: str = "950000") -> None:
-        self.put(
-            self.proc / "sys" / "kernel" / "sched_rt_runtime_us", value
-        )
-
-    def deadline(self) -> None:
-        self.put(
-            self.proc / "sys" / "kernel" / "sched_deadline_period_max_us",
-            "100000000",
-        )
-
-    def governor(self, value: str = "performance") -> None:
-        self.put(
-            self.sys / "devices" / "system" / "cpu" / "cpu0" / "cpufreq"
-            / "scaling_governor",
-            value,
-        )
-
-    def clocksource(self, value: str = "tsc") -> None:
-        self.put(
-            self.sys / "devices" / "system" / "clocksource"
-            / "clocksource0" / "current_clocksource",
-            value,
-        )
-
-    def group(self) -> None:
-        mount = self.cgroup / "cpu,cpuacct"
-        self.put(mount / cgroup.V1_FILE, "950000")
-
-    def roots(self) -> matrix.Roots:
-        return matrix.Roots(
-            sys=str(self.sys),
-            proc=str(self.proc),
-            cgroup=str(self.cgroup),
-            cmdline=str(self.cmdline),
-        )
+from rt_fixture import Machine  # noqa: E402
 
 
 class Base(unittest.TestCase):

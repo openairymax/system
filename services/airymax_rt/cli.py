@@ -26,7 +26,7 @@ import json
 import sys
 from collections.abc import Sequence
 
-from . import bandwidth, config, matrix
+from . import bandwidth, coexist, config, matrix
 from .policy import (
     DEFAULT_CGROUP,
     DEFAULT_PERIOD,
@@ -50,6 +50,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = _args(argv)
     if args.cmd == "matrix":
         return _matrix(args)
+    if args.cmd == "coexist":
+        return _coexist(args)
     policy = _policy(args)
     if args.cmd == "config":
         sys.stdout.write(config.reference())
@@ -112,6 +114,30 @@ def _opt() -> argparse.ArgumentParser:
         default=argparse.SUPPRESS,
         help="内核命令行文件",
     )
+    opt.add_argument(
+        "--systemctl",
+        metavar="FILE",
+        default=argparse.SUPPRESS,
+        help="systemctl 路径（共存策略）",
+    )
+    opt.add_argument(
+        "--desktop",
+        metavar="UNIT",
+        default=argparse.SUPPRESS,
+        help="桌面 slice 单元名（共存策略）",
+    )
+    opt.add_argument(
+        "--pressure",
+        metavar="FILE",
+        default=argparse.SUPPRESS,
+        help="PSI CPU 计数文件（共存策略）",
+    )
+    opt.add_argument(
+        "--apply",
+        action="store_true",
+        default=argparse.SUPPRESS,
+        help="落地运行时权重并回读（共存策略）",
+    )
     return opt
 
 
@@ -129,6 +155,10 @@ def _args(argv: Sequence[str] | None) -> argparse.Namespace:
         sysroot=matrix.DEFAULT_SYS,
         procroot=matrix.DEFAULT_PROC,
         cmdline=matrix.DEFAULT_CMDLINE,
+        systemctl=coexist.DEFAULT_SYSTEMCTL,
+        desktop=coexist.DEFAULT_DESKTOP,
+        pressure=coexist.DEFAULT_PRESSURE,
+        apply=False,
     )
     sub = parser.add_subparsers(dest="cmd", required=True)
     sub.add_parser(
@@ -143,20 +173,39 @@ def _args(argv: Sequence[str] | None) -> argparse.Namespace:
     sub.add_parser(
         "matrix", parents=[_opt()], help="探测实时能力并汇总等级"
     )
+    sub.add_parser(
+        "coexist", parents=[_opt()], help="评估桌面与实时共存策略"
+    )
     return parser.parse_args(argv)
 
 
 def _matrix(args: argparse.Namespace) -> int:
     """探测实时能力；等级决定退出码，与带宽判定分开。"""
-    roots = matrix.Roots(
+    found = matrix.collect(_roots(args))
+    _show(found, args.json)
+    return _mcode(found.grade)
+
+
+def _coexist(args: argparse.Namespace) -> int:
+    """评估共存策略；applied 为假表示运行时权重与目标不一致。"""
+    cfg = coexist.Coexist(
+        unit=args.desktop,
+        systemctl=args.systemctl,
+        pressure=args.pressure,
+        roots=_roots(args),
+    )
+    found = coexist.apply(cfg) if args.apply else coexist.inspect(cfg)
+    _show_plan(found, args.json)
+    return _ccode(found)
+
+
+def _roots(args: argparse.Namespace) -> matrix.Roots:
+    return matrix.Roots(
         sys=args.sysroot,
         proc=args.procroot,
         cgroup=args.cgroup,
         cmdline=args.cmdline,
     )
-    found = matrix.collect(roots)
-    _show(found, args.json)
-    return _mcode(found.grade)
 
 
 def _show(found: matrix.Matrix, as_json: bool) -> None:
@@ -210,3 +259,29 @@ def _code(state: State) -> int:
     if state is State.PARTIAL:
         return EXIT_PARTIAL
     return EXIT_FAIL
+
+
+def _show_plan(found: coexist.Plan, as_json: bool) -> None:
+    if as_json:
+        print(json.dumps(found.dump(), ensure_ascii=False))
+        return
+    risk = "-" if found.pressure is None else f"{found.pressure:.2f}"
+    print(
+        f"{MARK} mode={found.mode.value} unit={found.unit}"
+        f" weight={found.weight} current={found.current}"
+        f" applied={found.applied}"
+    )
+    print(f"grade {found.grade.value} admit={found.admit} psi={risk}")
+    for note in found.notes:
+        print(f"note   {note}")
+    if found.detail:
+        print(f"detail {found.detail}")
+    print(f"advice {coexist.advice(found.mode)}")
+
+
+def _ccode(found: coexist.Plan) -> int:
+    if found.mode is coexist.Mode.FAILED:
+        return EXIT_FAIL
+    if found.mode is coexist.Mode.ABSENT or found.applied:
+        return 0
+    return EXIT_PARTIAL

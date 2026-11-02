@@ -10,13 +10,120 @@
 
 from __future__ import annotations
 
+import shlex
 import tempfile
 import unittest
 from pathlib import Path
 
-from airymax_rt import cgroup, policy
+from airymax_rt import cgroup, matrix, policy
 
 MOUNT = "cpu,cpuacct"
+
+SHIM = """#!/bin/sh
+case "$1" in
+  show) cat {state}/"$3" ;;
+  set-property) echo "${{4#CPUWeight=}}" > {state}/CPUWeight ;;
+  *) exit 2 ;;
+esac
+"""
+
+
+class Machine:
+    """一台临时机器：节点按用例增删，不依赖宿主内核。"""
+
+    def __init__(self, base: Path) -> None:
+        self.base = base
+        self.sys = base / "sys"
+        self.proc = base / "proc"
+        self.cgroup = base / "cgroup"
+        self.cmdline = self.proc / "cmdline"
+        self.sys.mkdir()
+        self.proc.mkdir()
+        self.cgroup.mkdir()
+        self.cmdline.write_text("", encoding="ascii")
+
+    def put(self, path: Path, text: str) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text + "\n", encoding="ascii")
+
+    def realtime(self, value: str = "1") -> None:
+        self.put(self.sys / "kernel" / "realtime", value)
+
+    def budget(self, value: str = "950000") -> None:
+        self.put(
+            self.proc / "sys" / "kernel" / "sched_rt_runtime_us", value
+        )
+
+    def deadline(self) -> None:
+        self.put(
+            self.proc / "sys" / "kernel" / "sched_deadline_period_max_us",
+            "100000000",
+        )
+
+    def governor(self, value: str = "performance") -> None:
+        self.put(
+            self.sys / "devices" / "system" / "cpu" / "cpu0" / "cpufreq"
+            / "scaling_governor",
+            value,
+        )
+
+    def clocksource(self, value: str = "tsc") -> None:
+        self.put(
+            self.sys / "devices" / "system" / "clocksource"
+            / "clocksource0" / "current_clocksource",
+            value,
+        )
+
+    def group(self) -> None:
+        mount = self.cgroup / "cpu,cpuacct"
+        self.put(mount / cgroup.V1_FILE, "950000")
+
+    def pressure(self, avg10: str = "0.00") -> Path:
+        path = self.proc / "pressure" / "cpu"
+        self.put(path, f"some avg10={avg10} avg60=0.00 avg300=0.00 total=0")
+        return path
+
+    def roots(self) -> matrix.Roots:
+        return matrix.Roots(
+            sys=str(self.sys),
+            proc=str(self.proc),
+            cgroup=str(self.cgroup),
+            cmdline=str(self.cmdline),
+        )
+
+
+class Shim:
+    """以文件为状态的假 systemctl：只实现共存策略用到的三个动作。"""
+
+    def __init__(self, base: Path, load: str = "loaded",
+                 weight: str = "50") -> None:
+        self.state = base / "unit"
+        self.state.mkdir(parents=True)
+        (self.state / "LoadState").write_text(load + "\n", encoding="ascii")
+        (self.state / "CPUWeight").write_text(weight + "\n", encoding="ascii")
+        self.exe = base / "systemctl"
+        self.exe.write_text(
+            SHIM.format(state=shlex.quote(str(self.state))),
+            encoding="ascii",
+        )
+        self.exe.chmod(0o755)
+
+    def weight(self) -> str:
+        return (self.state / "CPUWeight").read_text(encoding="ascii").strip()
+
+    def drop(self, key: str) -> None:
+        (self.state / key).unlink()
+
+    def deny_set(self) -> None:
+        """查询照常、写入被拒：验证回读失败会被如实报告。"""
+        self.exe.write_text(
+            "#!/bin/sh\n"
+            'case "$1" in\n'
+            f'  show) cat {shlex.quote(str(self.state))}/"$3" ;;\n'
+            "  *) exit 1 ;;\n"
+            "esac\n",
+            encoding="ascii",
+        )
 
 
 class Tree(unittest.TestCase):
