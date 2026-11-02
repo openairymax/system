@@ -426,7 +426,8 @@ DISK_MOUNT_PAIRS: dict[tuple[str, str], str] = {
 DISK_HEALTH = "airy-disk-health.service"
 
 # 没有 /data 挂载点时直接跳过：装机未选数据盘不是故障，让单元在此处
-# 失败只会在每个启动周期刷一条 incident，掩盖真正的挂载失败。
+# 失败只会在每个启动周期刷一条 incident，掩盖真正的挂载失败。健康检查
+# 没有 [Install] 段，只由 airy-disk-health.timer 拉起。
 DISK_HEALTH_PAIRS: dict[tuple[str, str], str] = {
     ("Unit", "After"): "airy-disk-mount.service",
     ("Unit", "ConditionPathIsMountPoint"): "/data",
@@ -434,7 +435,6 @@ DISK_HEALTH_PAIRS: dict[tuple[str, str], str] = {
     ("Service", "Type"): "oneshot",
     ("Service", "ExecStart"): "/usr/bin/airy-disk health",
     ("Service", "TimeoutStartSec"): "120",
-    ("Install", "WantedBy"): "multi-user.target",
 }
 
 UPDATE_CHECK = "airymax-update-check.service"
