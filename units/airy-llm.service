@@ -4,6 +4,7 @@ Documentation=https://docs.agentrt.local/140-application-development/06-agent-de
 After=agentrt-firstboot.service
 Requires=agentrt-firstboot.service
 PartOf=agentrt.target
+ConditionPathExists=/var/lib/airy-llm/manifest.json
 OnFailure=airy-incident@%n.service
 StartLimitBurst=3
 StartLimitIntervalSec=300
