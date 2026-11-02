@@ -41,9 +41,12 @@ UNIT_DIR = ROOT / "units"
 SHEBANG = "#!/usr/bin/env bash"
 
 SYSTEM_UNITS = frozenset({
+    "display-manager.service",
     "local-fs.target",
     "multi-user.target",
     "network-online.target",
+    "rtkit-daemon.service",
+    "slices.target",
     "sysinit.target",
     "systemd-journald.service",
 })
@@ -437,6 +440,28 @@ DISK_HEALTH_PAIRS: dict[tuple[str, str], str] = {
     ("Service", "TimeoutStartSec"): "120",
 }
 
+RT_BANDWIDTH = "airy-rt-bandwidth.service"
+
+# 实时预算必须在 rtkit-daemon 与显示管理器之前落地：两者启动时就会
+# 尝试 SCHED_RR/FIFO，而 RT_GROUP_SCHED 下新建组的 cpu.rt_runtime_us
+# 默认是 0，晚一步就会让音频与合成器永久退化成非实时。先等
+# slices.target，免得在 cgroupfs 里抢在 systemd 之前建出 slice 目录；
+# 尚未实例化的 slice 由本单元创建，systemd 之后接管同一目录也不会重置
+# cpu.rt_runtime_us——它不管理这个文件。退出码 1/3 都按失败上报：部分
+# 落地同样是故障，交给 incident 通道而不是降级成一条日志。
+RT_PAIRS: dict[tuple[str, str], str] = {
+    ("Unit", "After"): "slices.target",
+    ("Unit", "Before"): (
+        "agentrt.target rtkit-daemon.service display-manager.service"
+    ),
+    ("Unit", "OnFailure"): "airy-incident@%n.service",
+    ("Service", "Type"): "oneshot",
+    ("Service", "ExecStart"): "/usr/bin/airy-rt-cap apply",
+    ("Service", "RemainAfterExit"): "yes",
+    ("Service", "TimeoutStartSec"): "60",
+    ("Install", "WantedBy"): "multi-user.target",
+}
+
 UPDATE_CHECK = "airymax-update-check.service"
 
 CHECK_PAIRS: dict[tuple[str, str], str] = {
@@ -530,6 +555,7 @@ UNITS = frozenset(SERVICES) | frozenset(TARGETS) | frozenset(TEMPLATES) | {
     FIRSTBOOT,
     HEALTH,
     LLM,
+    RT_BANDWIDTH,
     UPDATE_CHECK,
 } | frozenset(TIMERS)
 
@@ -793,6 +819,8 @@ def _body_bad(name: str, cfg: ConfigParser) -> list[str]:
         return _pairs_bad(name, cfg, dict(DISK_MOUNT_PAIRS))
     if name == DISK_HEALTH:
         return _pairs_bad(name, cfg, dict(DISK_HEALTH_PAIRS))
+    if name == RT_BANDWIDTH:
+        return _pairs_bad(name, cfg, dict(RT_PAIRS))
     if name == UPDATE_CHECK:
         return _check_bad(name, cfg)
     if name == LLM:
