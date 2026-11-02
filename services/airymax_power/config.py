@@ -10,12 +10,13 @@
 
 from __future__ import annotations
 
+from .duty import CRITICAL_CHARGE, Duty
 from .policy import Policy
 from .supply import LOW_CHARGE
 from .thermal import CRITICAL_MARGIN, HOT_MARGIN, WARN_MARGIN, Severity
 from .tuning import State
 
-__all__ = ["advice", "reference", "temp_advice"]
+__all__ = ["advice", "duty_advice", "reference", "temp_advice"]
 
 ADVICE = {
     State.OK: "档位已与当前供电和热状态一致",
@@ -41,6 +42,14 @@ def temp_advice(severity: Severity) -> str:
     return HEAT[severity]
 
 
+def duty_advice(duty: Duty) -> str:
+    if duty is Duty.POWEROFF:
+        return "电量已到临界，apply 已请求受控关机"
+    if duty is Duty.NOTIFY:
+        return "电量偏低，已广播告警；插电后自动恢复"
+    return ""
+
+
 def reference(policy: Policy) -> str:
     rows = (
         ("ac", policy.ac),
@@ -64,4 +73,10 @@ def reference(policy: Policy) -> str:
         f"<={WARN_MARGIN} warn"
     )
     lines.append(f"# 电池电量 <= {LOW_CHARGE}% 时按 cool 档处理")
+    lines.append(
+        f"# 电池电量 <= {LOW_CHARGE}% 广播告警，"
+        f"<= {CRITICAL_CHARGE}% 受控关机（仅电池或适配器功率不足时）"
+    )
+    lines.append(f"# 关机 {policy.poweroff} poweroff --no-block，"
+                 f"广播 {policy.wall}")
     return "\n".join(lines)

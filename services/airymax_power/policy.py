@@ -20,11 +20,14 @@ __all__ = [
     "COOL",
     "DEFAULT_CHOICES",
     "DEFAULT_CPUFREQ",
+    "DEFAULT_DUTY",
+    "DEFAULT_POWEROFF",
     "DEFAULT_PROFILE",
     "DEFAULT_SUPPLY",
     "DEFAULT_THERMAL",
-    "DEFAULT_THROTTLE",
     "DEFAULT_STATE",
+    "DEFAULT_THROTTLE",
+    "DEFAULT_WALL",
     "MARK",
     "NORMAL_AC",
     "NORMAL_BATTERY",
@@ -45,6 +48,12 @@ DEFAULT_THERMAL = "/sys/class/thermal"
 DEFAULT_THROTTLE = "/sys/devices/system/cpu/cpu0/thermal_throttle"
 
 DEFAULT_STATE = "/run/airy-power/throttle"
+
+DEFAULT_DUTY = "/run/airy-power/duty"
+
+DEFAULT_POWEROFF = "/usr/bin/systemctl"
+
+DEFAULT_WALL = "/usr/bin/wall"
 
 MARK = "AIRYMAX-POWER"
 
@@ -84,6 +93,9 @@ class Policy:
     thermal: str = DEFAULT_THERMAL
     throttle: str = DEFAULT_THROTTLE
     state: str = DEFAULT_STATE
+    duty: str = DEFAULT_DUTY
+    poweroff: str = DEFAULT_POWEROFF
+    wall: str = DEFAULT_WALL
     ac: Tuning = NORMAL_AC
     battery: Tuning = NORMAL_BATTERY
     cool: Tuning = COOL

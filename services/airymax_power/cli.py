@@ -21,14 +21,18 @@ import json
 from collections.abc import Sequence
 
 from . import config, guard
+from .duty import Duty
 from .policy import (
     DEFAULT_CHOICES,
     DEFAULT_CPUFREQ,
+    DEFAULT_DUTY,
+    DEFAULT_POWEROFF,
     DEFAULT_PROFILE,
     DEFAULT_STATE,
     DEFAULT_SUPPLY,
     DEFAULT_THERMAL,
     DEFAULT_THROTTLE,
+    DEFAULT_WALL,
     MARK,
     Policy,
 )
@@ -77,6 +81,9 @@ def _paths() -> tuple[tuple[str, str], ...]:
         ("--thermal", "thermal 类目录"),
         ("--throttle", "cpu0/thermal_throttle 目录"),
         ("--state", "节流增速采样文件"),
+        ("--duty", "低电量动作状态文件"),
+        ("--poweroff", "受控关机命令"),
+        ("--wall", "低电量广播命令"),
     )
 
 
@@ -95,6 +102,9 @@ def _args(argv: Sequence[str] | None) -> argparse.Namespace:
         thermal=DEFAULT_THERMAL,
         throttle=DEFAULT_THROTTLE,
         state=DEFAULT_STATE,
+        duty=DEFAULT_DUTY,
+        poweroff=DEFAULT_POWEROFF,
+        wall=DEFAULT_WALL,
     )
     sub = parser.add_subparsers(dest="cmd", required=True)
     sub.add_parser("status", parents=[_opt()], help="只读评估当前档位")
@@ -112,6 +122,9 @@ def _policy(args: argparse.Namespace) -> Policy:
         thermal=args.thermal,
         throttle=args.throttle,
         state=args.state,
+        duty=args.duty,
+        poweroff=args.poweroff,
+        wall=args.wall,
     )
 
 
@@ -131,7 +144,7 @@ def _emit(found: Report, as_json: bool) -> None:
                          sort_keys=True))
         return
     print(f"{MARK} state={found.state.value} source={found.source.value}"
-          f" charge={_percent(found.charge)}"
+          f" charge={_percent(found.charge)} duty={found.duty.value}"
           f" severity={found.severity.value}"
           f" rate={_speed(found.rate)}"
           f" landed={found.landed}/{found.present}")
@@ -145,6 +158,8 @@ def _emit(found: Report, as_json: bool) -> None:
               f" current={knob.current or '-':<16} {_flag(knob)}")
     print(f"  advice {config.advice(found.state)}")
     print(f"  thermal {config.temp_advice(found.severity)}")
+    if found.duty is not Duty.NONE:
+        print(f"  battery {config.duty_advice(found.duty)}")
 
 
 def _percent(charge: int | None) -> str:
