@@ -36,6 +36,7 @@ from .model import (
     Kernel,
     Manifest,
 )
+from .net import Fetch, fetch_manifest
 from .state import (
     Corrupt,
     Failure,
@@ -68,6 +69,7 @@ __all__ = [
     "Asset",
     "Corrupt",
     "Failure",
+    "Fetch",
     "Finding",
     "Identity",
     "Kernel",
@@ -77,6 +79,7 @@ __all__ = [
     "Untrusted",
     "Verdict",
     "compare",
+    "fetch_manifest",
     "load",
     "load_manifest",
     "local_identity",
