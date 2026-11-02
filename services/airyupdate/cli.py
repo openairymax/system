@@ -4,21 +4,26 @@
 #
 # check 取通道、比对三元组并原子写状态，退出码 0 最新 / 10 有新版 /
 # 1 失败；status 只读状态与本地身份，退出码 0 有状态 / 1 无状态；
-# notify 只读状态并在会话内提醒一次，永远返回 0。网络与状态属系统，
-# 提醒属会话，故提醒单独成子命令，不为取件失败承担告警职责。
+# notify 只读状态并在会话内提醒一次，永远返回 0；apply 只承担基底勘误，
+# 退出码 0 成功 / 1 失败 / 20 需重装介质。网络与状态属系统，提醒属会话，
+# 故提醒单独成子命令，不为取件失败承担告警职责。
 
-"""AirymaxOS update command line (V-14-07, V-14-08).
+"""AirymaxOS update command line (V-14-07, V-14-08, V-14-09).
 
 设计依据：docs-linux/190-distribution/04-update-mechanism.md §2.4、§2.5。
 ``check`` 无网络时判失败而非通过：把「没连上」记成「已是最新」是唯一
 无法靠人工复核发现的假绿。``notify`` 不取网络、不解读失败原因，只因
 状态里已有更新结论而提醒，故它与 ``apply`` 都不改 ``last_ok``。
+``apply`` 以 ``--assumeno`` 求解事务，再以 ``--cacheonly`` 对同一份元数据
+执行：重新取元数据会让「看过的那份计划」和「执行的那份计划」不是一回事。
 
 """
 
 from __future__ import annotations
 
 import argparse
+import os
+import re
 import subprocess
 import sys
 from collections.abc import Sequence
@@ -27,7 +32,8 @@ from pathlib import Path
 
 from . import local, net, state
 from .identity import Verdict, compare
-from .model import EXIT_FAIL, EXIT_NEW, EXIT_OK, STATE_DIR, Identity
+from .model import (EXIT_FAIL, EXIT_NEW, EXIT_OK, EXIT_REINSTALL, STATE_DIR,
+                    Identity)
 
 __all__ = ["main"]
 
@@ -38,6 +44,19 @@ SEND_TIMEOUT = 15
 APP_NAME = "AirymaxOS"
 
 ICON_NAME = "system-software-update"
+
+DNF_TIMEOUT = 3600
+
+SOLVE = ["dnf", "--refresh", "--assumeno", "upgrade"]
+
+RUN = ["dnf", "--cacheonly", "-y", "upgrade"]
+
+ARCHS = frozenset({
+    "aarch64", "i686", "loongarch64", "noarch", "ppc64le", "riscv64",
+    "s390x", "x86_64",
+})
+
+SPAN = re.compile(r"sp(\d+)", re.IGNORECASE)
 
 
 def _now() -> str:
@@ -175,6 +194,110 @@ def _notify(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+class Dnf(RuntimeError):
+    """dnf 不可执行（缺二进制、越权或超时）。"""
+
+
+def _run(argv: list[str], capture: bool) -> tuple[int, str]:
+    """执行 dnf；不可执行时抛 :class:`Dnf`，不把异常混进退出码。"""
+    try:
+        done = subprocess.run(argv, capture_output=capture, text=True,
+                              timeout=DNF_TIMEOUT, check=False)
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise Dnf(str(exc)) from exc
+    if not capture:
+        return done.returncode, ""
+    return done.returncode, f"{done.stdout}{done.stderr}"
+
+
+def _plan(text: str) -> list[tuple[str, str]]:
+    """从事务表里取出 (包名, EVR) 列表。
+
+    dnf 的表格每行形如「名称 架构 EVR 仓库 大小」，架构列是唯一稳定的
+    判别列：表头与汇总行都没有它。不解析列宽，避免版本号变长后错位。
+    """
+    rows = []
+    for line in text.splitlines():
+        cols = line.split()
+        if len(cols) >= 4 and cols[1] in ARCHS and cols[2][:1].isdigit():
+            rows.append((cols[0], cols[2]))
+    return rows
+
+
+def _sp(text: str) -> int | None:
+    match = SPAN.search(text)
+    return int(match.group(1)) if match else None
+
+
+def _cross(rows: list[tuple[str, str]], here: int | None) -> bool:
+    """事务是否跨服务包段迁移。
+
+    基底发行包自身被升级即视为基底版本跃迁：段内勘误不会更换发行包。
+    再以 EVR 里的 ``spN`` 段号兜底，本机段号不可得时不作此判定。
+    """
+    for name, evr in rows:
+        if name == local.BASE:
+            return True
+        span = _sp(evr)
+        if span is not None and here is not None and span != here:
+            return True
+    return False
+
+
+def _reason(text: str, code: int) -> str:
+    for line in text.splitlines():
+        if "Error:" in line or "Failed" in line:
+            return " ".join(line.split())
+    lines = [line for line in text.splitlines() if line.strip()]
+    return " ".join(lines[-1].split()) if lines else f"dnf exit {code}"
+
+
+def _medium() -> None:
+    """打印清单中的介质名与摘要；取不到清单不改变退出码。"""
+    try:
+        found = net.fetch_manifest()
+    except net.Fetch as exc:
+        print(f"airy-update: apply: {exc}", file=sys.stderr)
+        return
+    print(f"reinstall medium: {found.iso.name}")
+    print(f"sha256: {found.iso.sha256}")
+    print(f"release notes: {found.notes_url}")
+
+
+def _apply(_args: argparse.Namespace) -> int:
+    """求解事务计划并按同一计划执行；跨段迁移交回安装介质。"""
+    if os.geteuid() != 0:
+        print("airy-update: apply: root required", file=sys.stderr)
+        return EXIT_FAIL
+    try:
+        code, text = _run(SOLVE, capture=True)
+    except Dnf as exc:
+        print(f"airy-update: apply: {exc}", file=sys.stderr)
+        return EXIT_FAIL
+    rows = _plan(text)
+    if not rows:
+        if "Nothing to do" in text:
+            print("up to date: nothing to apply")
+            return EXIT_OK
+        print(f"airy-update: apply: {_reason(text, code)}", file=sys.stderr)
+        return EXIT_FAIL
+    if _cross(rows, local.base_span()):
+        print("base moves across a service pack; dnf cannot carry it")
+        _medium()
+        return EXIT_REINSTALL
+    print(f"applying {len(rows)} package transaction")
+    try:
+        code, _ = _run(RUN, capture=False)
+    except Dnf as exc:
+        print(f"airy-update: apply: {exc}", file=sys.stderr)
+        return EXIT_FAIL
+    if code != 0:
+        print(f"airy-update: apply: dnf exit {code}", file=sys.stderr)
+        return EXIT_FAIL
+    print("transaction complete; reboot if the kernel was replaced")
+    return EXIT_OK
+
+
 def _args(argv: Sequence[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="airy-update",
@@ -188,6 +311,8 @@ def _args(argv: Sequence[str] | None) -> argparse.Namespace:
     status.set_defaults(func=_status)
     notify = sub.add_parser("notify", help="有新版本时在会话内提醒一次")
     notify.set_defaults(func=_notify)
+    worker = sub.add_parser("apply", help="执行基底勘误升级（需 root）")
+    worker.set_defaults(func=_apply)
     return parser.parse_args(argv)
 
 

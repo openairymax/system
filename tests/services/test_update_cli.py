@@ -283,10 +283,121 @@ class SendTest(unittest.TestCase):
             self.assertFalse(cli._send(self.found))
 
 
+PLAN = """Dependencies resolved.
+Upgrading:
+ kernel-core       x86_64  6.6.0-28.0.0.21.oe2403sp3  updates  63 M
+Transaction Summary
+Upgrade  1 Package
+"""
+
+CROSS = """Upgrading:
+ openEuler-release  noarch  24.03-72.oe2403sp4  updates  1.1 M
+"""
+
+
+class ApplyTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.out = io.StringIO()
+        self.err = io.StringIO()
+        self.calls = []
+
+    def go(self, plan: str = PLAN, code: int = 1, run_code: int = 0,
+           root: bool = True, span: int | None = 3,
+           fail: Exception | None = None) -> int:
+        def fake(argv, capture):
+            self.calls.append(argv)
+            if argv is cli.SOLVE:
+                return code, plan
+            return run_code, ""
+
+        patches = [
+            mock.patch.object(cli.os, "geteuid",
+                              return_value=0 if root else 1000),
+            mock.patch.object(cli.local, "base_span", return_value=span),
+            mock.patch.object(cli, "_run", side_effect=fake),
+        ]
+        if fail is None:
+            patches.append(mock.patch.object(cli.net, "fetch_manifest",
+                                             return_value=manifest()))
+        else:
+            patches.append(mock.patch.object(cli.net, "fetch_manifest",
+                                             side_effect=fail))
+        for patch in patches:
+            patch.start()
+            self.addCleanup(patch.stop)
+        with redirect_stdout(self.out), redirect_stderr(self.err):
+            return cli._apply(SimpleNamespace())
+
+    def test_needs_root(self) -> None:
+        self.assertEqual(self.go(root=False), model.EXIT_FAIL)
+        self.assertIn("root", self.err.getvalue())
+        self.assertEqual(self.calls, [])
+
+    def test_up_to_date(self) -> None:
+        plan = "Dependencies resolved.\nNothing to do.\nComplete!\n"
+        self.assertEqual(self.go(plan, code=0), model.EXIT_OK)
+        self.assertIn("up to date", self.out.getvalue())
+        self.assertEqual(self.calls, [cli.SOLVE])
+
+    def test_solve_failure(self) -> None:
+        plan = "Error: Failed to download metadata for repo 'base'\n"
+        self.assertEqual(self.go(plan), model.EXIT_FAIL)
+        self.assertIn("Failed to download", self.err.getvalue())
+
+    def test_solve_failure_without_marker(self) -> None:
+        self.assertEqual(self.go("sleeping\n", code=1), model.EXIT_FAIL)
+        self.assertIn("sleeping", self.err.getvalue())
+
+    def test_cross_base(self) -> None:
+        self.assertEqual(self.go(CROSS), model.EXIT_REINSTALL)
+        text = self.out.getvalue()
+        self.assertIn("airymaxos-0.0.4.iso", text)
+        self.assertIn("a" * 64, text)
+        self.assertEqual(self.calls, [cli.SOLVE])
+
+    def test_cross_span(self) -> None:
+        plan = ("Upgrading:\n kernel-core  x86_64  6.6.0-29.oe2403sp4"
+                "  updates  63 M\n")
+        self.assertEqual(self.go(plan), model.EXIT_REINSTALL)
+        self.assertIn("airymaxos-0.0.4.iso", self.out.getvalue())
+
+    def test_span_unknown(self) -> None:
+        plan = ("Upgrading:\n kernel-core  x86_64  6.6.0-29.oe2403sp4"
+                "  updates  63 M\n")
+        self.assertEqual(self.go(plan, span=None), model.EXIT_OK)
+        self.assertEqual(self.calls, [cli.SOLVE, cli.RUN])
+
+    def test_medium_failure(self) -> None:
+        code = self.go(CROSS, fail=net.Fetch("offline"))
+        self.assertEqual(code, model.EXIT_REINSTALL)
+        self.assertIn("offline", self.err.getvalue())
+
+    def test_execute(self) -> None:
+        self.assertEqual(self.go(), model.EXIT_OK)
+        self.assertEqual(self.calls, [cli.SOLVE, cli.RUN])
+        self.assertIn("applying 1 package", self.out.getvalue())
+        self.assertIn("reboot", self.out.getvalue())
+
+    def test_execute_failure(self) -> None:
+        self.assertEqual(self.go(run_code=1), model.EXIT_FAIL)
+        self.assertIn("dnf exit 1", self.err.getvalue())
+
+    def test_missing_dnf(self) -> None:
+        with mock.patch.object(cli.os, "geteuid", return_value=0), \
+                mock.patch.object(cli, "_run",
+                                  side_effect=cli.Dnf("no dnf")), \
+                redirect_stderr(self.err):
+            self.assertEqual(cli._apply(SimpleNamespace()), model.EXIT_FAIL)
+        self.assertIn("no dnf", self.err.getvalue())
+
+
 class ArgsTest(unittest.TestCase):
     def test_requires_command(self) -> None:
         with redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
             cli._args([])
+
+    def test_apply(self) -> None:
+        self.assertIs(cli._args(["apply"]).func, cli._apply)
 
     def test_defaults(self) -> None:
         args = cli._args(["check"])
