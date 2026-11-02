@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import io
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -174,6 +175,114 @@ class StatusTest(Base):
         self.assertIn("boom", self.err.getvalue())
 
 
+class NotifyTest(Base):
+    def run_notify(self, here=None, error=None, sent=True) -> int:
+        patches = [mock.patch.object(cli, "_send", return_value=sent)]
+        if error is None:
+            patches.append(mock.patch.object(
+                cli.local, "local_identity", return_value=here or identity()))
+        else:
+            patches.append(mock.patch.object(
+                cli.local, "local_identity", side_effect=error))
+        for patch in patches:
+            started = patch.start()
+            self.addCleanup(patch.stop)
+            if patch is patches[0]:
+                self.send = started
+        with redirect_stdout(self.out), redirect_stderr(self.err):
+            return cli._notify(self.args)
+
+    def record(self, version: str = "0.0.4", build: int = 3,
+               notified: str | None = None) -> None:
+        state.save(self.path, state.State(
+            last_ok=state.Finding(version, build, STAMP), notified=notified))
+
+    def test_no_state(self) -> None:
+        self.assertEqual(self.run_notify(), model.EXIT_OK)
+        self.send.assert_not_called()
+
+    def test_newer_sends_once(self) -> None:
+        self.record()
+        self.assertEqual(self.run_notify(), model.EXIT_OK)
+        self.send.assert_called_once()
+        self.assertEqual(state.load(self.path).notified, "0.0.4/3")
+
+    def test_same_skips(self) -> None:
+        self.record()
+        self.assertEqual(self.run_notify(here=identity("0.0.4", 3)),
+                         model.EXIT_OK)
+        self.send.assert_not_called()
+
+    def test_rebuild_skips(self) -> None:
+        self.record("0.0.3", 22)
+        self.assertEqual(self.run_notify(), model.EXIT_OK)
+        self.send.assert_not_called()
+
+    def test_repeat_skips(self) -> None:
+        self.record(notified="0.0.4/3")
+        self.assertEqual(self.run_notify(), model.EXIT_OK)
+        self.send.assert_not_called()
+
+    def test_other_key_sends(self) -> None:
+        self.record(notified="0.0.3/22")
+        self.assertEqual(self.run_notify(), model.EXIT_OK)
+        self.send.assert_called_once()
+        self.assertEqual(state.load(self.path).notified, "0.0.4/3")
+
+    def test_send_failure_keeps(self) -> None:
+        self.record()
+        self.assertEqual(self.run_notify(sent=False), model.EXIT_OK)
+        self.assertIsNone(state.load(self.path).notified)
+
+    def test_corrupt_state(self) -> None:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.path.write_text("{", encoding="utf-8")
+        self.assertEqual(self.run_notify(), model.EXIT_OK)
+        self.assertIn("state", self.err.getvalue())
+
+    def test_probe_failure(self) -> None:
+        self.record()
+        self.assertEqual(self.run_notify(error=local.Probe("boom")),
+                         model.EXIT_OK)
+        self.send.assert_not_called()
+        self.assertIn("boom", self.err.getvalue())
+
+
+class SendTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.err = io.StringIO()
+        self.found = state.Finding("0.0.4", 3, STAMP)
+        self.patch = mock.patch.object(cli.subprocess, "run")
+        self.run = self.patch.start()
+        self.addCleanup(self.patch.stop)
+
+    def test_success(self) -> None:
+        self.run.return_value = SimpleNamespace(returncode=0, stderr="")
+        with redirect_stderr(self.err):
+            self.assertTrue(cli._send(self.found))
+        argv = self.run.call_args.args[0]
+        self.assertEqual(argv[0], "notify-send")
+        self.assertIn("0.0.4", argv[-2])
+
+    def test_nonzero(self) -> None:
+        self.run.return_value = SimpleNamespace(returncode=1,
+                                                stderr="no session\n")
+        with redirect_stderr(self.err):
+            self.assertFalse(cli._send(self.found))
+        self.assertIn("no session", self.err.getvalue())
+
+    def test_missing_binary(self) -> None:
+        self.run.side_effect = FileNotFoundError("notify-send")
+        with redirect_stderr(self.err):
+            self.assertFalse(cli._send(self.found))
+        self.assertIn("notify", self.err.getvalue())
+
+    def test_timeout(self) -> None:
+        self.run.side_effect = subprocess.TimeoutExpired("notify-send", 15)
+        with redirect_stderr(self.err):
+            self.assertFalse(cli._send(self.found))
+
+
 class ArgsTest(unittest.TestCase):
     def test_requires_command(self) -> None:
         with redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
@@ -183,6 +292,9 @@ class ArgsTest(unittest.TestCase):
         args = cli._args(["check"])
         self.assertEqual(args.state_dir, cli.STATE_HOME)
         self.assertIs(args.func, cli._check)
+
+    def test_notify(self) -> None:
+        self.assertIs(cli._args(["notify"]).func, cli._notify)
 
 
 if __name__ == "__main__":
