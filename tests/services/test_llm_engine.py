@@ -24,7 +24,7 @@ from airyllm import engine, model, status  # noqa: E402
 BODY = b"weight-bytes"
 
 
-def sample(backends: tuple[str, ...] = ("cuda", "cpu"),
+def sample(engine: str, backends: tuple[str, ...] = ("cuda", "cpu"),
            digest: str | None = None) -> dict:
     return {
         "schema": model.SCHEMA_VERSION,
@@ -34,7 +34,7 @@ def sample(backends: tuple[str, ...] = ("cuda", "cpu"),
         "runtime": {
             "engine": "llama.cpp",
             "version": "b4000",
-            "path": "/usr/libexec/airy-llm/llama-server",
+            "path": engine,
             "backends": list(backends),
         },
         "assets": [{
@@ -53,13 +53,16 @@ class Case(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.home = Path(self.tmp.name)
         (self.home / "weight.gguf").write_bytes(BODY)
+        self.exe = self.home / "llama-server"
+        self.exe.write_bytes(b"\x7fELF")
+        self.exe.chmod(0o755)
 
     def write(self, payload: dict) -> None:
         (self.home / model.MANIFEST_FILE).write_text(
             json.dumps(payload), encoding="utf-8")
 
     def test_ready(self) -> None:
-        self.write(sample())
+        self.write(sample(str(self.exe)))
         got = engine.resolve(self.home, frozenset({model.Backend.CUDA}))
         self.assertIs(got.state, model.State.READY)
         self.assertIs(got.backend, model.Backend.CUDA)
@@ -68,14 +71,14 @@ class Case(unittest.TestCase):
             (self.home / model.MANIFEST_FILE).read_bytes()).hexdigest())
 
     def test_degraded(self) -> None:
-        self.write(sample())
+        self.write(sample(str(self.exe)))
         got = engine.resolve(self.home, frozenset())
         self.assertIs(got.state, model.State.DEGRADED)
         self.assertIs(got.backend, model.Backend.CPU)
         self.assertIs(got.reason, model.Reason.NO_ACCEL)
 
     def test_status_persisted(self) -> None:
-        self.write(sample())
+        self.write(sample(str(self.exe)))
         got = engine.resolve(self.home, frozenset({model.Backend.CUDA}))
         self.assertEqual(status.load(self.home), got)
 
@@ -87,20 +90,27 @@ class Case(unittest.TestCase):
         self.assertEqual(status.load(self.home), got)
 
     def test_asset_corrupt(self) -> None:
-        self.write(sample(digest="0" * 64))
+        self.write(sample(str(self.exe), digest="0" * 64))
         got = engine.resolve(self.home, frozenset({model.Backend.CUDA}))
         self.assertIs(got.state, model.State.FAILED)
         self.assertIs(got.reason, model.Reason.DIGEST_MISMATCH)
 
     def test_no_cpu_backend(self) -> None:
-        self.write(sample(backends=("cuda",)))
+        self.write(sample(str(self.exe), backends=("cuda",)))
         got = engine.resolve(self.home, frozenset())
         self.assertIs(got.state, model.State.FAILED)
         self.assertIs(got.reason, model.Reason.NO_RUNTIME)
         self.assertTrue(got.digest)
 
+    def test_engine_missing(self) -> None:
+        self.write(sample(str(self.home / "gone")))
+        got = engine.resolve(self.home, frozenset({model.Backend.CUDA}))
+        self.assertIs(got.state, model.State.FAILED)
+        self.assertIs(got.reason, model.Reason.NO_RUNTIME)
+        self.assertEqual(got.digest, "")
+
     def test_probe_default(self) -> None:
-        self.write(sample())
+        self.write(sample(str(self.exe)))
         with mock.patch.object(engine.accel, "detect",
                                return_value=frozenset({model.Backend.CUDA})):
             got = engine.resolve(self.home)
