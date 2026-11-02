@@ -3,9 +3,10 @@
 # AirymaxOS 磁盘命令行回归测试
 #
 # 探测结果以固定拓扑注入，命令执行只用 /bin/true 与 /bin/false，
-# 不触任何块设备。覆盖五个子命令的退出码与 JSON 形态、--snapshot 重放，
+# 不触任何块设备。覆盖八个子命令的退出码与 JSON 形态、--snapshot 重放，
 # persist 不依赖拓扑，以及二次确认边界：确认名与计划盘名不一致、目标承载
-# 运行系统、非 root 都必须在执行前被挡住。
+# 运行系统、非 root 都必须在执行前被挡住。mount 与 health 的判定依赖本机
+# 挂载事实与 statvfs，测试注入替身，不读运行测试的机器。
 
 from __future__ import annotations
 
@@ -15,13 +16,15 @@ import json
 import sys
 import tempfile
 import unittest
+from os import ST_RDONLY
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "services"))
 
-from airydisk import cli, model, ops  # noqa: E402
+from airydisk import cli, model, ops, runner  # noqa: E402
 
 
 def part(name: str, mount: str | None = None,
@@ -80,13 +83,46 @@ def save(obj: dict[str, object]) -> str:
     return handle.name
 
 
+def vfs(used: int, avail: int, flag: int = 0) -> SimpleNamespace:
+    """statvfs_result 的最小替身，只含健康判定读取的字段。"""
+    return SimpleNamespace(
+        f_blocks=used + avail,
+        f_bfree=avail,
+        f_bavail=avail,
+        f_frsize=1,
+        f_flag=flag,
+    )
+
+
+def ok_run(step: ops.Step, timeout: float = 0) -> runner.Result:
+    """假执行器：不触设备，直接回成功。"""
+    return runner.Result(step=step, rc=0)
+
+
+def fail_run(step: ops.Step, timeout: float = 0) -> runner.Result:
+    """假执行器：回失败，用于验证退出码与建议。"""
+    return runner.Result(step=step, rc=1, err="boom")
+
+
+def not_last() -> model.Topology:
+    """数据分区之后还有分区：原地扩容会搬动系统分区。"""
+    disk = model.Disk(
+        name="sdc", size=2 * 1024**3, bus=model.Bus.SATA,
+        table=model.TableKind.GPT,
+        parts=(part("sdc1", model.DATA_MOUNT, model.FsKind.XFS,
+                    model.Role.DATA),
+               part("sdc2")),
+    )
+    return model.Topology(kind=model.TopoKind.SINGLE, disks=(disk,))
+
+
 class Case(unittest.TestCase):
     """统一注入拓扑、捕获输出，并让 root 判定可控。"""
 
     def fstab_file(self, text: str) -> str:
         """落一份 fstab 到临时文件，返回路径。"""
-        handle = tempfile.NamedTemporaryFile("w", suffix=".fstab",
-                                             delete=False, encoding="utf-8")
+        handle = tempfile.NamedTemporaryFile(
+            "w", suffix=".fstab", delete=False, encoding="utf-8")
         with handle:
             handle.write(text)
         self.addCleanup(Path(handle.name).unlink)
@@ -99,8 +135,9 @@ class Case(unittest.TestCase):
         with contextlib.ExitStack() as stack:
             stack.enter_context(mock.patch("airydisk.probe.probe",
                                            return_value=topo or sample()))
-            stack.enter_context(mock.patch("airydisk.cli.os.geteuid",
-                                           return_value=0 if root else 1000))
+            stack.enter_context(
+                mock.patch("airydisk.cli.os.geteuid",
+                           return_value=0 if root else 1000))
             path = record or (Path(stack.enter_context(
                 tempfile.TemporaryDirectory())) / "install-disk.json")
             stack.enter_context(mock.patch("airydisk.record.PATH",
@@ -475,6 +512,208 @@ class ApplyTest(Case):
                                  "--confirm", "sdb")
         self.assertEqual(code, cli.EXIT_USAGE)
         self.assertIn("计划不可用", err)
+
+
+class MountTest(Case):
+    """mount：已挂载不动，待挂载执行一次，拒绝场景不执行。"""
+
+    def fstab(self) -> str:
+        return self.fstab_file("UUID=a / ext4 defaults 0 1\n"
+                               "UUID=b /data xfs defaults 0 2\n")
+
+    def test_mounted(self) -> None:
+        with mock.patch("airydisk.mount.ismount", return_value=True):
+            code, out, _ = self.call("mount", "--file", self.fstab())
+        self.assertEqual(code, 0)
+        self.assertIn("mounted", out)
+
+    def test_dry_run_ready(self) -> None:
+        with mock.patch("airydisk.mount.ismount", return_value=False):
+            code, out, _ = self.call("mount", "--file", self.fstab(),
+                                     "--dry-run")
+        self.assertEqual(code, 0)
+        self.assertIn("ready", out)
+        self.assertIn("/usr/bin/mount /data", out)
+
+    def test_dry_run_json(self) -> None:
+        with mock.patch("airydisk.mount.ismount", return_value=False):
+            code, out, _ = self.call("--json", "mount", "--file",
+                                     self.fstab(), "--dry-run")
+        self.assertEqual(code, 0)
+        obj = json.loads(out)
+        self.assertTrue(obj["dry_run"])
+        self.assertEqual(obj["verdict"], "ready")
+
+    def test_restored(self) -> None:
+        with mock.patch("airydisk.mount.ismount", return_value=False), \
+                mock.patch("airydisk.runner.run", side_effect=ok_run):
+            code, out, _ = self.call("mount", "--file", self.fstab())
+        self.assertEqual(code, 0)
+        self.assertIn("restored", out)
+
+    def test_failed(self) -> None:
+        with mock.patch("airydisk.mount.ismount", return_value=False), \
+                mock.patch("airydisk.runner.run", side_effect=fail_run):
+            code, out, _ = self.call("mount", "--file", self.fstab())
+        self.assertEqual(code, cli.EXIT_FAIL)
+        self.assertIn("failed", out)
+        self.assertIn("退出码 1", out)
+
+    def test_not_root(self) -> None:
+        with mock.patch("airydisk.mount.ismount", return_value=False):
+            code, _, err = self.call("mount", "--file", self.fstab(),
+                                     root=False)
+        self.assertEqual(code, cli.EXIT_REFUSED)
+        self.assertIn("root", err)
+
+    def test_no_entry(self) -> None:
+        path = self.fstab_file("UUID=a / ext4 defaults 0 1\n")
+        with mock.patch("airydisk.mount.ismount", return_value=False):
+            code, out, _ = self.call("mount", "--file", path)
+        self.assertEqual(code, cli.EXIT_REFUSED)
+        self.assertIn("no-entry", out)
+
+    def test_unstable(self) -> None:
+        path = self.fstab_file("UUID=a / ext4 defaults 0 1\n"
+                               "/dev/sda2 /data xfs defaults 0 2\n")
+        with mock.patch("airydisk.mount.ismount", return_value=False):
+            code, out, _ = self.call("mount", "--file", path)
+        self.assertEqual(code, cli.EXIT_REFUSED)
+        self.assertIn("unstable", out)
+
+    def test_noauto(self) -> None:
+        path = self.fstab_file("UUID=a / ext4 defaults 0 1\n"
+                               "UUID=b /data xfs noauto 0 2\n")
+        with mock.patch("airydisk.mount.ismount", return_value=False):
+            code, out, _ = self.call("mount", "--file", path)
+        self.assertEqual(code, cli.EXIT_REFUSED)
+        self.assertIn("noauto", out)
+
+    def test_missing(self) -> None:
+        path = str(Path(tempfile.mkdtemp()) / "absent.fstab")
+        code, _, err = self.call("mount", "--file", path)
+        self.assertEqual(code, cli.EXIT_USAGE)
+        self.assertIn("fstab 不可用", err)
+
+
+class GrowTest(Case):
+    """grow：dry-run 出计划，执行要二次确认与 root。"""
+
+    def test_dry_run(self) -> None:
+        code, out, _ = self.call("grow", "--dry-run")
+        self.assertEqual(code, 0)
+        self.assertIn("growpart", out)
+        self.assertIn("/data", out)
+
+    def test_json(self) -> None:
+        code, out, _ = self.call("--json", "grow", "--dry-run")
+        self.assertEqual(code, 0)
+        obj = json.loads(out)
+        self.assertTrue(obj["dry_run"])
+        self.assertEqual(obj["verdict"], "ok")
+        self.assertEqual(obj["part"], "sdc1")
+        self.assertEqual(obj["plan"]["disk"], "sdc")
+        self.assertEqual(len(obj["plan"]["steps"]), 2)
+
+    def test_no_data(self) -> None:
+        bare = model.Topology(
+            kind=model.TopoKind.SINGLE,
+            disks=(model.Disk(name="vda", size=1024**3,
+                              bus=model.Bus.VIRTIO,
+                              table=model.TableKind.GPT,
+                              parts=(part("vda1", "/"),)),),
+        )
+        code, out, _ = self.call("--json", "grow", topo=bare)
+        self.assertEqual(code, cli.EXIT_REFUSED)
+        obj = json.loads(out)
+        self.assertEqual(obj["verdict"], "no-data")
+        self.assertTrue(obj["advice"])
+        self.assertIsNone(obj["plan"])
+
+    def test_not_last(self) -> None:
+        code, out, _ = self.call("--json", "grow", topo=not_last())
+        self.assertEqual(code, cli.EXIT_REFUSED)
+        self.assertEqual(json.loads(out)["verdict"], "not-last")
+
+    def test_confirm_mismatch(self) -> None:
+        code, _, err = self.call("grow", "--confirm", "sdb")
+        self.assertEqual(code, cli.EXIT_USAGE)
+        self.assertIn("不符", err)
+
+    def test_not_root(self) -> None:
+        code, _, err = self.call("grow", "--confirm", "sdc", root=False)
+        self.assertEqual(code, cli.EXIT_REFUSED)
+        self.assertIn("root", err)
+
+    def test_execute(self) -> None:
+        def apply(item: ops.Plan) -> runner.Outcome:
+            return runner.Outcome(plan=item, done=item.steps)
+        with mock.patch("airydisk.runner.apply", side_effect=apply):
+            code, out, _ = self.call("grow", "--confirm", "sdc")
+        self.assertEqual(code, 0)
+        self.assertIn("完成", out)
+
+    def test_failure(self) -> None:
+        def apply(item: ops.Plan) -> runner.Outcome:
+            failed = runner.Result(step=item.steps[0], rc=1, err="boom")
+            return runner.Outcome(plan=item, failed=failed)
+        with mock.patch("airydisk.runner.apply", side_effect=apply):
+            code, out, err = self.call("grow", "--confirm", "sdc")
+        self.assertEqual(code, cli.EXIT_FAIL)
+        self.assertIn("未完成", out)
+        self.assertIn("退出码 1", err)
+
+
+class HealthTest(Case):
+    """health：容量取本机 statvfs，拓扑只给分区命名。"""
+
+    def test_ok(self) -> None:
+        with mock.patch("airydisk.health.ismount", return_value=True), \
+                mock.patch("airydisk.health.statvfs",
+                           return_value=vfs(50, 50)):
+            code, out, _ = self.call("health")
+        self.assertEqual(code, 0)
+        self.assertIn("ok", out)
+
+    def test_low_space(self) -> None:
+        with mock.patch("airydisk.health.ismount", return_value=True), \
+                mock.patch("airydisk.health.statvfs",
+                           return_value=vfs(95, 5)):
+            code, out, _ = self.call("--json", "health")
+        self.assertEqual(code, cli.EXIT_REFUSED)
+        obj = json.loads(out)
+        self.assertEqual(obj["verdict"], "low-space")
+        self.assertEqual(obj["used"], 95)
+
+    def test_read_only(self) -> None:
+        with mock.patch("airydisk.health.ismount", return_value=True), \
+                mock.patch("airydisk.health.statvfs",
+                           return_value=vfs(10, 90, ST_RDONLY)):
+            code, out, _ = self.call("health")
+        self.assertEqual(code, cli.EXIT_REFUSED)
+        self.assertIn("read-only", out)
+
+    def test_unavailable(self) -> None:
+        with mock.patch("airydisk.health.ismount", return_value=False):
+            code, out, _ = self.call("health")
+        self.assertEqual(code, cli.EXIT_REFUSED)
+        self.assertIn("unavailable", out)
+
+    def test_no_data(self) -> None:
+        bare = model.Topology(
+            kind=model.TopoKind.SINGLE,
+            disks=(model.Disk(name="vda", size=1024**3,
+                              bus=model.Bus.VIRTIO,
+                              table=model.TableKind.GPT,
+                              parts=(part("vda1", "/"),)),),
+        )
+        with mock.patch("airydisk.health.ismount",
+                        side_effect=AssertionError("ismount")), \
+                mock.patch("airydisk.health.statvfs",
+                           side_effect=AssertionError("statvfs")):
+            code, out, _ = self.call("health", topo=bare)
+        self.assertEqual(code, cli.EXIT_REFUSED)
+        self.assertIn("no-data", out)
 
 
 if __name__ == "__main__":
