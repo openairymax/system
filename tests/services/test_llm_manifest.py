@@ -95,6 +95,18 @@ class RejectTest(unittest.TestCase):
 
         self.reject(model.Reason.NO_MANIFEST, mutate)
 
+    def test_schema_bool(self) -> None:
+        def mutate(obj: dict) -> None:
+            obj["schema"] = True
+
+        self.reject(model.Reason.NO_MANIFEST, mutate)
+
+    def test_schema_text(self) -> None:
+        def mutate(obj: dict) -> None:
+            obj["schema"] = str(model.SCHEMA_VERSION)
+
+        self.reject(model.Reason.NO_MANIFEST, mutate)
+
     def test_unknown_field(self) -> None:
         def mutate(obj: dict) -> None:
             obj["extra"] = 1
