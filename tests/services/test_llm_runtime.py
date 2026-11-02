@@ -42,6 +42,8 @@ class CheckTest(unittest.TestCase):
         self.exe = self.dir / "llama-server"
         self.exe.write_bytes(b"\x7fELF")
         os.chmod(self.exe, 0o755)
+        self.mark = self.dir / runtime.VERSION_FILE
+        self.mark.write_text("b4000\n", encoding="utf-8")
 
     def reject(self, path: str) -> None:
         with self.assertRaises(Failure) as caught:
@@ -62,6 +64,14 @@ class CheckTest(unittest.TestCase):
 
     def test_no_exec(self) -> None:
         os.chmod(self.exe, stat.S_IRUSR | stat.S_IWUSR)
+        self.reject(str(self.exe))
+
+    def test_version_missing(self) -> None:
+        self.mark.unlink()
+        self.reject(str(self.exe))
+
+    def test_version_mismatch(self) -> None:
+        self.mark.write_text("b4100\n", encoding="utf-8")
         self.reject(str(self.exe))
 
 
