@@ -75,6 +75,7 @@ class StatusTest(Tree):
         found = json.loads(out)
         self.assertEqual(found["state"], "failed")
         self.assertEqual(found["source"], "ac")
+        self.assertIsNone(found["charge"])
         self.assertEqual(found["present"], 3)
         self.assertEqual(found["zones"][0]["name"], "x86_pkg_temp")
 
@@ -96,7 +97,16 @@ class ApplyTest(Tree):
         code, out = run(self.args("apply"))
         self.assertEqual(code, 0)
         self.assertIn("source=battery", out)
+        self.assertIn("charge=80%", out)
         self.assertIn("low-power", self.profile.read_text(encoding="ascii"))
+
+    def test_low_charge(self) -> None:
+        self.battery(capacity=5)
+        run(self.args("apply"))
+        code, out = run(self.args("status") + ["--json"])
+        self.assertEqual(code, 0)
+        found = json.loads(out)
+        self.assertEqual((found["source"], found["charge"]), ("battery", 5))
 
 
 class ConfigTest(unittest.TestCase):
@@ -108,6 +118,7 @@ class ConfigTest(unittest.TestCase):
         self.assertIn("balanced", out)
         self.assertIn("schedutil", out)
         self.assertIn("critical", out)
+        self.assertIn("10%", out)
 
     def test_usage(self) -> None:
         with self.assertRaises(SystemExit) as caught:

@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 from .policy import Policy
+from .supply import LOW_CHARGE
 from .thermal import CRITICAL_MARGIN, HOT_MARGIN, WARN_MARGIN, Severity
 from .tuning import State
 
@@ -61,4 +62,5 @@ def reference(policy: Policy) -> str:
         f"<={CRITICAL_MARGIN} critical，<={HOT_MARGIN} hot，"
         f"<={WARN_MARGIN} warn"
     )
+    lines.append(f"# 电池电量 <= {LOW_CHARGE}% 时按 cool 档处理")
     return "\n".join(lines)

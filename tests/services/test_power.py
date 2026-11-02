@@ -17,8 +17,8 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "services"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from airymax_power import guard, sysfs, thermal  # noqa: E402
-from airymax_power.supply import Source, detect  # noqa: E402
+from airymax_power import guard, supply, sysfs, thermal  # noqa: E402
+from airymax_power.supply import Source, charge, detect  # noqa: E402
 from airymax_power.thermal import Severity, grade  # noqa: E402
 from airymax_power.tuning import State  # noqa: E402
 from power_fixture import Tree  # noqa: E402
@@ -64,6 +64,14 @@ class SupplyTest(Tree):
     def test_without_supply(self) -> None:
         self.unplug()
         self.assertIs(detect(self.policy()), Source.UNKNOWN)
+
+    def test_charge(self) -> None:
+        self.battery(capacity=30)
+        self.assertEqual(charge(self.policy()), 30)
+
+    def test_charge_absent(self) -> None:
+        """只有适配器时没有电量可读，返回 None 而不是 0。"""
+        self.assertIsNone(charge(self.policy()))
 
 
 class ThermalTest(Tree):
@@ -125,6 +133,15 @@ class TuneTest(Tree):
         self.assertIs(found.state, State.OK)
         self.assertEqual(found.source, Source.BATTERY)
         self.assertIn("low-power", self.profile.read_text())
+
+    def test_low_charge(self) -> None:
+        """电量到阈值即按最省电档处理，不赌剩余续航。"""
+        self.battery(capacity=supply.LOW_CHARGE)
+        found = guard.apply(self.policy())
+        self.assertIs(found.state, State.OK)
+        self.assertEqual(found.charge, supply.LOW_CHARGE)
+        node = self.base / "cpu" / "policy0" / "energy_performance_preference"
+        self.assertEqual(node.read_text("ascii"), "power\n")
 
     def test_cool(self) -> None:
         self.zone("SEN1", 95000, critical=100000, index=1)
