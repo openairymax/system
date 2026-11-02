@@ -126,6 +126,7 @@ def _emit(found: Report, as_json: bool) -> None:
                          sort_keys=True))
         return
     print(f"{MARK} state={found.state.value} source={found.source.value}"
+          f" charge={_percent(found.charge)}"
           f" severity={found.severity.value}"
           f" landed={found.landed}/{found.present}")
     for zone in found.heat.zones:
@@ -138,6 +139,10 @@ def _emit(found: Report, as_json: bool) -> None:
               f" current={knob.current or '-':<16} {_flag(knob)}")
     print(f"  advice {config.advice(found.state)}")
     print(f"  thermal {config.temp_advice(found.severity)}")
+
+
+def _percent(charge: int | None) -> str:
+    return "-" if charge is None else f"{charge}%"
 
 
 def _limit(zone: Zone) -> str:

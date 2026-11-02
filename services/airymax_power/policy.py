@@ -64,7 +64,8 @@ class Tuning:
 
 NORMAL_AC = Tuning("balanced", ("schedutil", "powersave"), ("balance_power",))
 
-NORMAL_BATTERY = Tuning("low-power", ("schedutil", "powersave"), ("power",))
+NORMAL_BATTERY = Tuning("low-power", ("schedutil", "powersave"),
+                        ("balance_power",))
 
 COOL = Tuning("low-power", ("powersave", "schedutil"), ("power",))
 

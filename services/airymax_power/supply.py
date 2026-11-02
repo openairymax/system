@@ -10,6 +10,12 @@
 # 判据顺序：任一 Mains 在线即 AC；电池在充电或已充满也按 AC 处理，因为
 # 此时负载由适配器承担；只有电池处于放电才是 BATTERY。有电池但状态读不到
 # 时按电池处理，宁可降档也不把续航与发热赌在未知状态上。
+#
+# 电量单独读出，不参与供电来源判定：285H 现场取证时适配器未在线、电池
+# 30% 且放电中，机器仍在跑满核负载，几十瓦的持续放电会把电量耗尽并以
+# 掉电关机收场——现场表现为「意外重启」，系统侧没有任何关机记录。电量
+# 降到 LOW_CHARGE 以下时按最省电档位处理，并在报告里带上读数，运维不必
+# 登录就能看出这次降档是因为热还是因为快没电了。
 
 """AirymaxOS power source detection."""
 
@@ -21,7 +27,16 @@ from pathlib import Path
 from . import sysfs
 from .policy import Policy
 
-__all__ = ["BATTERY", "CHARGING", "DISCHARGING", "MAINS", "Source", "detect"]
+__all__ = [
+    "BATTERY",
+    "CHARGING",
+    "DISCHARGING",
+    "LOW_CHARGE",
+    "MAINS",
+    "Source",
+    "charge",
+    "detect",
+]
 
 MAINS = "Mains"
 
@@ -30,6 +45,8 @@ BATTERY = "Battery"
 CHARGING = ("Charging", "Full")
 
 DISCHARGING = "Discharging"
+
+LOW_CHARGE = 10
 
 
 @unique
@@ -41,12 +58,8 @@ class Source(Enum):
 
 def detect(policy: Policy) -> Source:
     """判定当前供电来源；没有 power_supply 的机器返回 UNKNOWN。"""
-    try:
-        entries = sorted(Path(policy.supply).iterdir())
-    except OSError:
-        return Source.UNKNOWN
     battery = False
-    for entry in entries:
+    for entry in _entries(policy):
         kind = sysfs.read_text(entry / "type")
         if kind == MAINS and sysfs.read_text(entry / "online") == "1":
             return Source.AC
@@ -57,3 +70,22 @@ def detect(policy: Policy) -> Source:
             if sysfs.read_text(entry / "status") == DISCHARGING:
                 return Source.BATTERY
     return Source.BATTERY if battery else Source.UNKNOWN
+
+
+def charge(policy: Policy) -> int | None:
+    """取最低的一块电池电量百分比；没有可读电池时返回 None。"""
+    levels = []
+    for entry in _entries(policy):
+        if sysfs.read_text(entry / "type") != BATTERY:
+            continue
+        level = sysfs.read_int(entry / "capacity")
+        if level is not None and 0 <= level <= 100:
+            levels.append(level)
+    return min(levels) if levels else None
+
+
+def _entries(policy: Policy) -> list[Path]:
+    try:
+        return sorted(Path(policy.supply).iterdir())
+    except OSError:
+        return []

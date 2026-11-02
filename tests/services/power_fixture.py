@@ -54,9 +54,11 @@ class Tree(unittest.TestCase):
     def mains(self, online: str = "1") -> None:
         self._supply("ac", "Mains", {"online": online})
 
-    def battery(self, status: str = "Discharging") -> None:
+    def battery(self, status: str = "Discharging",
+                capacity: int = 80) -> None:
         shutil.rmtree(self.base / "supply" / "ac", ignore_errors=True)
-        self._supply("bat", "Battery", {"status": status})
+        self._supply("bat", "Battery",
+                     {"status": status, "capacity": str(capacity)})
 
     def unplug(self) -> None:
         shutil.rmtree(self.base / "supply", ignore_errors=True)

@@ -2,10 +2,11 @@
 #
 # 电源与温度报告
 #
-# 一次评估的结论由三块证据组成：供电来源、热状态、控制点落地情况。三者
-# 各自有独立结论，不能压缩成单一布尔值——「档位写不进去」和「写进去了但
-# 机器已经很热」是两类不同的故障，现场处置完全不同。报告只负责把这三块
-# 证据原样收敛成一份可序列化的结构，判定与退出码留在调用方。
+# 一次评估的结论由四块证据组成：供电来源、电池电量、热状态、控制点落地
+# 情况。四者各自有独立结论，不能压缩成单一布尔值——「档位写不进去」和
+# 「写进去了但机器已经很热」是两类不同的故障，现场处置完全不同；电量则
+# 解释了「为什么在电池上还选了最省电档」。报告只负责把这些证据原样收敛
+# 成一份可序列化的结构，判定与退出码留在调用方。
 
 """AirymaxOS power report."""
 
@@ -24,6 +25,7 @@ __all__ = ["Report"]
 class Report:
     state: State
     source: Source
+    charge: int | None
     heat: Thermal
     knobs: tuple[Knob, ...]
 
@@ -43,6 +45,7 @@ class Report:
         return {
             "state": self.state.value,
             "source": self.source.value,
+            "charge": self.charge,
             "severity": self.severity.value,
             "present": self.present,
             "landed": self.landed,
