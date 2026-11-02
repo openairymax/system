@@ -1,0 +1,14 @@
+[Unit]
+Description=Check AirymaxOS Data Partition Health
+Documentation=https://docs.agentrt.local/190-distribution/03-installer-design
+After=airy-disk-mount.service
+ConditionPathIsMountPoint=/data
+OnFailure=airy-incident@%n.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/airy-disk health
+TimeoutStartSec=120
+
+[Install]
+WantedBy=multi-user.target

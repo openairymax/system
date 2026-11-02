@@ -29,6 +29,9 @@ FIRSTBOOT = "agentrt-firstboot.service"
 UPDATE_CHECK = "airymax-update-check.service"
 UPDATE_TIMER = "airymax-update-check.timer"
 LLM = "airy-llm.service"
+DISK_MOUNT = "airy-disk-mount.service"
+DISK_HEALTH = "airy-disk-health.service"
+DISK_TIMER = "airy-disk-health.timer"
 
 
 class UnitsCase(unittest.TestCase):
@@ -341,6 +344,67 @@ class LlmCase(UnitsCase):
             "CapabilityBoundingSet=CAP_NET_BIND_SERVICE\n",
         )
         self.assert_bad("CapabilityBoundingSet")
+
+
+class DiskCase(UnitsCase):
+    """数据分区挂载与健康单元契约。
+
+    挂载单元不能加固：ProtectSystem/PrivateTmp 会把 mount 关进私有
+    命名空间，挂载结果对系统其余部分不可见。健康单元靠挂载点条件
+    跳过未选数据盘的机器，否则每个启动周期都会刷一条 incident。
+    """
+
+    def test_mount_after(self) -> None:
+        self.edit(DISK_MOUNT, "After=local-fs.target\n", "")
+        self.assert_bad("After")
+
+    def test_mount_before(self) -> None:
+        self.edit(
+            DISK_MOUNT,
+            "Before=agentrt.target multi-user.target\n",
+            "",
+        )
+        self.assert_bad("Before")
+
+    def test_mount_exec(self) -> None:
+        self.edit(DISK_MOUNT, "airy-disk mount", "airy-disk status")
+        self.assert_bad("ExecStart")
+
+    def test_mount_type(self) -> None:
+        self.edit(DISK_MOUNT, "Type=oneshot", "Type=simple")
+        self.assert_bad("Type")
+
+    def test_mount_harden(self) -> None:
+        self.edit(
+            DISK_MOUNT,
+            "TimeoutStartSec=120\n",
+            "TimeoutStartSec=120\nPrivateTmp=yes\n",
+        )
+        self.assert_bad("unexpected directive")
+
+    def test_health_after(self) -> None:
+        self.edit(DISK_HEALTH, "After=airy-disk-mount.service\n", "")
+        self.assert_bad("After")
+
+    def test_health_guard(self) -> None:
+        self.edit(
+            DISK_HEALTH,
+            "ConditionPathIsMountPoint=/data\n",
+            "",
+        )
+        self.assert_bad("ConditionPathIsMountPoint")
+
+    def test_health_exec(self) -> None:
+        self.edit(DISK_HEALTH, "airy-disk health", "airy-disk mount")
+        self.assert_bad("ExecStart")
+
+    def test_timer_calendar(self) -> None:
+        self.edit(DISK_TIMER, "OnCalendar=daily", "OnCalendar=hourly")
+        self.assert_bad("OnCalendar")
+
+    def test_timer_persistent(self) -> None:
+        self.edit(DISK_TIMER, "Persistent=true", "Persistent=false")
+        self.assert_bad("Persistent")
 
 
 class TimerCase(UnitsCase):

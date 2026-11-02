@@ -406,6 +406,37 @@ FIRSTBOOT_PAIRS: dict[tuple[str, str], str] = {
 
 FIRSTBOOT_SCRIPT = ROOT / "scripts" / "firstboot.sh"
 
+DISK_MOUNT = "airy-disk-mount.service"
+
+# 挂载单元必须运行在宿主挂载命名空间里：ProtectSystem/PrivateTmp 之类
+# 加固会把它关进私有命名空间，mount 的结果对其它进程不可见。/data 承载
+# 记忆与虚拟文件系统状态，所以它排在 agentrt.target 之前；OnFailure 把
+# 挂载失败交给 incident 通道，而不是让服务在缺数据盘的情况下静默起跑。
+DISK_MOUNT_PAIRS: dict[tuple[str, str], str] = {
+    ("Unit", "After"): "local-fs.target",
+    ("Unit", "Before"): "agentrt.target multi-user.target",
+    ("Unit", "OnFailure"): "airy-incident@%n.service",
+    ("Service", "Type"): "oneshot",
+    ("Service", "ExecStart"): "/usr/bin/airy-disk mount",
+    ("Service", "RemainAfterExit"): "yes",
+    ("Service", "TimeoutStartSec"): "120",
+    ("Install", "WantedBy"): "multi-user.target",
+}
+
+DISK_HEALTH = "airy-disk-health.service"
+
+# 没有 /data 挂载点时直接跳过：装机未选数据盘不是故障，让单元在此处
+# 失败只会在每个启动周期刷一条 incident，掩盖真正的挂载失败。
+DISK_HEALTH_PAIRS: dict[tuple[str, str], str] = {
+    ("Unit", "After"): "airy-disk-mount.service",
+    ("Unit", "ConditionPathIsMountPoint"): "/data",
+    ("Unit", "OnFailure"): "airy-incident@%n.service",
+    ("Service", "Type"): "oneshot",
+    ("Service", "ExecStart"): "/usr/bin/airy-disk health",
+    ("Service", "TimeoutStartSec"): "120",
+    ("Install", "WantedBy"): "multi-user.target",
+}
+
 UPDATE_CHECK = "airymax-update-check.service"
 
 CHECK_PAIRS: dict[tuple[str, str], str] = {
@@ -483,9 +514,19 @@ TIMERS: dict[str, dict[tuple[str, str], str]] = {
         ("Timer", "Persistent"): "true",
         ("Install", "WantedBy"): "timers.target",
     },
+    "airy-disk-health.timer": {
+        ("Unit", "Description"): (
+            "Daily AirymaxOS Data Partition Health Check"
+        ),
+        ("Timer", "OnCalendar"): "daily",
+        ("Timer", "Persistent"): "true",
+        ("Install", "WantedBy"): "timers.target",
+    },
 }
 
 UNITS = frozenset(SERVICES) | frozenset(TARGETS) | frozenset(TEMPLATES) | {
+    DISK_HEALTH,
+    DISK_MOUNT,
     FIRSTBOOT,
     HEALTH,
     LLM,
@@ -748,6 +789,10 @@ def _body_bad(name: str, cfg: ConfigParser) -> list[str]:
         return _firstboot_bad(name, cfg)
     if name == HEALTH:
         return _health_bad(name, cfg)
+    if name == DISK_MOUNT:
+        return _pairs_bad(name, cfg, dict(DISK_MOUNT_PAIRS))
+    if name == DISK_HEALTH:
+        return _pairs_bad(name, cfg, dict(DISK_HEALTH_PAIRS))
     if name == UPDATE_CHECK:
         return _check_bad(name, cfg)
     if name == LLM:
