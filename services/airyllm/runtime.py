@@ -2,12 +2,16 @@
 #
 # AirymaxOS 推理引擎检查
 #
-# 清单只声明引擎在哪，不保证它还在。权重与引擎是两份独立交付物：升级
-# 系统包可能换掉引擎路径，而清单仍是旧的。判定必须读一次磁盘，否则
-# 状态会报就绪、服务一启动就崩在 execve 上。
+# 清单只声明引擎在哪、是什么版本，不保证磁盘上还是那一份。权重与引擎是
+# 两份独立交付物：升级系统包可能换掉引擎，而清单仍是旧的。判定必须读
+# 一次磁盘，否则状态会报就绪、服务一启动就崩在 execve 上，或更糟——用
+# 一个参数语义已变的引擎加载旧清单。
 #
-# 只做只读检查，不执行引擎、不探测版本：版本探测要跑程序，可能阻塞或
-# 触发驱动加载，这属于后端探测层，不属于本层。
+# 版本取自引擎目录下的标记文件，而不是执行引擎去问：版本探测要跑程序，
+# 可能阻塞或触发驱动加载，属于后端探测层；标记文件由引擎包在构建时写入，
+# 与二进制同生共死。
+#
+# 只做只读检查，不执行引擎。
 
 """AirymaxOS inference engine inspection (K-20-09).
 
@@ -24,19 +28,22 @@ from pathlib import Path
 from . import model
 from .failure import Failure
 
-__all__ = ["check"]
+__all__ = ["VERSION_FILE", "check"]
 
 EXEC_BITS = 0o111
 
+VERSION_FILE = "ENGINE_VERSION"
+
 
 def check(entry: model.Manifest) -> None:
-    """确认清单指定的引擎可执行；任何偏离都抛 :class:`Failure`。
+    """确认清单指定的引擎可执行且版本相符。
 
     Args:
         entry: 已解析的清单。
 
     Raises:
-        Failure: 引擎路径非绝对、不存在、非普通文件或无可执行位。
+        Failure: 引擎路径非绝对、不存在、非普通文件、无可执行位，或版本
+            与清单不符。
     """
     path = Path(entry.runtime.path)
     if not path.is_absolute():
@@ -53,3 +60,17 @@ def check(entry: model.Manifest) -> None:
     if not info.st_mode & EXEC_BITS:
         raise Failure(f"引擎没有可执行位: {entry.runtime.path}",
                       model.Reason.NO_RUNTIME, entry.runtime.path)
+    _version(entry, path)
+
+
+def _version(entry: model.Manifest, path: Path) -> None:
+    marker = path.parent / VERSION_FILE
+    try:
+        got = marker.read_text(encoding="utf-8").strip()
+    except OSError as exc:
+        raise Failure(f"引擎缺少版本标记: {marker}",
+                      model.Reason.NO_RUNTIME, str(marker)) from exc
+    if got != entry.runtime.version:
+        raise Failure(
+            f"引擎版本 {got!r} 与清单 {entry.runtime.version!r} 不符",
+            model.Reason.NO_RUNTIME, str(marker))

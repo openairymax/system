@@ -56,6 +56,7 @@ class Case(unittest.TestCase):
         self.exe = self.home / "llama-server"
         self.exe.write_bytes(b"\x7fELF")
         self.exe.chmod(0o755)
+        (self.home / "ENGINE_VERSION").write_text("b4000\n", encoding="utf-8")
 
     def write(self, payload: dict) -> None:
         (self.home / model.MANIFEST_FILE).write_text(
