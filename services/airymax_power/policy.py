@@ -48,18 +48,25 @@ MARK = "AIRYMAX-POWER"
 
 @dataclass(frozen=True, slots=True)
 class Tuning:
-    """一组要同时落地的电源档位。"""
+    """一组要同时落地的电源档位。
+
+    profile 是固件档位；governors 与 epps 是按优先级排列的候选值，由
+    tuning 在每次评估时对照内核给出的可选集合取第一个命中项。候选不能
+    写成单一值：intel_pstate 的 active 模式只提供 performance 与
+    powersave，把 governor 钉在 schedutil 会让该控制点在所有现代 Intel
+    机器上永远不适用，判定也就永远无法收敛到 ok。
+    """
 
     profile: str
-    governor: str
-    epp: str
+    governors: tuple[str, ...]
+    epps: tuple[str, ...]
 
 
-NORMAL_AC = Tuning("balanced", "schedutil", "balance_power")
+NORMAL_AC = Tuning("balanced", ("schedutil", "powersave"), ("balance_power",))
 
-NORMAL_BATTERY = Tuning("low-power", "schedutil", "power")
+NORMAL_BATTERY = Tuning("low-power", ("schedutil", "powersave"), ("power",))
 
-COOL = Tuning("low-power", "powersave", "power")
+COOL = Tuning("low-power", ("powersave", "schedutil"), ("power",))
 
 
 @dataclass(frozen=True, slots=True)

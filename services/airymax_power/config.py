@@ -18,7 +18,7 @@ __all__ = ["advice", "reference", "temp_advice"]
 
 ADVICE = {
     State.OK: "档位已与当前供电和热状态一致",
-    State.PARTIAL: "部分控制点未落地，检查内核是否暴露 platform_profile/EPP",
+    State.PARTIAL: "部分控制点未落地，检查可选档位、sysfs 权限与其它调优进程",
     State.FAILED: "存在控制点但全部写入失败，检查 sysfs 权限与其它调优进程",
     State.UNSUPPORTED: "本机未暴露 platform_profile、governor 或 EPP",
 }
@@ -48,10 +48,12 @@ def reference(policy: Policy) -> str:
     )
     lines = [
         "# AirymaxOS 电源与温度参考（只打印，不落盘）",
-        f"# {'source':<8} {'platform_profile':<16} {'governor':<10} epp",
+        f"# {'source':<8} {'platform_profile':<16} "
+        f"{'governor':<20} epp",
     ]
     lines.extend(
-        f"{name:<8} {wanted.profile:<16} {wanted.governor:<10} {wanted.epp}"
+        f"{name:<8} {wanted.profile:<16} "
+        f"{'|'.join(wanted.governors):<20} {'|'.join(wanted.epps)}"
         for name, wanted in rows
     )
     lines.append(

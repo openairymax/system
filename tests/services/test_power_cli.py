@@ -88,7 +88,7 @@ class ApplyTest(Tree):
         self.assertIn("balanced", self.profile.read_text(encoding="ascii"))
         self.assertEqual(
             (self.base / "cpu/policy0/scaling_governor").read_text("ascii"),
-            "schedutil\n",
+            "powersave\n",
         )
 
     def test_battery(self) -> None:
