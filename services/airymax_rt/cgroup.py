@@ -61,6 +61,8 @@ class Layout:
 
     ``supported`` 只对 v2 有意义：统一树存在但缺少 ``cpu.rt.max`` 时，
     布局可用而预算不可记账，判定为 unaccounted。v1 只要找到挂载根即可写。
+    ``file`` 为空表示统一树没有把 cpu 控制器分发给子组，此时连预算文件
+    都不存在，与「有文件但未记账」是两种不同的故障。
     """
 
     kind: Kind
@@ -68,18 +70,22 @@ class Layout:
     file: str
     supported: bool
 
+    @property
+    def routed(self) -> bool:
+        """cpu 控制器是否已经落到可写的层级上。"""
+        return self.kind is Kind.V1 or bool(self.file)
+
 
 def detect(root: str) -> Layout | None:
-    """从挂载根识别布局；没有可用的 cpu 记账时返回 None。"""
+    """从挂载根识别布局；整棵记账树都不存在时返回 None。"""
     base = Path(root)
-    unified = (base / CONTROLLER).is_file()
-    if unified:
+    if (base / CONTROLLER).is_file():
         try:
             text = (base / CONTROLLER).read_text(encoding="ascii")
         except OSError:
             return None
         if CPU not in text.split():
-            return None
+            return Layout(Kind.V2, str(base), "", False)
         has_rt = (base / V2_FILE).is_file()
         return Layout(Kind.V2, str(base), V2_FILE, has_rt)
     try:
