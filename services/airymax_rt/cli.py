@@ -1,20 +1,21 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later OR Apache-2.0
 #
-# AirymaxOS 实时带宽命令行入口
+# AirymaxOS 实时能力命令行入口
 #
-# 三个子命令对应一张契约表：status 只读判定当前预算是否落地，apply 写入
-# 并逐 slice 回读，config 打印参考 sysctl 文本而不落盘。启动单元与验收
-# 门禁共用同一份判定实现，避免「启动时写成功、门禁读失败」的两套口径。
+# 四个子命令对应两张契约表：status/apply/config 管实时带宽，matrix 管
+# 能力探测。启动单元与验收门禁共用同一份判定实现，避免「启动时写成功、
+# 门禁读失败」的两套口径；能力矩阵同理，探测与报告只此一处。
 #
-# 退出码：0 表示已全部落地或内核不限预算（无需处理）；3 表示部分落地；
-# 1 表示未通过且没有任何 slice 落地；2 为用法错误。门禁据此直接判读，
-# 不必解析人类可读输出。
+# 退出码：0 表示已全部落地、内核不限预算或整机满足完整实时；3 表示部分
+# 落地或仅有软实时；1 表示未通过且没有任何 slice 落地或完全不具备实时；
+# 2 为用法错误。门禁据此直接判读，不必解析人类可读输出。
 
-"""AirymaxOS RT bandwidth command line (X-01).
+"""AirymaxOS RT command line (X-01, X-03).
 
-设计依据：0.0.4 方案 §6.7 X-01 与 docs-linux/100-operations/
-02-configuration.md §2.2。``--json`` 输出与 :class:`Report` 的
-``dump()`` 同形，二者是同一份数据的两种呈现。
+设计依据：0.0.4 方案 §6.7 X-01/X-03 与 docs-linux/100-operations/
+02-configuration.md §2.2、docs-linux/170-performance/07-rt-matrix.md。
+``--json`` 输出与 :meth:`Report.dump` / :meth:`Matrix.dump` 同形，二者
+是同一份数据的两种呈现。
 
 """
 
@@ -25,7 +26,7 @@ import json
 import sys
 from collections.abc import Sequence
 
-from . import bandwidth, config
+from . import bandwidth, config, matrix
 from .policy import (
     DEFAULT_CGROUP,
     DEFAULT_PERIOD,
@@ -47,6 +48,8 @@ PASSING = (State.OK, State.DISABLED)
 def main(argv: Sequence[str] | None = None) -> int:
     """解析命令行并分派；返回值即进程退出码。"""
     args = _args(argv)
+    if args.cmd == "matrix":
+        return _matrix(args)
     policy = _policy(args)
     if args.cmd == "config":
         sys.stdout.write(config.reference())
@@ -91,6 +94,24 @@ def _opt() -> argparse.ArgumentParser:
         default=argparse.SUPPRESS,
         help="cgroup 挂载根",
     )
+    opt.add_argument(
+        "--sysroot",
+        metavar="DIR",
+        default=argparse.SUPPRESS,
+        help="sysfs 根（能力探测）",
+    )
+    opt.add_argument(
+        "--procroot",
+        metavar="DIR",
+        default=argparse.SUPPRESS,
+        help="procfs 根（能力探测）",
+    )
+    opt.add_argument(
+        "--cmdline",
+        metavar="FILE",
+        default=argparse.SUPPRESS,
+        help="内核命令行文件",
+    )
     return opt
 
 
@@ -105,6 +126,9 @@ def _args(argv: Sequence[str] | None) -> argparse.Namespace:
         proc=DEFAULT_TOTAL,
         period=DEFAULT_PERIOD,
         cgroup=DEFAULT_CGROUP,
+        sysroot=matrix.DEFAULT_SYS,
+        procroot=matrix.DEFAULT_PROC,
+        cmdline=matrix.DEFAULT_CMDLINE,
     )
     sub = parser.add_subparsers(dest="cmd", required=True)
     sub.add_parser(
@@ -116,7 +140,41 @@ def _args(argv: Sequence[str] | None) -> argparse.Namespace:
     sub.add_parser(
         "config", parents=[_opt()], help="打印参考 sysctl 文本"
     )
+    sub.add_parser(
+        "matrix", parents=[_opt()], help="探测实时能力并汇总等级"
+    )
     return parser.parse_args(argv)
+
+
+def _matrix(args: argparse.Namespace) -> int:
+    """探测实时能力；等级决定退出码，与带宽判定分开。"""
+    roots = matrix.Roots(
+        sys=args.sysroot,
+        proc=args.procroot,
+        cgroup=args.cgroup,
+        cmdline=args.cmdline,
+    )
+    found = matrix.collect(roots)
+    _show(found, args.json)
+    return _mcode(found.grade)
+
+
+def _show(found: matrix.Matrix, as_json: bool) -> None:
+    if as_json:
+        print(json.dumps(found.dump(), ensure_ascii=False))
+        return
+    print(f"{MARK} grade={found.grade.value} caps={len(found.caps)}")
+    for item in found.caps:
+        print(f"  {item.name:<12}{item.flag.value:<8} {item.detail}")
+    print(f"advice {matrix.advice(found.grade)}")
+
+
+def _mcode(found: matrix.Grade) -> int:
+    if found is matrix.Grade.READY:
+        return 0
+    if found is matrix.Grade.SOFT:
+        return EXIT_PARTIAL
+    return EXIT_FAIL
 
 
 def _policy(args: argparse.Namespace) -> Policy:
