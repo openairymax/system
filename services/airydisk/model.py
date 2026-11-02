@@ -42,6 +42,7 @@ __all__ = [
     "Topology",
     "dump",
     "load",
+    "num",
     "order",
 ]
 
@@ -164,10 +165,11 @@ def order(parts: Iterable[Partition]) -> tuple[Partition, ...]:
     扩容只对盘上最后一号分区成立，判定因此依赖次序；次序在这里归一，
     探测层与快照反序列化共用同一实现，避免两处各排一次或各自漏排。
     """
-    return tuple(sorted(parts, key=_num))
+    return tuple(sorted(parts, key=num))
 
 
-def _num(part: Partition) -> int:
+def num(part: Partition) -> int:
+    """分区号：内核名末尾的数字，也是 growpart 的第二个参数。"""
     found = PART_NUM.search(part.name)
     return int(found.group(1)) if found else 0
 

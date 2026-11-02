@@ -42,7 +42,7 @@ class TokenTest(unittest.TestCase):
     def test_action_tokens(self) -> None:
         self.assertEqual(
             [action.value for action in ops.Action],
-            ["wipe", "partition", "format", "mount"],
+            ["wipe", "partition", "format", "mount", "grow", "resize"],
         )
 
     def test_refusal_tokens(self) -> None:
@@ -142,7 +142,7 @@ class SerializeTest(unittest.TestCase):
 
     def test_unknown_action(self) -> None:
         obj = ops.dump(self.sample())
-        obj["steps"][0]["action"] = "resize"  # type: ignore[index]
+        obj["steps"][0]["action"] = "shrink"  # type: ignore[index]
         with self.assertRaises(ValueError):
             ops.load(obj)
 
