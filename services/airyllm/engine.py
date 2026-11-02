@@ -23,7 +23,45 @@ from pathlib import Path
 from . import accel, manifest, model, paths, runtime, status, verify
 from .failure import Failure
 
-__all__ = ["resolve"]
+__all__ = ["assess", "resolve"]
+
+
+def assess(root: str | Path | None = None,
+           present: frozenset[model.Backend] | None = None
+           ) -> tuple[model.Manifest | None, model.Status]:
+    """得出一次运行判定并落盘，同时交出判定所依据的清单。
+
+    启动层要用清单派生引擎参数，若它自行再读一次清单，两次读取之间
+    清单可能被替换，参数就会与状态里记录的摘要不是同一份。
+
+    Args:
+        root: 运行根；``None`` 时取契约根。
+        present: 可用的加速后端；``None`` 时现场探测。
+
+    Returns:
+        ``(清单, 判定)``；判定为 ``FAILED`` 时清单为 ``None``。
+    """
+    home = paths.base(root)
+    try:
+        entry = manifest.load(paths.manifest(home))
+        verify.check(home, entry)
+        runtime.check(entry)
+    except Failure as exc:
+        return None, _save(home, model.Status(state=model.State.FAILED,
+                                              backend=model.Backend.CPU,
+                                              reason=exc.reason))
+    digest = verify.digest(paths.manifest(home))
+    try:
+        backend, reason = accel.pick(entry.runtime.backends,
+                                     _seen(present))
+    except Failure as exc:
+        return None, _save(home, model.Status(state=model.State.FAILED,
+                                              backend=model.Backend.CPU,
+                                              reason=exc.reason,
+                                              digest=digest))
+    state = model.State.READY if reason is None else model.State.DEGRADED
+    return entry, _save(home, model.Status(state=state, backend=backend,
+                                           reason=reason, digest=digest))
 
 
 def resolve(root: str | Path | None = None,
@@ -37,26 +75,7 @@ def resolve(root: str | Path | None = None,
     Returns:
         本次判定；失败时不抛异常，改为 ``FAILED`` 加归因。
     """
-    home = paths.base(root)
-    try:
-        entry = manifest.load(paths.manifest(home))
-        verify.check(home, entry)
-        runtime.check(entry)
-    except Failure as exc:
-        return _save(home, model.Status(state=model.State.FAILED,
-                                        backend=model.Backend.CPU,
-                                        reason=exc.reason))
-    digest = verify.digest(paths.manifest(home))
-    try:
-        backend, reason = accel.pick(entry.runtime.backends,
-                                     _seen(present))
-    except Failure as exc:
-        return _save(home, model.Status(state=model.State.FAILED,
-                                        backend=model.Backend.CPU,
-                                        reason=exc.reason, digest=digest))
-    state = model.State.READY if reason is None else model.State.DEGRADED
-    return _save(home, model.Status(state=state, backend=backend,
-                                    reason=reason, digest=digest))
+    return assess(root, present)[1]
 
 
 def _seen(present: frozenset[model.Backend] | None) -> frozenset:
