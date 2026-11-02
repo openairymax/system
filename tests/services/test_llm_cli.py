@@ -67,6 +67,10 @@ class Case(unittest.TestCase):
             "b4000\n", encoding="utf-8")
         text = json.dumps(sample(str(self.engine)))
         (self.bundle / "manifest.json").write_text(text, encoding="utf-8")
+        # 探测结果由用例给定：开发机带显卡与否不应改变判定契约的断言。
+        seen = mock.patch("airyllm.accel.detect", return_value=frozenset())
+        seen.start()
+        self.addCleanup(seen.stop)
 
     def run_cli(self, *argv: str) -> tuple[int, str, str]:
         out, err = io.StringIO(), io.StringIO()
