@@ -12,6 +12,7 @@
 
 from __future__ import annotations
 
+from .feed import Untrusted, load_manifest
 from .identity import Verdict, compare
 from .model import (
     CHANNELS,
@@ -55,6 +56,8 @@ __all__ = [
     "Identity",
     "Kernel",
     "Manifest",
+    "Untrusted",
     "Verdict",
     "compare",
+    "load_manifest",
 ]
