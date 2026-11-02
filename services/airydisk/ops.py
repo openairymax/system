@@ -47,6 +47,8 @@ class Action(Enum):
     PARTITION = "partition"
     FORMAT = "format"
     MOUNT = "mount"
+    GROW = "grow"
+    RESIZE = "resize"
 
 
 @unique
