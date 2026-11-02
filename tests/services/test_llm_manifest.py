@@ -18,6 +18,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "services"))
 
 from airyllm import manifest, model  # noqa: E402
+from airyllm.failure import Failure  # noqa: E402
 
 DIGEST = "0" * 64
 
@@ -75,17 +76,17 @@ class RejectTest(unittest.TestCase):
     def reject(self, reason: model.Reason, mutate) -> None:
         obj = copy.deepcopy(sample())
         mutate(obj)
-        with self.assertRaises(manifest.Corrupt) as caught:
+        with self.assertRaises(Failure) as caught:
             manifest.parse(json.dumps(obj))
         self.assertIs(caught.exception.reason, reason)
 
     def test_not_json(self) -> None:
-        with self.assertRaises(manifest.Corrupt) as caught:
+        with self.assertRaises(Failure) as caught:
             manifest.parse("{")
         self.assertIs(caught.exception.reason, model.Reason.NO_MANIFEST)
 
     def test_not_object(self) -> None:
-        with self.assertRaises(manifest.Corrupt):
+        with self.assertRaises(Failure):
             manifest.parse("[]")
 
     def test_schema(self) -> None:
@@ -205,7 +206,7 @@ class LoadTest(unittest.TestCase):
         self.assertEqual(manifest.load(path).name, "airy-small")
 
     def test_missing(self) -> None:
-        with self.assertRaises(manifest.Corrupt) as caught:
+        with self.assertRaises(Failure) as caught:
             manifest.load(self.dir / "nope.json")
         self.assertIs(caught.exception.reason, model.Reason.NO_MANIFEST)
 
