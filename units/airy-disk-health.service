@@ -9,6 +9,3 @@ OnFailure=airy-incident@%n.service
 Type=oneshot
 ExecStart=/usr/bin/airy-disk health
 TimeoutStartSec=120
-
-[Install]
-WantedBy=multi-user.target
