@@ -435,6 +435,8 @@ LLM_PAIRS: dict[tuple[str, str], str] = {
     ("Unit", "After"): "agentrt-firstboot.service",
     ("Unit", "Requires"): "agentrt-firstboot.service",
     ("Unit", "PartOf"): "agentrt.target",
+    # 清单由首启准备；缺清单时单元必须条件跳过而不是反复失败重启。
+    ("Unit", "ConditionPathExists"): "/var/lib/airy-llm/manifest.json",
     ("Unit", "OnFailure"): "airy-incident@%n.service",
     ("Unit", "StartLimitBurst"): "3",
     ("Unit", "StartLimitIntervalSec"): "300",
