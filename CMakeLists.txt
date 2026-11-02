@@ -103,13 +103,15 @@ install(TARGETS airymaxmon
 )
 
 # ---------------------------------------------------------------------------
-# 磁盘管理服务（M-30/M-31）：Python 包安装到 site-packages，
-# 由 system/bin/airy-disk 与磁盘服务共同导入
+# 磁盘管理服务（M-30/M-31）与升级通道（V-14）：Python 包安装到
+# site-packages，由 system/bin 下的入口脚本导入
 # ---------------------------------------------------------------------------
-install(DIRECTORY services/airydisk
+install(DIRECTORY services/airydisk services/airyupdate
 	DESTINATION ${Python3_SITELIB}
 	PATTERN "__pycache__" EXCLUDE
 )
-install(PROGRAMS bin/airy-disk
+install(PROGRAMS
+	bin/airy-disk
+	bin/airy-update
 	DESTINATION bin
 )
