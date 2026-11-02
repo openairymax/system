@@ -135,7 +135,9 @@ def write(layout: Layout, name: str, budget: int, period: int) -> bool:
     path = target(layout, name)
     try:
         path.mkdir(parents=True, exist_ok=True)
-        payload = f"{budget}" if layout.kind is Kind.V1 else f"{budget} {period}"
+        payload = f"{budget}"
+        if layout.kind is Kind.V2:
+            payload = f"{budget} {period}"
         (path / layout.file).write_text(payload + "\n", encoding="ascii")
     except OSError:
         return False

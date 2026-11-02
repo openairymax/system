@@ -8,53 +8,15 @@
 from __future__ import annotations
 
 import sys
-import tempfile
 import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "services"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from airymax_rt import bandwidth, cgroup, policy, report  # noqa: E402
-
-MOUNT = "cpu,cpuacct"
-
-
-class Tree(unittest.TestCase):
-    """一棵带内核接口与 cgroup 目录的临时机器。"""
-
-    def setUp(self) -> None:
-        self._dir = tempfile.TemporaryDirectory()
-        self.addCleanup(self._dir.cleanup)
-        self.base = Path(self._dir.name)
-
-    def policy(self, total: str = "950000\n", period: str = "1000000\n"):
-        total_path = self.base / "runtime"
-        period_path = self.base / "period"
-        total_path.write_text(total, encoding="ascii")
-        period_path.write_text(period, encoding="ascii")
-        return policy.Policy(
-            total_path=str(total_path),
-            period_path=str(period_path),
-            cgroup_root=str(self.base),
-        )
-
-    def mount(self) -> Path:
-        mount = self.base / MOUNT
-        mount.mkdir()
-        (mount / cgroup.V1_FILE).write_text("950000\n", encoding="ascii")
-        return mount
-
-    def slice(self, mount: Path, name: str, value: int) -> None:
-        path = mount / name
-        path.mkdir()
-        (path / cgroup.V1_FILE).write_text(f"{value}\n", encoding="ascii")
-
-    def all_slices(self, value: int = 190000) -> Path:
-        mount = self.mount()
-        for name in policy.DEFAULT_SLICES:
-            self.slice(mount, name, value)
-        return mount
+from rt_fixture import Tree  # noqa: E402
 
 
 class InspectTest(Tree):
