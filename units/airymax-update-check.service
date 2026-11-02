@@ -1,0 +1,16 @@
+[Unit]
+Description=AirymaxOS Daily Update Check
+Documentation=https://docs.agentrt.local/190-distribution/04-update-mechanism
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/airy-update check
+SuccessExitStatus=10
+StateDirectory=airy-update
+TimeoutStartSec=300
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+NoNewPrivileges=yes
