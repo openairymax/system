@@ -49,7 +49,7 @@ class Knob:
     """一个控制点的目标、现状与落地结果。"""
 
     name: str
-    target: str
+    target: str | None
     current: str | None
     present: bool
     landed: bool
@@ -57,8 +57,10 @@ class Knob:
 
 @dataclass(frozen=True, slots=True)
 class _Spec:
+    """一个控制点与它的候选目标值，候选按优先级排列。"""
+
     name: str
-    target: str
+    wanted: tuple[str, ...]
     path: Path
     allow: Path | None
 
@@ -87,13 +89,13 @@ def verdict(knobs: tuple[Knob, ...]) -> State:
 
 def _specs(policy: Policy, wanted: Tuning) -> tuple[_Spec, ...]:
     specs = [
-        _Spec(PROFILE, wanted.profile, Path(policy.profile),
+        _Spec(PROFILE, (wanted.profile,), Path(policy.profile),
               Path(policy.choices)),
     ]
     for entry in _policies(Path(policy.cpufreq)):
-        specs.append(_Spec(f"{entry.name}/governor", wanted.governor,
+        specs.append(_Spec(f"{entry.name}/governor", wanted.governors,
                            entry / GOVERNOR, entry / GOV_SET))
-        specs.append(_Spec(f"{entry.name}/epp", wanted.epp,
+        specs.append(_Spec(f"{entry.name}/epp", wanted.epps,
                            entry / EPP, entry / EPP_SET))
     return tuple(specs)
 
@@ -106,21 +108,33 @@ def _policies(root: Path) -> list[Path]:
 
 
 def _knob(spec: _Spec) -> Knob:
+    """目标值按当前可选集合解析，解析结果与回读值一起构成证据。
+
+    每次调用都重新读可选集合：platform_profile 的写入会改变 EPP 的可用
+    取值，先解析后写入就会拿到过期的候选表。只有节点不存在才算本机不
+    适用；节点存在但候选值全都不可用时，意图无法达成，必须计入「未落地」
+    而不是悄悄从判定里消失。
+    """
     current = sysfs.read_text(spec.path)
-    present = current is not None and _allowed(spec.allow, spec.target)
-    return Knob(spec.name, spec.target, current, present,
-                present and current == spec.target)
+    if current is None:
+        return Knob(spec.name, None, None, False, False)
+    target = _target(spec)
+    return Knob(spec.name, target, current, True,
+                target is not None and current == target)
 
 
-def _allowed(allow: Path | None, target: str) -> bool:
-    """目标值不在内核给出的可选集合内时，这个控制点对本机不适用。"""
-    if allow is None:
-        return True
-    text = sysfs.read_text(allow)
-    return text is None or target in text.split()
+def _target(spec: _Spec) -> str | None:
+    """取第一个受本机支持的目标值；无可选集合时按首选假定支持。"""
+    if spec.allow is None:
+        return spec.wanted[0]
+    text = sysfs.read_text(spec.allow)
+    if text is None:
+        return spec.wanted[0]
+    offered = set(text.split())
+    return next((value for value in spec.wanted if value in offered), None)
 
 
 def _push(spec: _Spec) -> None:
     knob = _knob(spec)
-    if knob.present and not knob.landed:
-        sysfs.write_text(spec.path, spec.target)
+    if knob.target is not None and not knob.landed:
+        sysfs.write_text(spec.path, knob.target)

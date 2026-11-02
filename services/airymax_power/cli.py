@@ -134,7 +134,7 @@ def _emit(found: Report, as_json: bool) -> None:
               f" severity={zone.severity.value}")
     print(f"  throttle package={found.heat.package} core={found.heat.core}")
     for knob in found.knobs:
-        print(f"  {knob.name:<20} target={knob.target:<16}"
+        print(f"  {knob.name:<20} target={knob.target or '-':<16}"
               f" current={knob.current or '-':<16} {_flag(knob)}")
     print(f"  advice {config.advice(found.state)}")
     print(f"  thermal {config.temp_advice(found.severity)}")

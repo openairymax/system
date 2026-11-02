@@ -99,6 +99,26 @@ class TuneTest(Tree):
         self.assertEqual(found.source, Source.AC)
         self.assertIn("balanced", self.profile.read_text())
 
+    def test_powersave(self) -> None:
+        """intel_pstate 用 powersave 表示 HWP 交由 EPP 控频。"""
+        guard.apply(self.policy())
+        node = self.base / "cpu" / "policy0" / "scaling_governor"
+        self.assertEqual(node.read_text("ascii"), "powersave\n")
+
+    def test_schedutil_first(self) -> None:
+        self.cpu(available="performance powersave schedutil")
+        found = guard.apply(self.policy())
+        self.assertIs(found.state, State.OK)
+        node = self.base / "cpu" / "policy0" / "scaling_governor"
+        self.assertEqual(node.read_text("ascii"), "schedutil\n")
+
+    def test_no_candidate(self) -> None:
+        """节点存在但候选值全不可用时计入未落地，不能报 ok。"""
+        self.cpu(available="performance")
+        found = guard.apply(self.policy())
+        self.assertIs(found.state, State.PARTIAL)
+        self.assertEqual((found.present, found.landed), (3, 2))
+
     def test_battery(self) -> None:
         self.battery()
         found = guard.apply(self.policy())

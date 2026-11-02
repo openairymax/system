@@ -73,12 +73,12 @@ class Tree(unittest.TestCase):
             (path / "trip_point_0_temp").write_text(f"{critical}\n", "ascii")
 
     def cpu(self, name: str = "policy0", governor: str = "performance",
-            epp: str = "performance") -> None:
+            epp: str = "performance",
+            available: str = "performance powersave") -> None:
         path = self.base / "cpu" / name
         path.mkdir(parents=True, exist_ok=True)
         self._write(path / "scaling_governor", governor)
-        self._write(path / "scaling_available_governors",
-                    "performance powersave schedutil")
+        self._write(path / "scaling_available_governors", available)
         self._write(path / "energy_performance_preference", epp)
         self._write(path / "energy_performance_available_preferences",
                     "performance balance_performance balance_power power")
