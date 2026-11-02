@@ -33,7 +33,16 @@ from .model import DATA_MOUNT
 from .ops import Action, Step
 from .runner import TIMEOUT, Runner, run
 
-__all__ = ["MOUNT", "Mount", "State", "dump", "ensure", "judge", "remedy"]
+__all__ = [
+    "MOUNT",
+    "Mount",
+    "State",
+    "dump",
+    "ensure",
+    "judge",
+    "planned",
+    "remedy",
+]
 
 MOUNT = "/usr/bin/mount"
 
@@ -82,10 +91,15 @@ def judge(text: str, mounted: bool) -> Mount:
     return Mount(State.READY, row.source, step=step)
 
 
+def planned(text: str) -> Mount:
+    """只判定不执行；--dry-run 与 :func:`ensure` 共用同一条判定路径。"""
+    return judge(text, ismount(DATA_MOUNT))
+
+
 def ensure(text: str, runner: Runner = run,
            timeout: float = TIMEOUT) -> Mount:
     """判定之后按需挂载 /data；命令起不来或非零退出都判失败。"""
-    found = judge(text, ismount(DATA_MOUNT))
+    found = planned(text)
     if found.step is None:
         return found
     result = runner(found.step, timeout)

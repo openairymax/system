@@ -28,9 +28,9 @@ from dataclasses import dataclass
 from enum import Enum, unique
 
 from .model import DATA_MOUNT, Disk, FsKind, Partition, Topology, num
-from .ops import Action, Plan, Step
+from .ops import Action, Plan, Step, dump as dump_plan
 
-__all__ = ["GROWPART", "Grow", "State", "plan", "repair", "remedy"]
+__all__ = ["GROWPART", "Grow", "State", "dump", "plan", "repair", "remedy"]
 
 GROWPART = "/usr/bin/growpart"
 
@@ -119,6 +119,18 @@ def repair(step: Step, rc: int) -> str:
     if rc == 127 and tool in PACKAGE:
         return f"缺少 {tool}：安装 {PACKAGE[tool]} 后重试"
     return f"{tool} 退出码 {rc}：{REMOTE}"
+
+
+def dump(found: Grow) -> dict[str, object]:
+    """序列化判定结果，供 ``airy-disk --json grow`` 输出。"""
+    return {
+        "verdict": found.state.value,
+        "disk": found.disk,
+        "part": found.part,
+        "fs": found.fs.value,
+        "advice": found.advice,
+        "plan": None if found.plan is None else dump_plan(found.plan),
+    }
 
 
 def _data(topo: Topology) -> tuple[Disk, Partition] | None:

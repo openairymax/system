@@ -2,12 +2,15 @@
 #
 # AirymaxOS 磁盘命令行入口
 #
-# 五个子命令对应契约里的一张表：status 出拓扑、layout 出系统与数据分区
+# 八个子命令对应契约里的一张表：status 出拓扑、layout 出系统与数据分区
 # 的布局判定（--fstab 一并判定已装系统的持久挂载）、persist 单独判定一份
 # fstab（装机 chroot 内没有可信拓扑，只能判持久挂载）、check 出护栏判定、
-# apply 执行计划并要求 --confirm 与计划盘名逐字一致。JSON 输出与人类输出
-# 共用同一份数据，判定 token 不翻译成自由文本后再被解析；退出码 0 成功、
-# 1 执行失败、2 用法错误、3 拒绝执行或判定未通过，供门禁直接判读。
+# apply 执行计划并要求 --confirm 与计划盘名逐字一致、mount 在 agentrt 之前
+# 把 /data 挂上、grow 把数据分区扩到盘尾、health 判 /data 的挂载、只读与
+# 容量。破坏性的 apply 与 grow 都要 --dry-run 先行，grow 另要 --confirm
+# 与计划盘名逐字一致。JSON 输出与人类输出共用同一份数据，判定 token 不
+# 翻译成自由文本后再被解析；退出码 0 成功、1 执行失败、2 用法错误、3 拒绝
+# 执行或判定未通过，供门禁直接判读。
 #
 # status 同时把现场拓扑与安装期选盘记录比对（判据③）：记录里是哪块盘、
 # 多大、什么总线，与此刻探测到的同一块盘逐字段核对，结论以 match /
@@ -18,9 +21,10 @@
 """AirymaxOS disk command line (M-31).
 
 设计依据：docs-linux/190-distribution/03-installer-design.md §3 与
-0.0.4 方案 §6.3 M-31。``airy-disk --json status`` 输出拓扑快照与安装期
-选盘记录的比对，``--json check`` 输出拒绝 token，``--json apply`` 输出
-逐步结果。
+0.0.4 方案 §6.3 M-31、K-24。``airy-disk --json status`` 输出拓扑快照与
+安装期选盘记录的比对，``--json check`` 输出拒绝 token，``--json apply``
+输出逐步结果，``--json mount``/``grow``/``health`` 输出判定 token 与
+修复建议。
 
 """
 
@@ -32,7 +36,18 @@ import os
 import sys
 from collections.abc import Sequence
 
-from . import fstab, layout, model, ops, probe, record, runner
+from . import (
+    fstab,
+    grow,
+    health,
+    layout,
+    model,
+    mount,
+    ops,
+    probe,
+    record,
+    runner,
+)
 
 __all__ = ["EXIT_FAIL", "EXIT_REFUSED", "EXIT_USAGE", "main"]
 
@@ -126,6 +141,38 @@ def _args(argv: Sequence[str] | None) -> argparse.Namespace:
         action="store_true",
         help="只复算并列出步骤，不执行任何外部命令",
     )
+    mnt = sub.add_parser(
+        "mount",
+        parents=[_json_opt()],
+        help="按 fstab 挂载 /data",
+    )
+    mnt.add_argument(
+        "--file",
+        default=DEFAULT_FSTAB,
+        metavar="FILE",
+        help=f"fstab 路径，缺省 {DEFAULT_FSTAB}",
+    )
+    mnt.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="只判定并列出步骤，不执行 mount",
+    )
+    grw = sub.add_parser(
+        "grow",
+        parents=[_json_opt(), _snap_opt()],
+        help="把 /data 分区扩容到盘尾",
+    )
+    grw.add_argument(
+        "--confirm",
+        metavar="NAME",
+        help="二次确认：与计划中的磁盘名逐字一致",
+    )
+    grw.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="只复算并列出步骤，不执行任何外部命令",
+    )
+    sub.add_parser("health", parents=[_json_opt()], help="判定 /data 健康")
     return parser.parse_args(argv)
 
 
@@ -174,6 +221,38 @@ def _layout_out(found: layout.Layout, persist: fstab.Persist | None,
           f"root={found.root or '-'} data={found.data or '-'}{tail}")
 
 
+def _mount_out(found: mount.Mount, as_json: bool,
+               dry: bool = False) -> None:
+    payload = mount.dump(found)
+    if as_json:
+        if dry:
+            payload["dry_run"] = True
+        print(json.dumps(payload, ensure_ascii=False))
+        return
+    print(f"mount  {found.state.value}  {found.source or '-'}")
+    if dry and found.step is not None:
+        print(f"plan  {found.step.action.value}  {found.step.target}  "
+              f"{' '.join(found.step.argv)}")
+    elif found.advice:
+        print(found.advice)
+
+
+def _grow_out(found: grow.Grow, as_json: bool,
+              dry: bool = False) -> None:
+    payload = grow.dump(found)
+    if as_json:
+        if dry:
+            payload["dry_run"] = True
+        print(json.dumps(payload, ensure_ascii=False))
+        return
+    print(f"grow  {found.state.value}  {found.disk or '-'}  "
+          f"{found.part or '-'}  {found.fs.value or '-'}")
+    if dry and found.plan is not None:
+        _dry(found.plan, False)
+    elif found.advice:
+        print(found.advice)
+
+
 def _persist_cmd(args: argparse.Namespace) -> int:
     """只判一份 fstab：装机 chroot 内拓扑不可信，持久挂载仍可判。"""
     found = _persist(args.file)
@@ -188,8 +267,16 @@ def _persist_cmd(args: argparse.Namespace) -> int:
 
 def _persist(path: str) -> fstab.Persist | None:
     """读一份 fstab 取证；读不到按用法错误处理，不冒充判定不通过。"""
+    text = _fstab(path)
+    if text is None:
+        return None
+    return fstab.check(text)
+
+
+def _fstab(path: str) -> str | None:
+    """读 fstab 文本；路径不可用时报用法错误并返回 None。"""
     try:
-        return fstab.check(_read(path))
+        return _read(path)
     except OSError as exc:
         _err(f"fstab 不可用：{exc}", EXIT_USAGE)
         return None
@@ -248,6 +335,66 @@ def _apply(args: argparse.Namespace) -> int:
     outcome = runner.apply(plan)
     _report(outcome, args.json)
     return 0 if outcome.ok else EXIT_FAIL
+
+
+def _mount_cmd(args: argparse.Namespace) -> int:
+    """在 agentrt 之前把 /data 挂上；dry-run 只判不挂。"""
+    text = _fstab(args.file)
+    if text is None:
+        return EXIT_USAGE
+    found = mount.planned(text)
+    if args.dry_run:
+        _mount_out(found, args.json, dry=True)
+        return 0 if found.ok or found.step is not None else EXIT_REFUSED
+    if found.step is not None and os.geteuid() != 0:
+        return _err("挂载数据分区需要 root 权限", EXIT_REFUSED)
+    if found.step is not None:
+        found = mount.ensure(text, runner=runner.run)
+    _mount_out(found, args.json)
+    if found.state is mount.State.FAILED:
+        return EXIT_FAIL
+    return 0 if found.ok else EXIT_REFUSED
+
+
+def _grow(args: argparse.Namespace) -> int:
+    """把 /data 扩到盘尾；判定不通过时只给建议，不生成计划。"""
+    topo = _snap(args)
+    if topo is None:
+        return EXIT_USAGE
+    found = grow.plan(topo)
+    if not found.ok:
+        _grow_out(found, args.json)
+        return EXIT_REFUSED
+    if args.dry_run:
+        _grow_out(found, args.json, dry=True)
+        return 0
+    plan = found.plan
+    if plan is None:
+        return _err("扩容判定缺少计划", EXIT_USAGE)
+    if args.confirm != plan.disk:
+        return _err(f"确认名 {args.confirm or '-'} 与计划盘 "
+                    f"{plan.disk} 不符", EXIT_USAGE)
+    if os.geteuid() != 0:
+        return _err("扩容数据分区需要 root 权限", EXIT_REFUSED)
+    outcome = runner.apply(plan)
+    _report(outcome, args.json)
+    if outcome.failed is not None:
+        advice = grow.repair(outcome.failed.step, outcome.failed.rc)
+        print(f"airy-disk: {advice}", file=sys.stderr)
+    return 0 if outcome.ok else EXIT_FAIL
+
+
+def _health(args: argparse.Namespace) -> int:
+    """判定 /data 的挂载、只读与容量；不通过即拒绝。"""
+    found = health.inspect(probe.probe())
+    if args.json:
+        print(json.dumps(health.dump(found), ensure_ascii=False))
+    else:
+        print(f"health  {found.state.value}  {found.part or '-'}  "
+              f"{found.used}%")
+        if found.advice:
+            print(found.advice)
+    return 0 if found.ok else EXIT_REFUSED
 
 
 def _load(path: str) -> ops.Plan | None:
@@ -370,4 +517,7 @@ _HANDLERS = {
     "persist": _persist_cmd,
     "check": _check,
     "apply": _apply,
+    "mount": _mount_cmd,
+    "grow": _grow,
+    "health": _health,
 }
