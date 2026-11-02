@@ -36,6 +36,16 @@ SAMPLE = "sample"
 
 VERIFY = "verify"
 
+OK_HINT = "取证面完整，十点追踪与三处计数均可用"
+
+SURFACE_HINT = "取证面部分可用，按 missing 与 stats 逐项补齐"
+
+WINDOW_HINT = "采样窗口失败，按 samples 的 reason 排查节点"
+
+IDLE_HINT = "十条通道可读但窗口内无事件，带业务负载重跑"
+
+BLOCKED_HINT = "本机没有 airy 取证面，换 AirymaxOS 内核或换机器"
+
 
 @unique
 class State(Enum):
@@ -84,6 +94,19 @@ class Report:
             return State.PARTIAL
         return State.OK
 
+    @property
+    def hint(self) -> str:
+        """结论的处置建议；按首个成立的原因给出，不按状态笼统归类。"""
+        if self.readable == 0:
+            return BLOCKED_HINT
+        if self.missing or not self.stats.facts:
+            return SURFACE_HINT
+        if any(item.state == UNAVAILABLE for item in self.samples):
+            return WINDOW_HINT
+        if self.mode == VERIFY and not self.witnessed:
+            return IDLE_HINT
+        return OK_HINT
+
     def _rising(self, name: str) -> bool:
         series = [item.count(name) for item in self.samples]
         return any(later > prev for prev, later in zip(series, series[1:]))
@@ -95,6 +118,7 @@ class Report:
             "version": VERSION,
             "mode": self.mode,
             "state": self.state.value,
+            "hint": self.hint,
             "readable": self.readable,
             "total": len(self.events),
             "events": [_event(item) for item in self.events],

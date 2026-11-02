@@ -20,7 +20,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "services"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from airymax_probe import cli  # noqa: E402
+from airymax_probe import cli, report  # noqa: E402
 from airy_probe_fixture import Tree  # noqa: E402
 
 SLEEP = "airymax_probe.trace.time.sleep"
@@ -42,7 +42,7 @@ class StatusTest(Tree):
         self.assertEqual(code, 0)
         self.assertIn("state=ok", out)
         self.assertIn("readable=10/10", out)
-        self.assertIn("advice", out)
+        self.assertIn(report.OK_HINT, out)
 
     def test_partial(self) -> None:
         self.drop("airy_ipc_recv")
@@ -50,6 +50,7 @@ class StatusTest(Tree):
         self.assertEqual(code, cli.EXIT_PARTIAL)
         self.assertIn("state=partial", out)
         self.assertIn("airy_ipc_recv", out)
+        self.assertIn(report.SURFACE_HINT, out)
 
     def test_blocked(self) -> None:
         argv = self.args("status")
@@ -57,6 +58,7 @@ class StatusTest(Tree):
         code, out = run(argv)
         self.assertEqual(code, cli.EXIT_FAIL)
         self.assertIn("state=blocked", out)
+        self.assertIn(report.BLOCKED_HINT, out)
 
     def test_json(self) -> None:
         code, out = run(self.args("status") + ["--json"])
@@ -119,6 +121,7 @@ class VerifyTest(Tree):
             )
         self.assertEqual(code, cli.EXIT_PARTIAL)
         self.assertIn("witnessed=False", out)
+        self.assertIn(report.IDLE_HINT, out)
 
     def test_attempt(self) -> None:
         with mock.patch(SLEEP):
@@ -131,6 +134,7 @@ class VerifyTest(Tree):
         self.assertEqual([item["channel"] for item in found["attempts"]],
                          ["policy", "agentrt"])
         self.assertEqual(len(found["samples"]), 2)
+        self.assertEqual(found["hint"], report.IDLE_HINT)
 
     def test_repeat(self) -> None:
         with self.assertRaises(SystemExit) as caught:
