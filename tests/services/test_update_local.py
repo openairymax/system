@@ -90,6 +90,28 @@ class RpmReleaseTest(unittest.TestCase):
                 local.rpm_release()
 
 
+class BaseSpanTest(unittest.TestCase):
+    def test_returns_segment(self) -> None:
+        with mock.patch.object(local.subprocess, "run",
+                               return_value=result(out="24.03-72.oe2403sp3")):
+            self.assertEqual(local.base_span(), 3)
+
+    def test_without_segment(self) -> None:
+        with mock.patch.object(local.subprocess, "run",
+                               return_value=result(out="24.03-1")):
+            self.assertIsNone(local.base_span())
+
+    def test_missing_package(self) -> None:
+        with mock.patch.object(local.subprocess, "run",
+                               return_value=result(1, err="not installed")):
+            self.assertIsNone(local.base_span())
+
+    def test_rpm_absent(self) -> None:
+        with mock.patch.object(local.subprocess, "run",
+                               side_effect=FileNotFoundError("rpm")):
+            self.assertIsNone(local.base_span())
+
+
 class IdentityTest(unittest.TestCase):
     def test_triple(self) -> None:
         with tempfile.TemporaryDirectory() as name:
