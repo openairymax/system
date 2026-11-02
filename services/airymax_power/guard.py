@@ -11,7 +11,7 @@
 # 最后一步是否写 sysfs 不同。这样验收侧读到的结论与守护进程落地的结论
 # 不可能分叉。
 
-"""AirymaxOS power guard (X-06)."""
+"""AirymaxOS power guard."""
 
 from __future__ import annotations
 

@@ -11,7 +11,7 @@
 # 此时负载由适配器承担；只有电池处于放电才是 BATTERY。有电池但状态读不到
 # 时按电池处理，宁可降档也不把续航与发热赌在未知状态上。
 
-"""AirymaxOS power source detection (X-06)."""
+"""AirymaxOS power source detection."""
 
 from __future__ import annotations
 

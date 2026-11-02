@@ -6,7 +6,7 @@
 # 退出码，运维要的是「这次为什么降档、下一步查什么」。这里只放文本，不放
 # 判定——判定在 guard 与 tuning，避免同一结论出现第二个计算处。
 
-"""AirymaxOS power advice (X-06)."""
+"""AirymaxOS power advice."""
 
 from __future__ import annotations
 

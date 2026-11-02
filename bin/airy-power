@@ -6,7 +6,7 @@
 # 安装后从 site-packages 导入 airymax_power；源码树内直接运行时把同级
 # services 目录加入搜索路径，不依赖安装也不隐藏导入错误。
 
-"""AirymaxOS power entry point (X-06)."""
+"""AirymaxOS power entry point."""
 
 import sys
 from pathlib import Path

@@ -7,7 +7,7 @@
 # 285H 的现场形状——performance 档位、performance governor、一个贴着
 # critical 门限的热区——用例只需改动自己关心的那一处。
 
-"""Shared temporary machine for the power tests (X-06)."""
+"""Shared temporary machine for the power tests."""
 
 from __future__ import annotations
 

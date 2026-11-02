@@ -9,12 +9,8 @@
 # 可持续状态。本文件只描述「什么供电、什么温度应该是什么档位」，不碰
 # 文件系统；探测、写入与判定各自成模块，验收侧可以在没有写权限的机器
 # 上复算同一份结论。
-#
-# 设计依据：0.0.4 方案 X1 泳道，docs-linux/170-performance/
-# 01-scheduling-performance.md §2.1 与 docs-linux/100-operations/
-# 02-configuration.md §2.2。
 
-"""AirymaxOS power and thermal policy (X-06)."""
+"""AirymaxOS power and thermal policy."""
 
 from __future__ import annotations
 

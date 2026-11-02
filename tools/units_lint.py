@@ -462,6 +462,29 @@ RT_PAIRS: dict[tuple[str, str], str] = {
     ("Install", "WantedBy"): "multi-user.target",
 }
 
+POWER = "airy-power.service"
+
+# 电源档位必须在桌面会话与 agentrt 栈启动之前落地：两者一起负载就把热区
+# 推到 critical 附近，等 timer 在 120 秒后才纠正时已节流过一轮。单元不设
+# RemainAfterExit——oneshot 退出后回到 inactive，timer 的 OnUnitInactiveSec
+# 才能继续排下一次；设成 active (exited) 会让周期重评永不触发。退出码 3
+# 表示「已降档但机器仍热」，按成功上报，只有真正的写入失败才交 incident。
+# ProtectSystem=strict 不覆盖 /dev、/proc、/sys，sysfs 写入照常。
+POWER_PAIRS: dict[tuple[str, str], str] = {
+    ("Unit", "After"): "sysinit.target",
+    ("Unit", "Before"): "agentrt.target display-manager.service",
+    ("Unit", "OnFailure"): "airy-incident@%n.service",
+    ("Service", "Type"): "oneshot",
+    ("Service", "ExecStart"): "/usr/bin/airy-power apply",
+    ("Service", "SuccessExitStatus"): "3",
+    ("Service", "TimeoutStartSec"): "60",
+    ("Service", "ProtectSystem"): "strict",
+    ("Service", "ProtectHome"): "yes",
+    ("Service", "PrivateTmp"): "yes",
+    ("Service", "NoNewPrivileges"): "yes",
+    ("Install", "WantedBy"): "multi-user.target",
+}
+
 UPDATE_CHECK = "airymax-update-check.service"
 
 CHECK_PAIRS: dict[tuple[str, str], str] = {
@@ -547,6 +570,16 @@ TIMERS: dict[str, dict[tuple[str, str], str]] = {
         ("Timer", "Persistent"): "true",
         ("Install", "WantedBy"): "timers.target",
     },
+    "airy-power.timer": {
+        ("Unit", "Description"): (
+            "Periodic AirymaxOS Power and Thermal Re-evaluation"
+        ),
+        ("Timer", "OnBootSec"): "120s",
+        ("Timer", "OnUnitInactiveSec"): "60s",
+        ("Timer", "AccuracySec"): "15s",
+        ("Timer", "Unit"): POWER,
+        ("Install", "WantedBy"): "timers.target",
+    },
 }
 
 UNITS = frozenset(SERVICES) | frozenset(TARGETS) | frozenset(TEMPLATES) | {
@@ -555,6 +588,7 @@ UNITS = frozenset(SERVICES) | frozenset(TARGETS) | frozenset(TEMPLATES) | {
     FIRSTBOOT,
     HEALTH,
     LLM,
+    POWER,
     RT_BANDWIDTH,
     UPDATE_CHECK,
 } | frozenset(TIMERS)
@@ -821,6 +855,8 @@ def _body_bad(name: str, cfg: ConfigParser) -> list[str]:
         return _pairs_bad(name, cfg, dict(DISK_HEALTH_PAIRS))
     if name == RT_BANDWIDTH:
         return _pairs_bad(name, cfg, dict(RT_PAIRS))
+    if name == POWER:
+        return _pairs_bad(name, cfg, dict(POWER_PAIRS))
     if name == UPDATE_CHECK:
         return _check_bad(name, cfg)
     if name == LLM:
