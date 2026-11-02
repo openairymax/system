@@ -48,7 +48,9 @@ def _collect(policy: Policy, push: bool) -> Report:
         )
     state = _verdict(found.total, share, layout, landings)
     kind = layout.kind if layout is not None else None
-    return Report(state, found.total, share, found.period, kind, tuple(landings))
+    return Report(
+        state, found.total, share, found.period, kind, tuple(landings)
+    )
 
 
 def _landed(layout: Layout | None, entry: Entry) -> bool:
