@@ -1,0 +1,15 @@
+[Unit]
+Description=Apply AirymaxOS Real-Time Bandwidth Budget
+Documentation=https://docs.agentrt.local/100-operations/02-configuration
+After=slices.target
+Before=agentrt.target rtkit-daemon.service display-manager.service
+OnFailure=airy-incident@%n.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/airy-rt-cap apply
+RemainAfterExit=yes
+TimeoutStartSec=60
+
+[Install]
+WantedBy=multi-user.target
