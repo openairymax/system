@@ -325,6 +325,15 @@ class LlmCase(UnitsCase):
         self.edit(LLM, "After=agentrt-firstboot.service\n", "")
         self.assert_bad("Requires without After")
 
+    def test_llm_manifest(self) -> None:
+        """缺清单门控时单元会在首启完成前反复拉起重启。"""
+        self.edit(
+            LLM,
+            "ConditionPathExists=/var/lib/airy-llm/manifest.json\n",
+            "",
+        )
+        self.assert_bad("ConditionPathExists")
+
     def test_llm_caps(self) -> None:
         self.edit(
             LLM,
