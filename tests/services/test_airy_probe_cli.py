@@ -52,6 +52,14 @@ class StatusTest(Tree):
         self.assertIn("airy_ipc_recv", out)
         self.assertIn(report.SURFACE_HINT, out)
 
+    def test_denied_hint(self) -> None:
+        # 非特权用户跑探针时，处置建议必须是「加 sudo」，而不是「换内核」。
+        with mock.patch.object(Path, "is_dir",
+                               side_effect=PermissionError(13, "denied")):
+            code, out = run(self.args("status"))
+        self.assertEqual(code, cli.EXIT_FAIL)
+        self.assertIn(report.DENIED_HINT, out)
+
     def test_blocked(self) -> None:
         argv = self.args("status")
         argv[2] = str(self.base / "absent")

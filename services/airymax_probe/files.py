@@ -18,9 +18,29 @@ import errno
 import os
 from pathlib import Path
 
-__all__ = ["clear", "mode", "num", "read", "text", "write"]
+__all__ = ["DIR", "DENIED", "MISSING", "clear", "kind", "mode", "num", "read",
+           "text", "write"]
 
 MAX_READ = 16 * 1024 * 1024
+
+DIR = "dir"
+
+MISSING = "missing"
+
+DENIED = "denied"
+
+
+def kind(path: Path) -> str:
+    """把目录节点折成三种可判读状态。
+
+    tracefs 的事件目录对非特权用户是 0700，stat 直接抛 EACCES。把权限
+    不足归成 missing 会让报告声称「内核没编这个 tracepoint」，而实际是
+    这次探测没有权限看——现场据此升级内核只会白忙。
+    """
+    try:
+        return DIR if path.is_dir() else MISSING
+    except OSError:
+        return DENIED
 
 
 def text(path: Path) -> str | None:

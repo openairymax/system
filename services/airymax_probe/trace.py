@@ -59,8 +59,9 @@ class Sample:
 def record(root: Path, window: float, names: Sequence[str]) -> Sample:
     """在 tracefs 根下开一个窗口，返回窗口内各事件的出现次数。"""
     trace = Path(root)
-    if not trace.is_dir():
-        return Sample(window, (), UNAVAILABLE, "missing")
+    state = files.kind(trace)
+    if state != files.DIR:
+        return Sample(window, (), UNAVAILABLE, state)
     prev, on, error = _arm(trace, names)
     if error is not None:
         _restore(trace, prev, on)

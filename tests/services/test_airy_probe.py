@@ -11,6 +11,7 @@ from __future__ import annotations
 import sys
 import unittest
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "services"))
@@ -41,6 +42,15 @@ class EventTest(Tree):
         found = {item.name: item for item in events.discover(self.tracefs)}
         self.assertEqual(found["airy_sched_switch"].reason, "malformed")
         self.assertFalse(found["airy_sched_switch"].okay)
+
+    def test_denied(self) -> None:
+        # 非特权用户看不到 0700 的事件目录：结论是 denied 而不是 missing，
+        # 报告才不会建议去换一个「缺少 tracepoint」的内核。
+        with mock.patch.object(Path, "is_dir",
+                               side_effect=PermissionError(13, "denied")):
+            found = events.discover(self.tracefs)
+        self.assertTrue(all(item.reason == "denied" for item in found))
+        self.assertFalse(any(item.okay for item in found))
 
 
 class ChannelTest(Tree):
