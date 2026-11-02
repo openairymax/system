@@ -1,0 +1,15 @@
+[Unit]
+Description=Mount AirymaxOS Data Partition
+Documentation=https://docs.agentrt.local/190-distribution/03-installer-design
+After=local-fs.target
+Before=agentrt.target multi-user.target
+OnFailure=airy-incident@%n.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/airy-disk mount
+RemainAfterExit=yes
+TimeoutStartSec=120
+
+[Install]
+WantedBy=multi-user.target
