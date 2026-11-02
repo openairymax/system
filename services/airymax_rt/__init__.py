@@ -10,15 +10,17 @@
 # 一处，命令行、启动单元与验收门禁共用同一份实现。
 #
 # 设计依据：docs-linux/100-operations/02-configuration.md §2.2 与 §3，
-# docs-linux/170-performance/01-scheduling-performance.md §2.1。
+# docs-linux/170-performance/01-scheduling-performance.md §2.1，
+# docs-linux/170-performance/07-rt-matrix.md。
 
-"""AirymaxOS RT bandwidth service package (X-01)."""
+"""AirymaxOS RT service package (X-01, X-03)."""
 
 from __future__ import annotations
 
 from .allocation import Entry, allocate
 from .bandwidth import apply, inspect
 from .cgroup import Kind, Layout, detect
+from .matrix import Cap, Flag, Grade, Matrix, Roots, collect
 from .policy import (
     DEFAULT_CGROUP,
     DEFAULT_DIVISOR,
@@ -39,16 +41,22 @@ __all__ = [
     "DEFAULT_TOTAL",
     "MARK",
     "Budget",
+    "Cap",
     "Entry",
+    "Flag",
+    "Grade",
     "Kind",
     "Landing",
     "Layout",
+    "Matrix",
     "Policy",
     "Report",
+    "Roots",
     "State",
     "allocate",
     "apply",
     "budget",
+    "collect",
     "detect",
     "inspect",
     "read_value",
