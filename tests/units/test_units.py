@@ -28,6 +28,7 @@ HEALTH = "agentrt-health-check.service"
 FIRSTBOOT = "agentrt-firstboot.service"
 UPDATE_CHECK = "airymax-update-check.service"
 UPDATE_TIMER = "airymax-update-check.timer"
+LLM = "airy-llm.service"
 
 
 class UnitsCase(unittest.TestCase):
@@ -284,6 +285,53 @@ class UpdateCheckCase(UnitsCase):
     def test_uc_state(self) -> None:
         self.edit(UPDATE_CHECK, "StateDirectory=airy-update\n", "")
         self.assert_bad("StateDirectory")
+
+
+class LlmCase(UnitsCase):
+    """推理单元契约。
+
+    推理进程由 execv 换成引擎本体，没有 sd_notify，故 Type 只能是
+    simple；配置错误以 78 退出时必须停下等运维处理，重启策略不能是
+    always，否则一个坏清单会让单元每 5 秒重试到天荒地老。
+    """
+
+    def test_llm_exec(self) -> None:
+        self.edit(LLM, "/usr/bin/airy-model serve", "/usr/bin/airy-model info")
+        self.assert_bad("ExecStart")
+
+    def test_llm_type(self) -> None:
+        self.edit(LLM, "Type=simple", "Type=notify")
+        self.assert_bad("Type")
+
+    def test_llm_restart(self) -> None:
+        self.edit(LLM, "Restart=on-failure", "Restart=always")
+        self.assert_bad("Restart")
+
+    def test_llm_state_mode(self) -> None:
+        """运行根同时放模型资产，组外用户不应可读。"""
+        self.edit(LLM, "StateDirectoryMode=0750", "StateDirectoryMode=0755")
+        self.assert_bad("StateDirectoryMode")
+
+    def test_llm_devices(self) -> None:
+        """PrivateDevices 会藏掉 GPU 设备节点，必须被拒。"""
+        self.edit(
+            LLM,
+            "PrivateTmp=yes\n",
+            "PrivateTmp=yes\nPrivateDevices=yes\n",
+        )
+        self.assert_bad("PrivateDevices")
+
+    def test_llm_order(self) -> None:
+        self.edit(LLM, "After=agentrt-firstboot.service\n", "")
+        self.assert_bad("Requires without After")
+
+    def test_llm_caps(self) -> None:
+        self.edit(
+            LLM,
+            "CapabilityBoundingSet=\n",
+            "CapabilityBoundingSet=CAP_NET_BIND_SERVICE\n",
+        )
+        self.assert_bad("CapabilityBoundingSet")
 
 
 class TimerCase(UnitsCase):
