@@ -67,7 +67,7 @@ class ConstTest(unittest.TestCase):
         self.assertEqual(model.MANIFEST_FILE, "manifest.json")
         self.assertEqual(model.STATUS_FILE, "status.json")
         self.assertEqual(model.REASON_SEP, ":")
-        self.assertEqual(model.ROOT_ENV, "AIRYMAX_LLM_ROOT")
+        self.assertEqual(model.ROOT, "/var/lib/airy-llm")
 
     def test_fields(self) -> None:
         self.assertEqual(

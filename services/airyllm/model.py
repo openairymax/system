@@ -28,7 +28,6 @@ __all__ = [
     "MODELS",
     "REASON_SEP",
     "ROOT",
-    "ROOT_ENV",
     "RUNTIME_FIELDS",
     "SCHEMA_VERSION",
     "STATUS_FILE",
@@ -44,8 +43,6 @@ __all__ = [
 SCHEMA_VERSION = 1
 
 ROOT = "/var/lib/airy-llm"
-
-ROOT_ENV = "AIRYMAX_LLM_ROOT"
 
 MODELS = "models"
 
