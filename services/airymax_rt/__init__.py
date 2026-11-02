@@ -26,6 +26,7 @@ from .policy import (
     MARK,
     Policy,
 )
+from .sysctl import Budget, budget, read_value
 
 __all__ = [
     "DEFAULT_CGROUP",
@@ -34,7 +35,10 @@ __all__ = [
     "DEFAULT_SLICES",
     "DEFAULT_TOTAL",
     "MARK",
+    "Budget",
     "Entry",
     "Policy",
     "allocate",
+    "budget",
+    "read_value",
 ]
