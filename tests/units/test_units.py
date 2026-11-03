@@ -33,6 +33,7 @@ AGENT_SLICE = "airymax-agent.slice"
 DISK_MOUNT = "airy-disk-mount.service"
 DISK_HEALTH = "airy-disk-health.service"
 DISK_TIMER = "airy-disk-health.timer"
+SESSION = "user.slice.d/50-airymax-memory.conf"
 
 
 class UnitsCase(unittest.TestCase):
@@ -377,6 +378,40 @@ class SliceCase(UnitsCase):
     def test_llm_dup_limit(self) -> None:
         """上限只能声明一次：单元与 slice 同时声明必然分叉。"""
         self.edit(LLM, "TasksMax=512\n", "TasksMax=512\nMemoryMax=90%\n")
+        self.assert_bad("unexpected directive")
+
+
+class DropinCase(UnitsCase):
+    """会话池的内存边界契约。
+
+    285H 上 AirymaxRT 在自己的会话里直接 exec 推理进程，airymax-agent.slice
+    的上限对它们无效；user.slice 是所有会话 scope 的共同父节点，边界必须
+    落在这一层，任何 spawn 路径都逃不出去。
+    """
+
+    def test_dropin_missing(self) -> None:
+        (self.root / SESSION).unlink()
+        self.assert_bad(f"missing drop-in {SESSION}")
+
+    def test_dropin_orphan(self) -> None:
+        (self.root / "user.slice.d/90-extra.conf").write_text(
+            "[Slice]\nMemoryMax=95%\n",
+            encoding="utf-8",
+        )
+        self.assert_bad("unexpected drop-in file")
+
+    def test_dropin_max(self) -> None:
+        """会话池抬到整机规模等于没有边界。"""
+        self.edit(SESSION, "MemoryMax=85%", "MemoryMax=99%")
+        self.assert_bad("MemoryMax")
+
+    def test_dropin_v2_only(self) -> None:
+        """MemoryHigh 在 v1 hybrid 上不落地，不得混进会话池。"""
+        self.edit(
+            SESSION,
+            "MemoryMax=85%\n",
+            "MemoryMax=85%\nMemoryHigh=70%\n",
+        )
         self.assert_bad("unexpected directive")
 
 

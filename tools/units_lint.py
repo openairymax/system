@@ -24,8 +24,10 @@ from pathlib import Path
 __all__ = [
     "AGENT_SLICE",
     "COEXIST",
+    "DROPINS",
     "FIRSTBOOT",
     "SERVICES",
+    "SESSION_DROPIN",
     "TARGETS",
     "TEMPLATES",
     "TIMERS",
@@ -600,6 +602,20 @@ LLM_PAIRS: dict[tuple[str, str], str] = {
     ("Install", "WantedBy"): "agentrt.target",
 }
 
+SESSION_DROPIN = "user.slice.d/50-airymax-memory.conf"
+
+# 会话池是所有用户会话 scope 的共同父节点：AirymaxRT 直接 exec 出来的推理
+# 进程不在任何单元里，只有这一层能兜住。85% 留一成半给内核、system.slice
+# 与回写；硬上限只声明 MemoryMax，理由同 airymax-agent.slice（v1 hybrid 不
+# 落地 MemoryHigh）。上层就是不设上限的 root cgroup，改这里等于改整机。
+SESSION_PAIRS: dict[tuple[str, str], str] = {
+    ("Slice", "MemoryMax"): "85%",
+}
+
+DROPINS: dict[str, dict[tuple[str, str], str]] = {
+    SESSION_DROPIN: SESSION_PAIRS,
+}
+
 TIMERS: dict[str, dict[tuple[str, str], str]] = {
     "airymax-update-check.timer": {
         ("Unit", "Description"): "Daily AirymaxOS Update Check",
@@ -970,6 +986,15 @@ def _parse(path: Path) -> tuple[ConfigParser | None, list[str]]:
     return cfg, []
 
 
+def _dropin_bad(path: Path, name: str) -> list[str]:
+    errs = _file_bad(path)
+    cfg, parse_errs = _parse(path)
+    errs.extend(parse_errs)
+    if cfg is None:
+        return errs
+    return errs + _pairs_bad(name, cfg, dict(DROPINS[name]))
+
+
 def check_file(path: Path) -> list[str]:
     """校验单个单元文件。
 
@@ -1026,6 +1051,21 @@ def check_dir(path: Path) -> list[str]:
         f"{name}: unexpected unit file"
         for name in sorted(names - UNITS)
     )
+    nested = {
+        item.relative_to(path).as_posix()
+        for item in path.rglob("*")
+        if item.is_file() and item.parent != path
+    }
+    errs.extend(
+        f"missing drop-in {name}"
+        for name in sorted(set(DROPINS) - nested)
+    )
+    errs.extend(
+        f"{name}: unexpected drop-in file"
+        for name in sorted(nested - set(DROPINS))
+    )
+    for name in sorted(nested & set(DROPINS)):
+        errs.extend(_dropin_bad(path / name, name))
     units = [item for item in files if item.name in UNITS]
     parsed: dict[str, ConfigParser] = {}
     for item in units:
