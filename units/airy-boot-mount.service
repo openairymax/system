@@ -12,6 +12,9 @@ ExecStart=/usr/lib/airymaxos/scripts/stage_run.sh 基础挂载 3 root,boot,efi /
 # 按 note 上报。判成失败只会给每次救援启动多记一条 incident。
 SuccessExitStatus=3
 RemainAfterExit=yes
+# 心跳与上限必须与 TimeoutStartSec 同源：默认的 30/60 在这里是「周期等于
+# 超时、上限翻倍」，卡死时一行 wait 都落不下来，屏幕只剩没有下文的「...」。
+Environment=AIRY_STAGE_BEAT=10 AIRY_STAGE_LIMIT=30
 TimeoutStartSec=30
 
 [Install]

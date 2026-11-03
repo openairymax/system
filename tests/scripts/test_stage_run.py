@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -175,6 +176,50 @@ class LintCase(unittest.TestCase):
 
     def test_lint_ok(self) -> None:
         self.assertEqual(units_lint.check_script(SCRIPT), [])
+
+
+class PrintContractCase(unittest.TestCase):
+    """阶段单元的打印契约：心跳周期与预期上限必须与超时同源。
+
+    这两个数字此前各自默认（30 / 60），谁也管不到单元的 TimeoutStartSec。
+    结果是 30 秒超时的单元在 30 秒心跳前就被杀掉，屏幕上只剩一条没有下文
+    的「...」，而打印出的上限还声称 60 秒。用真实的 units 目录做基底，
+    逐个拿掉正确声明，确认校验器确实能拦住回退。
+    """
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.units = Path(self.tmp.name) / "units"
+        shutil.copytree(ROOT / "units", self.units)
+
+    def drop(self, name: str, line: str) -> None:
+        path = self.units / name
+        text = path.read_text(encoding="utf-8")
+        path.write_text(text.replace(line, ""), encoding="utf-8")
+
+    def test_units_are_consistent(self) -> None:
+        self.assertEqual(units_lint.check_dir(self.units), [])
+
+    def test_beat_at_timeout_rejected(self) -> None:
+        self.drop(
+            "airy-boot-mount.service",
+            "Environment=AIRY_STAGE_BEAT=10 AIRY_STAGE_LIMIT=30\n",
+        )
+        errs = units_lint.check_dir(self.units)
+        self.assertTrue(
+            any("no heartbeat before" in err for err in errs), errs
+        )
+
+    def test_limit_must_follow_timeout(self) -> None:
+        self.drop(
+            "airy-disk-mount.service",
+            "Environment=AIRY_STAGE_LIMIT=120\n",
+        )
+        errs = units_lint.check_dir(self.units)
+        self.assertTrue(
+            any("AIRY_STAGE_LIMIT 60s" in err for err in errs), errs
+        )
 
 
 if __name__ == "__main__":

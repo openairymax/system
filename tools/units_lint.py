@@ -438,6 +438,10 @@ BOOT_MOUNT_PAIRS: dict[tuple[str, str], str] = {
     ),
     ("Service", "SuccessExitStatus"): "3",
     ("Service", "RemainAfterExit"): "yes",
+    # 心跳 10 秒一次、预期上限与单元超时同为 30 秒。默认的 30/60 在这里
+    # 全错：周期等于超时意味着一行 wait 都来不及落就被 systemd 杀掉，而
+    # 打印的上限还会声称 60 秒——现场看到的时间与实际截断对不上。
+    ("Service", "Environment"): "AIRY_STAGE_BEAT=10 AIRY_STAGE_LIMIT=30",
     ("Service", "TimeoutStartSec"): "30",
     ("Install", "WantedBy"): "multi-user.target",
 }
@@ -463,6 +467,9 @@ DISK_MOUNT_PAIRS: dict[tuple[str, str], str] = {
     # 不是故障，与 airy-disk-health 的 ConditionPathIsMountPoint 同一口径。
     ("Service", "SuccessExitStatus"): "4",
     ("Service", "RemainAfterExit"): "yes",
+    # 数据分区在慢盘上真的会跑满两分钟，心跳用默认 30 秒，上限必须跟着
+    # 单元超时走到 120 秒；沿用默认 60 会在大容量盘上提前宣告超时。
+    ("Service", "Environment"): "AIRY_STAGE_LIMIT=120",
     ("Service", "TimeoutStartSec"): "120",
     ("Install", "WantedBy"): "multi-user.target",
 }
@@ -784,6 +791,26 @@ def _tokens(value: str | None) -> list[str]:
     return (value or "").split()
 
 
+def _env(value: str | None) -> dict[str, str]:
+    """把 [Service] Environment 的 `A=1 B=2` 拆成映射。"""
+    pairs: dict[str, str] = {}
+    for item in _tokens(value):
+        key, sep, val = item.partition("=")
+        if sep:
+            pairs[key] = val
+    return pairs
+
+
+def _seconds(value: str | None, fallback: int) -> int | None:
+    """秒数取整；缺省用 fallback，非整数返回 None。"""
+    if value is None:
+        return fallback
+    try:
+        return int(value)
+    except ValueError:
+        return None
+
+
 def _get(cfg: ConfigParser, section: str, key: str) -> str | None:
     if not cfg.has_section(section):
         return None
@@ -999,6 +1026,52 @@ def _pairs_bad(
     )
 
 
+STAGE_RUN = "stage_run.sh"
+STAGE_BEAT = 30
+STAGE_LIMIT = 60
+
+
+def _stage_bad(name: str, cfg: ConfigParser) -> list[str]:
+    """阶段单元的心跳周期与预期上限必须与 TimeoutStartSec 同源。
+
+    stage_run.sh 在工具迟迟不返回时按 AIRY_STAGE_BEAT 补 wait 行，并把
+    AIRY_STAGE_LIMIT 打给现场当预期上限；真正的截断仍由单元的
+    TimeoutStartSec 执行。两者不同源时，现场先被误导再被静默杀掉：上限
+    写着 60 秒，30 秒就没了下文；或者周期恰好等于超时，一行心跳都来不及
+    落，屏幕上只剩一条没有下文的「...」，卡在哪一步依然无从判断。
+
+    因此这里要求 limit 与 TimeoutStartSec 相等，且 beat 至少能落两行心跳。
+    周期与上限的缺省值同时写在本文件与 stage_run.sh，两处都由测试比对。
+    """
+    if STAGE_RUN not in (_get(cfg, "Service", "ExecStart") or ""):
+        return []
+    env = _env(_get(cfg, "Service", "Environment"))
+    timeout = _seconds(_get(cfg, "Service", "TimeoutStartSec"), 90)
+    beat = _seconds(env.get("AIRY_STAGE_BEAT"), STAGE_BEAT)
+    limit = _seconds(env.get("AIRY_STAGE_LIMIT"), STAGE_LIMIT)
+    errs = [
+        f"{name}: {key} must be integer seconds"
+        for key, value in (
+            ("TimeoutStartSec", timeout),
+            ("AIRY_STAGE_BEAT", beat),
+            ("AIRY_STAGE_LIMIT", limit),
+        )
+        if value is None
+    ]
+    if errs:
+        return errs
+    if limit != timeout:
+        errs.append(
+            f"{name}: AIRY_STAGE_LIMIT {limit}s != TimeoutStartSec {timeout}s"
+        )
+    if beat * 2 > timeout:
+        errs.append(
+            f"{name}: AIRY_STAGE_BEAT {beat}s leaves no heartbeat before"
+            f" TimeoutStartSec {timeout}s"
+        )
+    return errs
+
+
 def _health_bad(name: str, cfg: ConfigParser) -> list[str]:
     return _pairs_bad(name, cfg, dict(HEALTH_PAIRS))
 
@@ -1118,7 +1191,12 @@ def check_file(path: Path) -> list[str]:
     errs.extend(parse_errs)
     if cfg is None:
         return errs
-    return errs + _doc_bad(path.name, cfg) + _body_bad(path.name, cfg)
+    return (
+        errs
+        + _doc_bad(path.name, cfg)
+        + _body_bad(path.name, cfg)
+        + _stage_bad(path.name, cfg)
+    )
 
 
 def check_script(path: Path = SCRIPT) -> list[str]:
@@ -1189,6 +1267,7 @@ def check_dir(path: Path) -> list[str]:
         if cfg is not None:
             errs.extend(_doc_bad(item.name, cfg))
             errs.extend(_body_bad(item.name, cfg))
+            errs.extend(_stage_bad(item.name, cfg))
     errs.extend(check_script())
     errs.extend(check_script(FIRSTBOOT_SCRIPT))
     errs.extend(check_script(BOOT_MOUNT_SCRIPT))
