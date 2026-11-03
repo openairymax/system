@@ -21,6 +21,7 @@ import json
 from collections.abc import Sequence
 
 from . import config, guard
+from .cooling import FAN, Cooling
 from .duty import Duty
 from .load import Load
 from .policy import (
@@ -175,6 +176,7 @@ def _emit(found: Report, as_json: bool) -> None:
               f" severity={zone.severity.value}")
     print(f"  throttle package={found.heat.package} core={found.heat.core}")
     print(f"  load {_load(found.load)}")
+    print(f"  cool {_cool(found.cool)}")
     for knob in found.knobs:
         print(f"  {knob.name:<20} target={knob.target or '-':<16}"
               f" current={knob.current or '-':<16} {_flag(knob)}")
@@ -192,6 +194,11 @@ def _load(work: Load) -> str:
     return (f"origin={work.origin} cpu={_value(work.cpu)}"
             f" memory={_value(work.memory)} io={_value(work.io)}"
             f" swap={_value(work.swap)} strain={work.strain.value}")
+
+
+def _cool(cool: Cooling) -> str:
+    return (f"fans={cool.count(FAN)} devices={len(cool.devices)}"
+            f" readable={cool.readable} engaged={cool.engaged}")
 
 
 def _value(value: float | None) -> str:

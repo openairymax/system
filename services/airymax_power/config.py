@@ -96,6 +96,11 @@ def reference(policy: Policy) -> str:
         f"# AC 且热区未到 hot 时，禁用退出延迟 > {idle.BUDGET_US}us 的空闲态；"
         "电池或过热时恢复固件默认"
     )
+    lines.append(
+        "# 散热设备只做清单，不写 cooling_device：风扇由 EC 与固件独占时"
+        "（ACPI 未实现 _FSL），写入 cur_state 返回 ENODEV 且风扇转速不变；"
+        "降温只能经 platform_profile、governor/EPP 与空闲深度"
+    )
     lines.append(f"# 关机 {policy.poweroff} poweroff --no-block，"
                  f"广播 {policy.wall}")
     return "\n".join(lines)
