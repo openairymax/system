@@ -1,0 +1,18 @@
+[Unit]
+Description=Check AirymaxOS Base Mounts
+Documentation=https://docs.agentrt.local/190-distribution/03-installer-design
+After=local-fs.target
+Before=airy-disk-mount.service agentrt.target multi-user.target
+OnFailure=airy-incident@%n.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/airymaxos/scripts/stage_run.sh 基础挂载 3 root,boot,efi /usr/lib/airymaxos/scripts/boot_mount.sh
+# 退出码 3 是「根为只读」：救援与恢复启动会刻意这样挂，机器仍能起来，
+# 按 note 上报。判成失败只会给每次救援启动多记一条 incident。
+SuccessExitStatus=3
+RemainAfterExit=yes
+TimeoutStartSec=30
+
+[Install]
+WantedBy=multi-user.target

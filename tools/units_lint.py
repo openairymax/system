@@ -419,6 +419,31 @@ FIRSTBOOT_PAIRS: dict[tuple[str, str], str] = {
 
 FIRSTBOOT_SCRIPT = ROOT / "scripts" / "firstboot.sh"
 
+BOOT_MOUNT = "airy-boot-mount.service"
+
+# 基础挂载是九阶段的第一段，必须排在数据分区之前：数据分区单元在 /data
+# 下创建并挂载文件系统，根若仍为只读，它报出的失败会被误读成数据盘故障。
+# 只读根是救援与恢复启动的正常形态，退出码 3 因此声明为成功，由阶段行
+# 以 note 报出；真正的后果由后续写盘阶段自己冒出来。
+BOOT_MOUNT_PAIRS: dict[tuple[str, str], str] = {
+    ("Unit", "After"): "local-fs.target",
+    ("Unit", "Before"): (
+        "airy-disk-mount.service agentrt.target multi-user.target"
+    ),
+    ("Unit", "OnFailure"): "airy-incident@%n.service",
+    ("Service", "Type"): "oneshot",
+    ("Service", "ExecStart"): (
+        "/usr/lib/airymaxos/scripts/stage_run.sh 基础挂载 3 root,boot,efi"
+        " /usr/lib/airymaxos/scripts/boot_mount.sh"
+    ),
+    ("Service", "SuccessExitStatus"): "3",
+    ("Service", "RemainAfterExit"): "yes",
+    ("Service", "TimeoutStartSec"): "30",
+    ("Install", "WantedBy"): "multi-user.target",
+}
+
+BOOT_MOUNT_SCRIPT = ROOT / "scripts" / "boot_mount.sh"
+
 DISK_MOUNT = "airy-disk-mount.service"
 
 # 挂载单元必须运行在宿主挂载命名空间里：ProtectSystem/PrivateTmp 之类
@@ -734,6 +759,7 @@ TIMERS: dict[str, dict[tuple[str, str], str]] = {
 
 UNITS = frozenset(SERVICES) | frozenset(TARGETS) | frozenset(TEMPLATES) | {
     AGENT_SLICE,
+    BOOT_MOUNT,
     COEXIST,
     DISK_HEALTH,
     DISK_MOUNT,
@@ -1002,6 +1028,8 @@ def _body_bad(name: str, cfg: ConfigParser) -> list[str]:
         return _firstboot_bad(name, cfg)
     if name == HEALTH:
         return _health_bad(name, cfg)
+    if name == BOOT_MOUNT:
+        return _pairs_bad(name, cfg, dict(BOOT_MOUNT_PAIRS))
     if name == DISK_MOUNT:
         return _pairs_bad(name, cfg, dict(DISK_MOUNT_PAIRS))
     if name == DISK_HEALTH:
@@ -1163,6 +1191,7 @@ def check_dir(path: Path) -> list[str]:
             errs.extend(_body_bad(item.name, cfg))
     errs.extend(check_script())
     errs.extend(check_script(FIRSTBOOT_SCRIPT))
+    errs.extend(check_script(BOOT_MOUNT_SCRIPT))
     return errs
 
 
