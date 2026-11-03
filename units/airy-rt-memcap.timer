@@ -1,0 +1,26 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# ===========================================================================
+# airy-rt-memcap.timer — 换页上限的重写周期
+#
+# systemd 在 cgroup v1 hybrid 上不管理换页上限，每次 daemon-reload 都把
+# memory.memsw.limit_in_bytes 写回 infinity（285H 实测）。装机、升级、
+# systemctl enable 都会触发 reload，因此上限必须周期重写，否则写入成功
+# 只是在下一次 reload 之前的短暂状态。
+#
+# 同时承担重试：开机时若某条 slice 的用量已越过目标，写入被拒绝（退出码
+# 3），用量回落后由下一次触发补上。60s 与电源档位重评同节奏，两处读同一
+# 份 slice 声明，不需要各自维护节拍。
+# ===========================================================================
+
+[Unit]
+Description=Periodic AirymaxOS memory and swap ceiling re-application
+Documentation=https://docs.agentrt.local/170-performance/07-rt-matrix
+
+[Timer]
+OnBootSec=120s
+OnUnitInactiveSec=60s
+AccuracySec=15s
+Unit=airy-rt-memcap.service
+
+[Install]
+WantedBy=timers.target

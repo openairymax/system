@@ -12,6 +12,13 @@
 # 退出码 3 只表示部分落地：某条 slice 的当前用量已越过目标，写入被守卫
 # 拒绝，等人决定是重启还是先减实例。这在运行中的机器上是正常结局，不是
 # 启动失败；验收门禁直接读退出码，不看本单元的启动结果。
+#
+# 本单元不是一次性动作：systemd 在 v1 hybrid 上不识别换页上限，每次
+# daemon-reload 都会把 memory.memsw.limit_in_bytes 写回 infinity，而
+# systemctl enable 内部就会 reload（285H 实测：写入成功后执行一次
+# daemon-reload，值立即回退）。因此配 airy-rt-memcap.timer 周期重写，
+# 并顺带重试开机时因用量越界而被拒绝的 slice。不加 RemainAfterExit，
+# 让定时器能按 inactive 周期再次触发。
 # ===========================================================================
 
 [Unit]
@@ -26,7 +33,6 @@ OnFailure=airy-incident@%n.service
 Type=oneshot
 ExecStart=/usr/bin/airy-rt-cap memcap --apply
 SuccessExitStatus=3
-RemainAfterExit=yes
 TimeoutStartSec=60
 ProtectSystem=strict
 ProtectHome=yes
