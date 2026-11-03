@@ -86,5 +86,24 @@ class ArgvTest(unittest.TestCase):
         self.assertEqual(serve.HOST, "127.0.0.1")
 
 
+class NeedTest(unittest.TestCase):
+    """常驻量只累加资产与地板，不给并发留猜测空间。"""
+
+    def test_floor_only(self) -> None:
+        self.assertEqual(serve.need(manifest()), serve.FLOOR)
+
+    def test_assets(self) -> None:
+        entry = model.Manifest(
+            schema=model.SCHEMA_VERSION,
+            name="airy-small",
+            version="1.0.0",
+            quant="q4_k_m",
+            runtime=model.Runtime(engine="llama.cpp", version="b4000",
+                                  path="/usr/libexec/airy-llm/llama-server"),
+            assets=(model.Asset("weight.gguf", 5 << 30, SHA),),
+        )
+        self.assertEqual(serve.need(entry), (5 << 30) + serve.FLOOR)
+
+
 if __name__ == "__main__":
     unittest.main()
