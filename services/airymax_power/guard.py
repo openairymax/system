@@ -2,14 +2,20 @@
 #
 # 供电与热状态到档位的判定
 #
-# 档位选择只由三个输入决定：当前供电、最严重热区、电池电量。热状态优先于
-# 供电——电池上本来就已经降档，而在 AC 上过热时继续维持 balanced 会让固件
-# 把风扇与功耗墙都推到上限，这正是 285H 反复节流、卡死与重启的现场。适配器
-# 在线但电池仍在放电时按 cool 处理：负载已经超出适配器能力，维持 AC 档只会
-# 让放电继续。电量优先于常规电池档：285H 现场是适配器未在线、电池 30% 仍在
-# 跑满核负载，这种放电速率下撑不到下一次充电，机器会以掉电关机收场，系统侧
-# 看不到任何关机记录。没有热区读数的机器按 AC 处理，因为无法证明它需要降档，
-# 误降档会直接牺牲桌面响应。
+# 档位选择只由四个输入决定：当前供电、最严重热区、电池电量、整机负载。热
+# 状态优先于供电——电池上本来就已经降档，而在 AC 上过热时继续维持 balanced
+# 会让固件把风扇与功耗墙都推到上限，这正是 285H 反复节流、卡死与重启的现场。
+# 适配器在线但电池仍在放电时按 cool 处理：负载已经超出适配器能力，维持 AC
+# 档只会让放电继续。电量优先于常规电池档：285H 现场是适配器未在线、电池
+# 30% 仍在跑满核负载，这种放电速率下撑不到下一次充电，机器会以掉电关机收场，
+# 系统侧看不到任何关机记录。没有热区读数的机器按 AC 处理，因为无法证明它
+# 需要降档，误降档会直接牺牲桌面响应。
+#
+# 负载只影响 AC 侧：AC 上高负载不降档，而是把 EPP 从 balance_power 抬到
+# balance_performance。理由不是「跑得更快」，而是「排得更空」——285H 的
+# 长任务下 CPU 队列持续增长，省电侧 EPP 让每次突发都要重新爬频，排队时间
+# 被放大成端到端延迟；抬 EPP 只是让爬频更快，功耗墙仍由固件按温度裁。电池
+# 侧不因负载抬档，续航优先，掉电风险由 duty 的受控关机兜住。
 #
 # 评估与落地共用同一条链路：同一份采样、同一份档位、同一组控制点，只有
 # 最后一步是否写 sysfs 不同。这样验收侧读到的结论与守护进程落地的结论
@@ -19,7 +25,7 @@
 
 from __future__ import annotations
 
-from . import supply, thermal, throttle, tuning
+from . import load, supply, thermal, throttle, tuning
 from .duty import Duty, decide, enforce
 from .policy import Policy, Tuning
 from .report import Report
@@ -30,13 +36,13 @@ __all__ = ["apply", "assess", "choose", "inspect"]
 
 
 def choose(source: Source, heat: Severity, charge: int | None,
-           policy: Policy) -> Tuning:
+           policy: Policy, strain: Severity = Severity.UNKNOWN) -> Tuning:
     if heat.rank >= Severity.HOT.rank:
         return policy.cool
     if source is Source.WEAK:
         return policy.cool
     if source is not Source.BATTERY:
-        return policy.ac
+        return policy.busy if strain.rank >= Severity.WARN.rank else policy.ac
     if charge is not None and charge <= LOW_CHARGE:
         return policy.cool
     return policy.battery
@@ -46,19 +52,21 @@ def assess(policy: Policy, push: bool) -> Report:
     source = supply.detect(policy)
     level = supply.charge(policy)
     heat = thermal.collect(policy)
+    work = load.sample(policy)
     speed = throttle.rate(throttle.measure(_total(heat)),
                           throttle.load(policy.state))
     action = decide(source, level)
     wanted = choose(source, thermal.peak(heat.severity, throttle.grade(speed)),
-                    level, policy)
+                    level, policy, work.strain)
     if push:
         knobs = tuning.apply(policy, wanted)
         throttle.save(policy.state, _total(heat))
+        load.alert(policy, work)
         _enforce(action, level, policy)
     else:
         knobs = tuning.inspect(policy, wanted)
-    return Report(tuning.verdict(knobs), source, level, heat, knobs, speed,
-                  action)
+    return Report(tuning.verdict(knobs), source, level, heat, knobs, work,
+                  speed, action)
 
 
 def _enforce(action: Duty, level: int | None, policy: Policy) -> None:

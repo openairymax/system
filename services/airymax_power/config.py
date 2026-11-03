@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+from . import load
 from .duty import CRITICAL_CHARGE, Duty
 from .policy import Policy
 from .supply import LOW_CHARGE
@@ -53,6 +54,7 @@ def duty_advice(duty: Duty) -> str:
 def reference(policy: Policy) -> str:
     rows = (
         ("ac", policy.ac),
+        ("busy", policy.busy),
         ("weak", policy.cool),
         ("battery", policy.battery),
         ("cool", policy.cool),
@@ -77,6 +79,19 @@ def reference(policy: Policy) -> str:
         f"# 电池电量 <= {LOW_CHARGE}% 广播告警，"
         f"<= {CRITICAL_CHARGE}% 受控关机（仅电池或适配器功率不足时）"
     )
+    lines.append(
+        "# 负载 strain 取 cpu/memory/io/swap 最严重项：PSI some avg10 门限 "
+        f"cpu {load.PSI_CPU_HOT}/{load.PSI_CPU_WARN}、"
+        f"memory {load.PSI_MEM_HOT}/{load.PSI_MEM_WARN}、"
+        f"io {load.IO_HOT}/{load.IO_WARN}（hot/warn）"
+    )
+    lines.append(
+        "# 无 PSI 时回退：1 分钟负载/核数 "
+        f"{load.LOAD_HOT}/{load.LOAD_WARN}、"
+        f"内存已用 {load.USE_HOT}/{load.USE_WARN}；"
+        f"swap 已用 {load.SWAP_HOT}/{load.SWAP_WARN}"
+    )
+    lines.append("# AC 上 strain >= warn 走 busy；内存 hot 时广播一次告警")
     lines.append(f"# 关机 {policy.poweroff} poweroff --no-block，"
                  f"广播 {policy.wall}")
     return "\n".join(lines)

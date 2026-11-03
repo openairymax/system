@@ -6,8 +6,8 @@
 # 上游与 BIOS 默认的 performance；热区 SEN1 的 critical trip 只有
 # 80.05°C，40 分钟内 package_throttle_count 增长 16025 次。AirymaxOS
 # 此前没有任何代码读过这些接口，也就没有一处策略把机器从「全速」拉回
-# 可持续状态。本文件只描述「什么供电、什么温度应该是什么档位」，不碰
-# 文件系统；探测、写入与判定各自成模块，验收侧可以在没有写权限的机器
+# 可持续状态。本文件只描述「什么供电、什么温度、什么负载应该是什么档位」，
+# 不碰文件系统；探测、写入与判定各自成模块，验收侧可以在没有写权限的机器
 # 上复算同一份结论。
 
 """AirymaxOS power and thermal policy."""
@@ -17,12 +17,18 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 __all__ = [
+    "BUSY",
     "COOL",
     "DEFAULT_CHOICES",
     "DEFAULT_CPUFREQ",
+    "DEFAULT_CPUS",
     "DEFAULT_DUTY",
+    "DEFAULT_LOADAVG",
+    "DEFAULT_MEMINFO",
     "DEFAULT_POWEROFF",
+    "DEFAULT_PRESS",
     "DEFAULT_PROFILE",
+    "DEFAULT_PSI",
     "DEFAULT_SUPPLY",
     "DEFAULT_THERMAL",
     "DEFAULT_STATE",
@@ -41,13 +47,23 @@ DEFAULT_CHOICES = "/sys/firmware/acpi/platform_profile_choices"
 
 DEFAULT_CPUFREQ = "/sys/devices/system/cpu/cpufreq"
 
+DEFAULT_CPUS = "/sys/devices/system/cpu"
+
 DEFAULT_SUPPLY = "/sys/class/power_supply"
 
 DEFAULT_THERMAL = "/sys/class/thermal"
 
 DEFAULT_THROTTLE = "/sys/devices/system/cpu/cpu0/thermal_throttle"
 
+DEFAULT_PSI = "/proc/pressure"
+
+DEFAULT_LOADAVG = "/proc/loadavg"
+
+DEFAULT_MEMINFO = "/proc/meminfo"
+
 DEFAULT_STATE = "/run/airy-power/throttle"
+
+DEFAULT_PRESS = "/run/airy-power/pressure"
 
 DEFAULT_DUTY = "/run/airy-power/duty"
 
@@ -79,6 +95,9 @@ NORMAL_AC = Tuning("balanced", ("schedutil", "powersave"), ("balance_power",))
 NORMAL_BATTERY = Tuning("low-power", ("schedutil", "powersave"),
                         ("balance_power",))
 
+BUSY = Tuning("balanced", ("schedutil", "powersave"),
+              ("balance_performance", "balance_power"))
+
 COOL = Tuning("low-power", ("powersave", "schedutil"), ("power",))
 
 
@@ -89,13 +108,19 @@ class Policy:
     profile: str = DEFAULT_PROFILE
     choices: str = DEFAULT_CHOICES
     cpufreq: str = DEFAULT_CPUFREQ
+    cpus: str = DEFAULT_CPUS
     supply: str = DEFAULT_SUPPLY
     thermal: str = DEFAULT_THERMAL
     throttle: str = DEFAULT_THROTTLE
+    psi: str = DEFAULT_PSI
+    loadavg: str = DEFAULT_LOADAVG
+    meminfo: str = DEFAULT_MEMINFO
     state: str = DEFAULT_STATE
+    press: str = DEFAULT_PRESS
     duty: str = DEFAULT_DUTY
     poweroff: str = DEFAULT_POWEROFF
     wall: str = DEFAULT_WALL
     ac: Tuning = NORMAL_AC
+    busy: Tuning = BUSY
     battery: Tuning = NORMAL_BATTERY
     cool: Tuning = COOL
