@@ -431,6 +431,9 @@ DISK_MOUNT_PAIRS: dict[tuple[str, str], str] = {
     ("Unit", "OnFailure"): "airy-incident@%n.service",
     ("Service", "Type"): "oneshot",
     ("Service", "ExecStart"): "/usr/bin/airy-disk mount",
+    # 4 是「本机未启用数据分区」：0.0.3 及更早装成的系统没有 /data，缺记录
+    # 不是故障，与 airy-disk-health 的 ConditionPathIsMountPoint 同一口径。
+    ("Service", "SuccessExitStatus"): "4",
     ("Service", "RemainAfterExit"): "yes",
     ("Service", "TimeoutStartSec"): "120",
     ("Install", "WantedBy"): "multi-user.target",

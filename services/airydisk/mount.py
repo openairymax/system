@@ -54,6 +54,7 @@ class State(Enum):
     MOUNTED = "mounted"
     READY = "ready"
     RESTORED = "restored"
+    UNSET = "unset"
     NO_ENTRY = "no-entry"
     UNSTABLE = "unstable"
     NOAUTO = "noauto"
@@ -75,13 +76,20 @@ class Mount:
         return self.state in (State.MOUNTED, State.RESTORED)
 
 
-def judge(text: str, mounted: bool) -> Mount:
-    """判定 fstab 能否把 /data 挂上；不执行任何外部命令。"""
+def judge(text: str, mounted: bool, declared: bool = True) -> Mount:
+    """判定 fstab 能否把 /data 挂上；不执行任何外部命令。
+
+    ``declared`` 表示本机是否由 0.0.4 安装器装机（有选盘记录）。没有记录
+    的系统是 0.0.3 及更早的布局，压根没有数据分区，缺记录是「未启用」而
+    不是「配错了」；有记录却没有记录项才是真故障，不能与前者合并成一个
+    失败，否则每次开机都在报一个不需要修的错。
+    """
     if mounted:
         return Mount(State.MOUNTED)
     row = _row(text)
     if row is None:
-        return Mount(State.NO_ENTRY, advice=remedy(State.NO_ENTRY))
+        state = State.NO_ENTRY if declared else State.UNSET
+        return Mount(state, advice=remedy(state))
     if NOAUTO in row.opts:
         return Mount(State.NOAUTO, row.source, advice=remedy(State.NOAUTO))
     if not row.stable:
@@ -91,15 +99,15 @@ def judge(text: str, mounted: bool) -> Mount:
     return Mount(State.READY, row.source, step=step)
 
 
-def planned(text: str) -> Mount:
+def planned(text: str, declared: bool = True) -> Mount:
     """只判定不执行；--dry-run 与 :func:`ensure` 共用同一条判定路径。"""
-    return judge(text, ismount(DATA_MOUNT))
+    return judge(text, ismount(DATA_MOUNT), declared)
 
 
-def ensure(text: str, runner: Runner = run,
-           timeout: float = TIMEOUT) -> Mount:
+def ensure(text: str, runner: Runner = run, timeout: float = TIMEOUT,
+           declared: bool = True) -> Mount:
     """判定之后按需挂载 /data；命令起不来或非零退出都判失败。"""
-    found = planned(text)
+    found = planned(text, declared)
     if found.step is None:
         return found
     result = runner(found.step, timeout)
@@ -111,6 +119,12 @@ def ensure(text: str, runner: Runner = run,
 
 def remedy(state: State, rc: int = 0) -> str:
     """拒绝或失败时的下一步；只描述动作，不改动任何文件。"""
+    if state is State.UNSET:
+        return (
+            "本机没有安装期选盘记录，也没有 /data 记录：数据分区未启用而"
+            "非挂载失败，/data 下的内容会落在根分区；按 "
+            "03-installer-design.md §3.6 重新分区后即可自动挂载"
+        )
     if state is State.NO_ENTRY:
         return (
             "fstab 缺少 /data 记录：用 blkid 取数据分区 UUID，按 "

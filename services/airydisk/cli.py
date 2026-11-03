@@ -10,7 +10,9 @@
 # 容量。破坏性的 apply 与 grow 都要 --dry-run 先行，grow 另要 --confirm
 # 与计划盘名逐字一致。JSON 输出与人类输出共用同一份数据，判定 token 不
 # 翻译成自由文本后再被解析；退出码 0 成功、1 执行失败、2 用法错误、3 拒绝
-# 执行或判定未通过，供门禁直接判读。
+# 执行或判定未通过、4 本机未启用数据分区（不适用，不是故障），供门禁直接
+# 判读。mount 的 4 只在没有安装期选盘记录时出现：0.0.3 及更早的系统没有
+# 数据分区，把「未启用」报成「挂载失败」会让每次开机都留一个假故障。
 #
 # status 同时把现场拓扑与安装期选盘记录比对（判据③）：记录里是哪块盘、
 # 多大、什么总线，与此刻探测到的同一块盘逐字段核对，结论以 match /
@@ -49,13 +51,15 @@ from . import (
     runner,
 )
 
-__all__ = ["EXIT_FAIL", "EXIT_REFUSED", "EXIT_USAGE", "main"]
+__all__ = ["EXIT_FAIL", "EXIT_NA", "EXIT_REFUSED", "EXIT_USAGE", "main"]
 
 EXIT_FAIL = 1
 
 EXIT_USAGE = 2
 
 EXIT_REFUSED = 3
+
+EXIT_NA = 4
 
 GiB = 1024**3
 
@@ -342,17 +346,22 @@ def _mount_cmd(args: argparse.Namespace) -> int:
     text = _fstab(args.file)
     if text is None:
         return EXIT_USAGE
-    found = mount.planned(text)
+    declared = record.load().known
+    found = mount.planned(text, declared)
     if args.dry_run:
         _mount_out(found, args.json, dry=True)
+        if found.state is mount.State.UNSET:
+            return EXIT_NA
         return 0 if found.ok or found.step is not None else EXIT_REFUSED
     if found.step is not None and os.geteuid() != 0:
         return _err("挂载数据分区需要 root 权限", EXIT_REFUSED)
     if found.step is not None:
-        found = mount.ensure(text, runner=runner.run)
+        found = mount.ensure(text, runner=runner.run, declared=declared)
     _mount_out(found, args.json)
     if found.state is mount.State.FAILED:
         return EXIT_FAIL
+    if found.state is mount.State.UNSET:
+        return EXIT_NA
     return 0 if found.ok else EXIT_REFUSED
 
 
