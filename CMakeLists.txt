@@ -60,6 +60,7 @@ if(AIRY_INSTALL_SYSTEMD_UNITS)
 		PATTERN "*.timer"
 	)
 	install(PROGRAMS
+		scripts/boot_set.sh
 		scripts/firstboot.sh
 		scripts/health_check.sh
 		DESTINATION lib/airymaxos/scripts
