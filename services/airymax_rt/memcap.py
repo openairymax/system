@@ -19,6 +19,12 @@
 # 停在九成或八成半。v2 上 systemd 自己会写，本模块只在缺失或不一致时
 # 补写，正常路径下只做核对。
 #
+# 顺序不是随便排的：memsw 上限不得低于内存上限，内核对这种写入直接
+# 返回 EINVAL。启动早期 slice 目录可能是本单元刚建出来的，memory 上限
+# 还是 infinity，此时先写 memsw 必然失败——现场实测如此。所以第一步是
+# 把内存上限压到单元声明的 MemoryMax（已一致就跳过），第二步才是合计
+# 上限。systemd 之后接管这个 slice 时写的是同一个值，不会与这里打架。
+#
 # 写入前先比对当前用量：目标低于已用量时拒绝写入并报 tight。memsw 上限
 # 一旦低于在用量，内核会当场回收或 OOM，把一条配置动作变成一次事故——这
 # 是「装完包就杀掉正在跑的模型」的那条路径，必须由守卫拦住，交给人决定
@@ -61,6 +67,10 @@ MEMINFO_KEY = "MemTotal"
 CONTROLLERS = "cgroup.controllers"
 
 MEM_DIR = "memory"
+
+V1_MEM = "memory.limit_in_bytes"
+
+V1_MEM_USAGE = "memory.usage_in_bytes"
 
 V1_MEMSW = "memory.memsw.limit_in_bytes"
 
@@ -246,29 +256,68 @@ def _put(path: Path, value: int) -> bool:
     return _read(path) == value
 
 
+def _ceil(
+    home: Path,
+    name: str,
+    want: int,
+    usage: int | None,
+    plan: bool,
+) -> Step:
+    """把单个上限调到 want；已一致、超用、未落地各有一种结论。"""
+    path = home / name
+    if not path.is_file():
+        return Step(name, want, None, usage, ABSENT, f"缺少 {name}")
+    have = _read(path)
+    if have == want:
+        return Step(name, want, have, usage, OK)
+    if usage is not None and usage > want:
+        return Step(name, want, have, usage, TIGHT, "在用量已超目标")
+    if not plan:
+        return Step(name, want, have, usage, DIFFERS)
+    if not _put(path, want):
+        return Step(name, want, _read(path), usage, ABSENT, "写入未生效")
+    return Step(name, want, _read(path), usage, APPLIED)
+
+
+def _merge(mem: Step | None, swap: Step) -> str:
+    """合并内存与换页两侧结论；任何一侧没落地都不得被另一侧掩盖。"""
+    if swap.state in (ABSENT, TIGHT):
+        return swap.state
+    states = {swap.state}
+    if mem is not None:
+        states.add(mem.state)
+    for state in (DIFFERS, APPLIED):
+        if state in states:
+            return state
+    return OK
+
+
 def _step(root: Path, file: str, item: Bound, plan: bool) -> Step:
-    """处理一个 slice：v1 补齐 memsw，v2 核对换页，超目标时拒写。"""
+    """处理一个 slice：先压低内存上限，再设合计上限，超用时停手。"""
     home = root / item.path
-    want = item.total if file == V1_MEMSW else item.swap
-    usage = _read(home / V1_USAGE) if file == V1_MEMSW else None
     if not home.is_dir():
         try:
             home.mkdir(parents=True, exist_ok=True)
         except OSError:
-            return Step(item.path, want, None, usage, ABSENT, "目录不可创建")
-    target = home / file
-    if not target.is_file():
-        return Step(item.path, want, None, usage, ABSENT, f"缺少 {file}")
-    have = _read(target)
-    if have == want:
-        return Step(item.path, want, have, usage, OK)
-    if usage is not None and usage > want:
-        return Step(item.path, want, have, usage, TIGHT, "在用量已超目标")
-    if not plan:
-        return Step(item.path, want, have, usage, DIFFERS)
-    if not _put(target, want):
-        return Step(item.path, want, _read(target), usage, ABSENT, "写入未生效")
-    return Step(item.path, want, _read(target), usage, APPLIED)
+            return Step(
+                item.path, item.total, None, None, ABSENT, "目录不可创建"
+            )
+    if file == V1_MEMSW:
+        mem = _ceil(
+            home, V1_MEM, item.mem, _read(home / V1_MEM_USAGE), plan
+        )
+        if mem.state in (ABSENT, TIGHT):
+            note = f"{mem.note}（{V1_MEM}）"
+            return Step(
+                item.path, item.mem, mem.have, mem.usage, mem.state, note
+            )
+        want, usage = item.total, _read(home / V1_USAGE)
+    else:
+        mem = None
+        want, usage = item.swap, None
+    swap = _ceil(home, file, want, usage, plan)
+    note = swap.note or (mem.note if mem is not None else "")
+    return Step(item.path, want, swap.have, usage, _merge(mem, swap), note)
 
 
 def _report(
