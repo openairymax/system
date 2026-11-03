@@ -83,6 +83,17 @@ class Machine:
         self.put(path, f"some avg10={avg10} avg60=0.00 avg300=0.00 total=0")
         return path
 
+    def loadavg(self, one: float = 0.0) -> Path:
+        path = self.proc / "loadavg"
+        self.put(path, f"{one:.2f} 0.00 0.00 1/100 1")
+        return path
+
+    def cpus(self, count: int = 4) -> Path:
+        path = self.proc / "cpuinfo"
+        body = "".join(f"processor\t: {index}\n" for index in range(count))
+        path.write_text(body, encoding="ascii")
+        return path
+
     def roots(self) -> matrix.Roots:
         return matrix.Roots(
             sys=str(self.sys),

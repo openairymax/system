@@ -40,9 +40,16 @@ class Base(unittest.TestCase):
             unit="airymax-desktop.slice",
             systemctl=str(self.shim.exe),
             pressure=str(self.machine.proc / "pressure" / "cpu"),
+            loadavg=str(self.machine.proc / "loadavg"),
             roots=self.machine.roots(),
         )
         return dataclasses.replace(cfg, **changes)
+
+    def fallback(self, load1: float = 0.0, cores: int = 4) -> None:
+        """去掉 PSI，只留负载均值与核数：模拟没有编入 PSI 的内核。"""
+        (self.machine.proc / "pressure" / "cpu").unlink()
+        self.machine.loadavg(load1)
+        self.machine.cpus(cores)
 
     def full(self) -> None:
         self.machine.budget()
@@ -117,7 +124,7 @@ class InspectTest(Base):
         (self.machine.proc / "pressure" / "cpu").unlink()
         found = coexist.inspect(self.config())
         self.assertIs(found.mode, coexist.Mode.NORMAL)
-        self.assertTrue(any("PSI" in note for note in found.notes))
+        self.assertTrue(any("争用读数" in note for note in found.notes))
 
     def test_advisories(self) -> None:
         self.full()
@@ -132,6 +139,53 @@ class InspectTest(Base):
         self.assertIn(
             "提升", coexist.advice(coexist.Mode.PROTECT)
         )
+
+
+class FallbackTest(Base):
+    """没有 PSI 的内核：退回按核数归一的负载均值。"""
+
+    def test_saturated(self) -> None:
+        self.fallback(load1=4.20, cores=4)
+        found = coexist.inspect(self.config())
+        self.assertIs(found.mode, coexist.Mode.PROTECT)
+        self.assertEqual(found.origin, "loadavg")
+        self.assertEqual(found.cores, 4)
+        self.assertAlmostEqual(found.pressure, 105.0)
+
+    def test_headroom(self) -> None:
+        self.fallback(load1=2.00, cores=4)
+        found = coexist.inspect(self.config())
+        self.assertIs(found.mode, coexist.Mode.NORMAL)
+
+    def test_io_wait_not_full(self) -> None:
+        """4 核负载 3.0 只到 75%：等 IO 的虚高不该把权重抬上去。"""
+        self.fallback(load1=3.00, cores=4)
+        self.assertIs(coexist.inspect(self.config()).mode, coexist.Mode.NORMAL)
+
+    def test_load_beats_nothing(self) -> None:
+        """只有一个信号可用时也要判定，并说明用的是哪个。"""
+        self.fallback(load1=5.00, cores=2)
+        found = coexist.apply(self.config())
+        self.assertEqual(found.origin, "loadavg")
+        self.assertTrue(found.applied)
+        self.assertEqual(self.shim.weight(), str(coexist.PROTECT_WEIGHT))
+
+    def test_both_missing(self) -> None:
+        self.fallback(load1=0.0, cores=4)
+        (self.machine.proc / "loadavg").unlink()
+        (self.machine.proc / "cpuinfo").unlink()
+        found = coexist.inspect(self.config())
+        self.assertIs(found.mode, coexist.Mode.NORMAL)
+        self.assertEqual(found.origin, "none")
+        self.assertTrue(any("争用读数" in note for note in found.notes))
+
+    def test_psi_wins(self) -> None:
+        """PSI 可读时不再看负载均值，且阈值仍是 20%。"""
+        self.machine.cpus(4)
+        self.machine.loadavg(9.00)
+        found = coexist.inspect(self.config())
+        self.assertEqual(found.origin, "psi")
+        self.assertIs(found.mode, coexist.Mode.NORMAL)
 
 
 class ApplyTest(Base):
@@ -182,6 +236,7 @@ class CliTest(Base):
             "--systemctl", str(self.shim.exe),
             "--desktop", "airymax-desktop.slice",
             "--pressure", str(self.machine.proc / "pressure" / "cpu"),
+            "--loadavg", str(self.machine.proc / "loadavg"),
         ]
 
     def test_in_sync_exit_zero(self) -> None:
@@ -214,8 +269,18 @@ class CliTest(Base):
         self.assertEqual(payload["mode"], "normal")
         self.assertEqual(payload["unit"], "airymax-desktop.slice")
         self.assertEqual(payload["weight"], coexist.BASE_WEIGHT)
+        self.assertEqual(payload["origin"], "psi")
         self.assertIn("admit", payload)
         self.assertIsInstance(payload["notes"], list)
+
+    def test_json_fallback_origin(self) -> None:
+        self.fallback(load1=4.10, cores=4)
+        code, out = self.call(["--json"] + self.args("coexist"))
+        self.assertEqual(code, cli.EXIT_PARTIAL)
+        payload = json.loads(out)
+        self.assertEqual(payload["origin"], "loadavg")
+        self.assertEqual(payload["cores"], 4)
+        self.assertEqual(payload["mode"], "protect")
 
 
 if __name__ == "__main__":
