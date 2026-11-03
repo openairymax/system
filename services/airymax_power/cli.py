@@ -25,12 +25,14 @@ from .cooling import FAN, Cooling
 from .duty import Duty
 from .load import Load
 from .policy import (
+    DEFAULT_BEAT,
     DEFAULT_CHOICES,
     DEFAULT_CPUFREQ,
     DEFAULT_CPUS,
     DEFAULT_DUTY,
     DEFAULT_LOADAVG,
     DEFAULT_MEMINFO,
+    DEFAULT_PAUSE,
     DEFAULT_POWEROFF,
     DEFAULT_PRESS,
     DEFAULT_PROFILE,
@@ -44,6 +46,7 @@ from .policy import (
     Policy,
 )
 from .report import Report
+from .stall import Pause
 from .thermal import Severity, Zone
 from .tuning import Knob, State
 
@@ -94,6 +97,8 @@ def _paths() -> tuple[tuple[str, str], ...]:
         ("--state", "节流增速采样文件"),
         ("--press", "内存压力状态文件"),
         ("--duty", "低电量动作状态文件"),
+        ("--beat", "周期心跳文件"),
+        ("--pause", "停顿留痕文件"),
         ("--poweroff", "受控关机命令"),
         ("--wall", "低电量广播命令"),
     )
@@ -120,6 +125,8 @@ def _args(argv: Sequence[str] | None) -> argparse.Namespace:
         state=DEFAULT_STATE,
         press=DEFAULT_PRESS,
         duty=DEFAULT_DUTY,
+        beat=DEFAULT_BEAT,
+        pause=DEFAULT_PAUSE,
         poweroff=DEFAULT_POWEROFF,
         wall=DEFAULT_WALL,
     )
@@ -145,6 +152,8 @@ def _policy(args: argparse.Namespace) -> Policy:
         state=args.state,
         press=args.press,
         duty=args.duty,
+        beat=args.beat,
+        pause=args.pause,
         poweroff=args.poweroff,
         wall=args.wall,
     )
@@ -176,6 +185,8 @@ def _emit(found: Report, as_json: bool) -> None:
               f" severity={zone.severity.value}")
     print(f"  throttle package={found.heat.package} core={found.heat.core}")
     print(f"  load {_load(found.load)}")
+    if found.pause is not None:
+        print(f"  pause {_pause(found.pause)}")
     print(f"  cool {_cool(found.cool)}")
     for knob in found.knobs:
         print(f"  {knob.name:<20} target={knob.target or '-':<16}"
@@ -199,6 +210,10 @@ def _load(work: Load) -> str:
 def _cool(cool: Cooling) -> str:
     return (f"fans={cool.count(FAN)} devices={len(cool.devices)}"
             f" readable={cool.readable} engaged={cool.engaged}")
+
+
+def _pause(pause: Pause) -> str:
+    return f"gap={pause.gap:.1f}s over={pause.over:.1f}s at={pause.at}"
 
 
 def _value(value: float | None) -> str:

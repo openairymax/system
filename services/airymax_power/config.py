@@ -10,7 +10,7 @@
 
 from __future__ import annotations
 
-from . import idle, load
+from . import idle, load, stall
 from .duty import CRITICAL_CHARGE, Duty
 from .policy import Policy
 from .supply import LOW_CHARGE
@@ -100,6 +100,11 @@ def reference(policy: Policy) -> str:
         "# 散热设备只做清单，不写 cooling_device：风扇由 EC 与固件独占时"
         "（ACPI 未实现 _FSL），写入 cur_state 返回 ENODEV 且风扇转速不变；"
         "降温只能经 platform_profile、governor/EPP 与空闲深度"
+    )
+    lines.append(
+        f"# 周期巡检每 {stall.INTERVAL:g}s 一次，间隔超出 "
+        f"{stall.BUDGET:g}s 记为整机停顿（CLOCK_BOOTTIME，含挂起）；"
+        "停顿已过去，只留证据不动作"
     )
     lines.append(f"# 关机 {policy.poweroff} poweroff --no-block，"
                  f"广播 {policy.wall}")

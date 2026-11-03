@@ -29,7 +29,7 @@
 
 from __future__ import annotations
 
-from . import cooling, idle, load, supply, thermal, throttle, tuning
+from . import cooling, idle, load, stall, supply, thermal, throttle, tuning
 from .duty import Duty, decide, enforce
 from .policy import Policy, Tuning
 from .report import Report
@@ -65,14 +65,16 @@ def assess(policy: Policy, push: bool) -> Report:
     wanted = choose(source, hot, level, policy, work.strain)
     cap = _cap(source, hot)
     if push:
+        pause = stall.watch(policy)
         knobs = tuning.apply(policy, wanted) + idle.apply(policy, cap)
         throttle.save(policy.state, _total(heat))
         load.alert(policy, work)
         _enforce(action, level, policy)
     else:
+        pause = stall.recent(policy)
         knobs = tuning.inspect(policy, wanted) + idle.inspect(policy, cap)
     return Report(tuning.verdict(knobs), source, level, heat, knobs, work,
-                  cool, speed, action)
+                  cool, pause, speed, action)
 
 
 def _cap(source: Source, heat: Severity) -> bool:

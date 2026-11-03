@@ -2,15 +2,16 @@
 #
 # 电源与温度报告
 #
-# 一次评估的结论由七块证据组成：供电来源、电池电量、热状态、节流增速、
-# 整机负载、散热设备、控制点落地情况。七者各自有独立结论，不能压缩成单一布尔值——
-# 「档位写不进去」和「写进去了但机器已经很热」是两类不同的故障，现场处置
-# 完全不同；电量解释了「为什么在电池上还选了最省电档」；节流增速则补上
-# 温度看不到的功耗墙限速；负载解释了「温度不高为什么还要加档」——285H 的
-# 卡死发生在内存回收与 CPU 排队上，温度计上完全看不出来。整体严重度取
-# 温度与节流增速中更严重的一档，负载单独成项：一台满载的机器不是故障，
-# 一台过热的机器才是。报告只负责把这些证据原样收敛成一份可序列化的结构，
-# 判定与退出码留在调用方。
+# 一次评估的结论由八块证据组成：供电来源、电池电量、热状态、节流增速、
+# 整机负载、散热设备、停顿留痕、控制点落地情况。八者各自有独立结论，不能
+# 压缩成单一布尔值——「档位写不进去」与「写进去了但机器已经很热」是两类完全
+# 不同的故障，现场处置手段也不同；电量解释了「为什么在电池上还选了最省电档」；
+# 节流增速则补上温度看不到的功耗墙限速；负载解释了「温度不高为什么还要加档」
+# ——285H 的卡死发生在内存回收与 CPU 排队上，温度计上完全看不出来。停顿是负载
+# 而不是原因：整机被挡住时连日志都写不出来，只有周期任务迟到的时长能留下
+# 证据。整体严重度取温度与节流增速中更严重的一档，负载单独成项：一台满载
+# 的机器不是故障，一台过热的机器才是。报告只负责把这些证据原样收敛成一份
+# 可序列化的结构，判定与退出码留在调用方。
 
 """AirymaxOS power report."""
 
@@ -22,6 +23,7 @@ from . import throttle
 from .cooling import Cooling
 from .duty import Duty
 from .load import Load
+from .stall import Pause
 from .supply import Source
 from .thermal import Severity, Thermal, Zone, peak
 from .tuning import Knob, State
@@ -38,6 +40,7 @@ class Report:
     knobs: tuple[Knob, ...]
     load: Load
     cool: Cooling
+    pause: Pause | None = None
     rate: float | None = None
     duty: Duty = Duty.NONE
 
@@ -67,6 +70,7 @@ class Report:
             "throttle_rate": _round(self.rate),
             "load": self.load.dump(),
             "cooling": self.cool.dump(),
+            "pause": None if self.pause is None else self.pause.dump(),
             "zones": [_zone(zone) for zone in self.heat.zones],
             "knobs": [_knob(knob) for knob in self.knobs],
         }
