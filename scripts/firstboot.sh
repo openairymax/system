@@ -181,7 +181,7 @@ main()
         ui_note 首启判定 done=1
         return 0
     fi
-    ui_step 2 9 首启判定
+    ui_begin 首启判定
     ensure_mid || { rc=$?; fail_step machine-id "${rc}"; return "${rc}"; }
     apply_sysctl || { rc=$?; fail_step sysctl "${rc}"; return "${rc}"; }
     load_lsm || { rc=$?; fail_step lsm "${rc}"; return "${rc}"; }

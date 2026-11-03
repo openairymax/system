@@ -85,15 +85,15 @@ class Case(unittest.TestCase):
         for _, name, columns in rows:
             self.assertEqual(int(columns), width(name), f"「{name}」宽度登记不符")
 
-    def test_step_line_names_the_stage(self):
-        out = self.run_ui("ui_step 3 9 数据分区")
+    def test_begin_line_names_the_stage(self):
+        out = self.run_ui("ui_begin 数据分区")
         self.assertEqual(out.returncode, 0, out.stderr)
         line = out.stdout.rstrip("\n")
         self.assertTrue(line.startswith("[ 3/9 ] 数据分区"), line)
         self.assertTrue(line.endswith("..."), line)
 
     def test_ok_line_carries_key_values(self):
-        out = self.run_ui("ui_step 3 9 数据分区")
+        out = self.run_ui("ui_begin 数据分区")
         self.assertEqual(out.returncode, 0, out.stderr)
         out = self.run_ui("ui_ok 数据分区 mounted=/data dev=/dev/nvme0n1p4")
         self.assertEqual(out.returncode, 0, out.stderr)
@@ -161,16 +161,16 @@ class Case(unittest.TestCase):
         out = self.run_ui("ui_total")
         self.assertEqual(out.stdout, "9\n")
 
-    def test_step_rejects_wrong_total(self):
-        out = self.run_ui("ui_step 3 8 数据分区")
-        self.assertEqual(out.returncode, 5, out.stderr)
+    def test_begin_rejects_usage(self):
+        out = self.run_ui("ui_begin")
+        self.assertEqual(out.returncode, 64, out.stderr)
         self.assertEqual(out.stdout, "")
-        self.assertIn("总数 8 与契约 9 不符", out.stderr)
+        self.assertIn("用法: ui_begin <阶段名>", out.stderr)
 
-    def test_step_rejects_wrong_number(self):
-        out = self.run_ui("ui_step 2 9 数据分区")
+    def test_begin_rejects_unknown_stage(self):
+        out = self.run_ui("ui_begin 桌面美容")
         self.assertEqual(out.returncode, 5, out.stderr)
-        self.assertIn("契约序号 3", out.stderr)
+        self.assertIn("不在契约表", out.stderr)
 
     def test_unknown_stage_is_rejected(self):
         out = self.run_ui("ui_ok 桌面美容 x=1")
