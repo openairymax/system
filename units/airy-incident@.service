@@ -1,6 +1,7 @@
 [Unit]
 Description=Handle failure of %i
 After=%i
+ConditionPathExists=/usr/sbin/airyctl
 
 [Service]
 Type=oneshot

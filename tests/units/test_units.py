@@ -218,6 +218,11 @@ class TemplateCase(UnitsCase):
         self.edit(INCIDENT, "--status failed", "--status ok")
         self.assert_bad("ExecStart")
 
+    def test_incident_guard(self) -> None:
+        """缺 airyctl 时模板必须跳过，不能把一次失败放大成两条。"""
+        self.edit(INCIDENT, "ConditionPathExists=/usr/sbin/airyctl\n", "")
+        self.assert_bad("ConditionPathExists")
+
 
 class HealthCase(UnitsCase):
     """启动自检单元契约。"""
