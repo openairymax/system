@@ -33,6 +33,8 @@ readonly _AIRY_UI_SH=1
 
 readonly UI_EINVAL=5
 readonly UI_EUSAGE=64
+# console 目标可覆盖，供回归在临时文件上验证去重；产品路径恒为 /dev/console。
+readonly UI_CONSOLE="${UI_CONSOLE:-/dev/console}"
 
 # 序号|名称|显示宽度（CJK 每字 2 列）。顺序即执行顺序，新增阶段必须同时
 # 改本表与 spec 的 %%check 总数断言，否则判据与实现分叉。
@@ -59,12 +61,23 @@ _ui_err() {
 # 行同时落 console 与 journal：服务的 stdout 进 journal，装机现场看的是
 # console；两条通道都要，缺一条就会在「只能看屏幕」或「只能抓日志」的一侧
 # 失明。logger 缺席（chroot、最小 rootfs）时不影响调用方。
+#
+# 已经声明 StandardOutput=journal+console 的单元，stdout 本身就是 console，
+# 再写一遍会让每行在屏幕上出现两次。去重按 fd1 的实际指向判定，不看单元
+# 声明——声明可以改，fd 不会说谎。
+_console_is_stdout() {
+    local target
+
+    target="$(readlink /proc/self/fd/1 2>/dev/null)" || return 1
+    [ "${target}" = "${UI_CONSOLE}" ]
+}
+
 _ui_emit() {
     local line="$1"
 
     printf '%s\n' "${line}"
-    if [ -w /dev/console ] && [ ! -t 1 ]; then
-        printf '%s\n' "${line}" >/dev/console 2>/dev/null || :
+    if [ -w "${UI_CONSOLE}" ] && [ ! -t 1 ] && ! _console_is_stdout; then
+        printf '%s\n' "${line}" >"${UI_CONSOLE}" 2>/dev/null || :
     fi
     if command -v logger >/dev/null 2>&1; then
         logger -t airymax-boot -- "${line}" 2>/dev/null || :

@@ -39,12 +39,13 @@ class Case(unittest.TestCase):
         )
         self.logger.chmod(0o755)
 
-    def run_ui(self, body: str) -> subprocess.CompletedProcess:
+    def run_ui(self, body: str, **env2: str) -> subprocess.CompletedProcess:
         script = f". {UI}\n{body}\n"
         env = dict(os.environ)
         env["PATH"] = f"{self.dir}:{env['PATH']}"
         env["UI_JOURNAL"] = str(self.journal)
         env["LANG"] = "C.UTF-8"
+        env.update(env2)
         return subprocess.run(
             ["bash", "-c", script],
             capture_output=True,
@@ -52,6 +53,23 @@ class Case(unittest.TestCase):
             env=env,
             check=False,
         )
+
+    def run_ui_to_file(self, body: str, target: Path, **env2: str) -> int:
+        script = f". {UI}\nexec >\"${{UI_CONSOLE}}\"\n{body}\n"
+        env = dict(os.environ)
+        env["PATH"] = f"{self.dir}:{env['PATH']}"
+        env["UI_JOURNAL"] = str(self.journal)
+        env["UI_CONSOLE"] = str(target)
+        env["LANG"] = "C.UTF-8"
+        env.update(env2)
+        with target.open("w", encoding="utf-8") as handle:
+            return subprocess.run(
+                ["bash", "-c", script],
+                stdout=handle,
+                stderr=subprocess.DEVNULL,
+                env=env,
+                check=False,
+            ).returncode
 
     def stage_table(self) -> list[tuple[str, str, str]]:
         out = self.run_ui('printf "%s\\n" "${UI_STAGES[@]}"')
@@ -121,6 +139,22 @@ class Case(unittest.TestCase):
         self.assertEqual(out.returncode, 0, out.stderr)
         self.assertEqual(
             self.journal.read_text(encoding="utf-8"), out.stdout
+        )
+
+    def test_console_gets_the_line_when_stdout_is_a_pipe(self):
+        console = self.dir / "console"
+        console.write_text("", encoding="utf-8")
+        out = self.run_ui("ui_ok 基础挂载 x=1", UI_CONSOLE=str(console))
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertEqual(console.read_text(encoding="utf-8"), out.stdout)
+
+    def test_console_line_is_not_doubled_when_stdout_is_console(self):
+        console = self.dir / "console"
+        rc = self.run_ui_to_file("ui_ok 桌面就绪 unit=lightdm", console)
+        self.assertEqual(rc, 0)
+        self.assertEqual(
+            console.read_text(encoding="utf-8"),
+            "[ 8/9 ] 桌面就绪        ok   unit=lightdm\n",
         )
 
     def test_total_comes_from_the_table(self):

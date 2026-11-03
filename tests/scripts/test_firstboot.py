@@ -135,13 +135,27 @@ class ExitCase(FirstbootCase):
         self.assertTrue(self.marker().exists())
         self.assertIn("sysctl --system --quiet", self.calls())
         self.assertIn("start --no-block agentrt.target", self.calls())
+        self.assertEqual(
+            res.stdout,
+            "[ 2/9 ] 首启判定        ...\n"
+            "[ 2/9 ] 首启判定        ok   "
+            "mid=present sysctl=ok lsm=present target=queued\n",
+        )
 
     def test_idem(self) -> None:
         self.marker().write_text("done\n", encoding="utf-8")
         res = self.run_fb()
         self.assertEqual(res.returncode, 0, res.stderr)
         self.assertEqual(self.calls(), "")
-        self.assertIn("跳过", res.stdout)
+        self.assertEqual(
+            res.stdout, "[ 2/9 ] 首启判定        note done=1\n"
+        )
+
+    def test_ui_lib_missing(self) -> None:
+        res = self.run_fb(AIRY_FIRSTBOOT_UI=str(self.bin / "no-ui.sh"))
+        self.assertEqual(res.returncode, 6, res.stderr)
+        self.assertIn("打印契约库缺失", res.stderr)
+        self.assertFalse(self.marker().exists())
 
     def test_mid_setup(self) -> None:
         (self.etc / "machine-id").unlink()
@@ -152,6 +166,7 @@ class ExitCase(FirstbootCase):
             MID,
         )
         self.assertIn("machine-id-setup", self.calls())
+        self.assertIn("mid=setup", res.stdout)
 
     def test_mid_uuid(self) -> None:
         (self.etc / "machine-id").unlink()
@@ -174,6 +189,7 @@ class ExitCase(FirstbootCase):
         res = self.run_fb(FAKE_SYSCTL_RC="1")
         self.assertEqual(res.returncode, 2, res.stderr)
         self.assertFalse(self.marker().exists())
+        self.assertIn("FAIL step=sysctl rc=2", res.stdout)
 
     def test_lsm_absent(self) -> None:
         self.probe.unlink()
