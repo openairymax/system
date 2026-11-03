@@ -2,8 +2,9 @@
 #
 # AirymaxOS 实时能力命令行入口
 #
-# 四个子命令对应两张契约表：status/apply/config 管实时带宽，matrix 管
-# 能力探测。启动单元与验收门禁共用同一份判定实现，避免「启动时写成功、
+# 子命令对应三张契约表：status/apply/config 管实时带宽，matrix/coexist 管
+# 能力探测与桌面共存，memcap 补上 systemd 在 v1 层级上不写的那一半内存
+# 天花板。启动单元与验收门禁共用同一份判定实现，避免「启动时写成功、
 # 门禁读失败」的两套口径；能力矩阵同理，探测与报告只此一处。
 #
 # 退出码：0 表示已全部落地、内核不限预算或整机满足完整实时；3 表示部分
@@ -26,7 +27,7 @@ import json
 import sys
 from collections.abc import Sequence
 
-from . import bandwidth, coexist, config, matrix
+from . import bandwidth, coexist, config, matrix, memcap
 from .policy import (
     DEFAULT_CGROUP,
     DEFAULT_PERIOD,
@@ -52,6 +53,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _matrix(args)
     if args.cmd == "coexist":
         return _coexist(args)
+    if args.cmd == "memcap":
+        return _memcap(args)
     policy = _policy(args)
     if args.cmd == "config":
         sys.stdout.write(config.reference())
@@ -142,7 +145,13 @@ def _opt() -> argparse.ArgumentParser:
         "--apply",
         action="store_true",
         default=argparse.SUPPRESS,
-        help="落地运行时权重并回读（共存策略）",
+        help="落地运行时权重或内存上限并回读",
+    )
+    opt.add_argument(
+        "--unitdir",
+        metavar="DIR",
+        default=argparse.SUPPRESS,
+        help="单元目录（内存上限的声明来源）",
     )
     return opt
 
@@ -165,6 +174,7 @@ def _args(argv: Sequence[str] | None) -> argparse.Namespace:
         desktop=coexist.DEFAULT_DESKTOP,
         pressure=coexist.DEFAULT_PRESSURE,
         loadavg=coexist.DEFAULT_LOADAVG,
+        unitdir=memcap.DEFAULT_UNITDIR,
         apply=False,
     )
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -182,6 +192,9 @@ def _args(argv: Sequence[str] | None) -> argparse.Namespace:
     )
     sub.add_parser(
         "coexist", parents=[_opt()], help="评估桌面与实时共存策略"
+    )
+    sub.add_parser(
+        "memcap", parents=[_opt()], help="补齐内存与换页上限"
     )
     return parser.parse_args(argv)
 
@@ -205,6 +218,16 @@ def _coexist(args: argparse.Namespace) -> int:
     found = coexist.apply(cfg) if args.apply else coexist.inspect(cfg)
     _show_plan(found, args.json)
     return _ccode(found)
+
+
+def _memcap(args: argparse.Namespace) -> int:
+    """补齐或核对内存与换页上限；声明仍只读自单元文件。"""
+    if args.apply:
+        found = memcap.apply(args.cgroup, args.unitdir)
+    else:
+        found = memcap.inspect(args.cgroup, args.unitdir)
+    _show_mem(found, args.json)
+    return _memcode(found)
 
 
 def _roots(args: argparse.Namespace) -> matrix.Roots:
@@ -296,3 +319,28 @@ def _ccode(found: coexist.Plan) -> int:
     if found.mode is coexist.Mode.ABSENT or found.applied:
         return 0
     return EXIT_PARTIAL
+
+
+def _show_mem(found: memcap.Report, as_json: bool) -> None:
+    if as_json:
+        print(json.dumps(found.dump(), ensure_ascii=False))
+        return
+    print(f"{MARK} layout={found.layout or '-'} steps={len(found.steps)}")
+    for item in found.steps:
+        have = "-" if item.have is None else item.have
+        print(
+            f"  {item.path:<38}{item.want:>14}  {have:>14}"
+            f"  {item.state}"
+        )
+        if item.note:
+            print(f"note   {item.path} {item.note}")
+
+
+def _memcode(found: memcap.Report) -> int:
+    """记账树缺失按未通过，任何一条没落地按部分落地。"""
+    if not found.layout:
+        return EXIT_FAIL
+    failed = (memcap.ABSENT, memcap.DIFFERS, memcap.TIGHT)
+    if not found.steps or any(found.count(state) for state in failed):
+        return EXIT_PARTIAL
+    return 0

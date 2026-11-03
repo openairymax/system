@@ -17,6 +17,7 @@
 
 from __future__ import annotations
 
+from . import memcap
 from .allocation import Entry, allocate
 from .bandwidth import apply, inspect
 from .cgroup import Kind, Layout, detect

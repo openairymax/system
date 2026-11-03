@@ -1,0 +1,311 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later OR Apache-2.0
+#
+# AirymaxOS 内存与换页上限的补齐
+#
+# slice 单元里声明 MemoryMax 之后，越过上限的页并不会被拒绝，而是被换出去。
+# 285H 现场：会话 scope 记账 swap 13.8G，整机 swap 16G 只剩 1G，回收路径
+# 长期在「换出—再缺页」之间往返，整机因此卡死而不是某个进程失败。要让
+# 内存与换页合计也有天花板，必须同时声明 MemorySwapMax。
+#
+# 但只有 cgroup v2 上 systemd 才会把 MemorySwapMax 写成 memory.swap.max；
+# 目标机的 hybrid 层级上实测：瞬态服务声明 MemorySwapMax=300M，systemctl
+# show 回报 314572800，cgroup 里的 memory.memsw.limit_in_bytes 却仍是
+# infinity。属性存在、值也对，实际没有任何约束——这正是本包存在的理由：
+# 补上 systemd 在 v1 上不写的那一半。
+#
+# 声明仍然只有一处：百分比从 slice 单元与 drop-in 里读，代码不另立一张
+# 表，改上限只改单元文件。v1 的 memsw 记账是「内存 + 换页」合计，所以
+# 目标值取两者之和；两个百分比相加正好是物理内存一整个，常驻部分因此
+# 停在九成或八成半。v2 上 systemd 自己会写，本模块只在缺失或不一致时
+# 补写，正常路径下只做核对。
+#
+# 写入前先比对当前用量：目标低于已用量时拒绝写入并报 tight。memsw 上限
+# 一旦低于在用量，内核会当场回收或 OOM，把一条配置动作变成一次事故——这
+# 是「装完包就杀掉正在跑的模型」的那条路径，必须由守卫拦住，交给人决定
+# 是重启还是先减实例。
+#
+# 设计依据：docs-linux/170-performance/07-rt-matrix.md §5.1~§5.3。
+
+"""AirymaxOS memory and swap ceiling (X-05)."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from pathlib import Path
+
+__all__ = [
+    "ABSENT",
+    "APPLIED",
+    "DIFFERS",
+    "DEFAULT_MEMINFO",
+    "DEFAULT_ROOT",
+    "DEFAULT_UNITDIR",
+    "OK",
+    "TIGHT",
+    "Bound",
+    "Report",
+    "Step",
+    "apply",
+    "bounds",
+    "inspect",
+]
+
+DEFAULT_MEMINFO = "/proc/meminfo"
+
+DEFAULT_ROOT = "/sys/fs/cgroup"
+
+DEFAULT_UNITDIR = "/usr/lib/systemd/system"
+
+MEMINFO_KEY = "MemTotal"
+
+CONTROLLERS = "cgroup.controllers"
+
+MEM_DIR = "memory"
+
+V1_MEMSW = "memory.memsw.limit_in_bytes"
+
+V1_USAGE = "memory.memsw.usage_in_bytes"
+
+V2_SWAP = "memory.swap.max"
+
+# 声明来源与它在 memory 层级里的目录。两层不是分区而是两个独立天花板：
+# agent 侧由单元拉起，会话池兜住 AirymaxRT 直接 exec 的进程。单元名与
+# 目录名不同是因为含 `-` 的 slice 会展开成父子两级。
+SOURCES: tuple[tuple[str, str], ...] = (
+    ("airymax-agent.slice", "airymax.slice/airymax-agent.slice"),
+    ("user.slice.d/50-airymax-memory.conf", "user.slice"),
+)
+
+OK = "ok"
+
+APPLIED = "applied"
+
+DIFFERS = "differs"
+
+TIGHT = "tight"
+
+ABSENT = "absent"
+
+
+@dataclass(frozen=True, slots=True)
+class Bound:
+    """一条声明：上限来自哪份单元、落在哪个 slice、内存与换页各多少。"""
+
+    unit: str
+    path: str
+    mem: int
+    swap: int
+
+    @property
+    def total(self) -> int:
+        """memsw 上限：内存与换页合计。"""
+        return self.mem + self.swap
+
+
+@dataclass(slots=True)
+class Step:
+    """一个 slice 的落地结果。"""
+
+    path: str
+    want: int
+    have: int | None
+    usage: int | None
+    state: str
+    note: str = ""
+
+    def dump(self) -> dict[str, object]:
+        return {
+            "path": self.path,
+            "want": self.want,
+            "have": self.have,
+            "usage": self.usage,
+            "state": self.state,
+            "note": self.note,
+        }
+
+
+@dataclass(slots=True)
+class Report:
+    """一次判定的全部结果；layout 为空表示记账树不可用。"""
+
+    layout: str
+    steps: list[Step] = field(default_factory=list)
+
+    def dump(self) -> dict[str, object]:
+        return {
+            "layout": self.layout,
+            "steps": [item.dump() for item in self.steps],
+        }
+
+    def count(self, state: str) -> int:
+        return sum(1 for item in self.steps if item.state == state)
+
+
+def _scan(path: Path) -> dict[str, str]:
+    """读单元文件里的两条内存声明，忽略注释与空行。"""
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return {}
+    found: dict[str, str] = {}
+    for line in text.splitlines():
+        line = line.strip()
+        if line.startswith(("MemoryMax=", "MemorySwapMax=")):
+            name, _, value = line.partition("=")
+            found[name] = value.strip()
+    return found
+
+
+def _bytes(text: str | None, total: int) -> int | None:
+    """把百分比或绝对字节换成字节数；无法判读时返回 None。"""
+    if not text:
+        return None
+    if text.endswith("%"):
+        try:
+            return total * int(text[:-1], 10) // 100
+        except ValueError:
+            return None
+    try:
+        return int(text, 10)
+    except ValueError:
+        return None
+
+
+def _total(meminfo: str) -> int:
+    """读 MemTotal；单位是 kB，换算成字节。"""
+    try:
+        text = Path(meminfo).read_text(encoding="ascii")
+    except OSError:
+        return 0
+    for line in text.splitlines():
+        if not line.startswith(MEMINFO_KEY + ":"):
+            continue
+        fields = line.partition(":")[2].split()
+        try:
+            return int(fields[0], 10) * 1024
+        except (IndexError, ValueError):
+            return 0
+    return 0
+
+
+def bounds(unitdir: str, meminfo: str = DEFAULT_MEMINFO) -> list[Bound]:
+    """收集两份单元里的声明；缺一条百分比就跳过该条并留待报告。"""
+    total = _total(meminfo)
+    if total <= 0:
+        return []
+    found: list[Bound] = []
+    for unit, path in SOURCES:
+        values = _scan(Path(unitdir) / unit)
+        mem = _bytes(values.get("MemoryMax"), total)
+        swap = _bytes(values.get("MemorySwapMax"), total)
+        if mem is None or swap is None:
+            continue
+        found.append(Bound(unit, path, mem, swap))
+    return found
+
+
+def _layout(root: str) -> tuple[str, Path, str]:
+    """识别记账布局，返回（类型，memory 根目录，换页上限文件名）。
+
+    v1 未开 swapaccount 时 memsw 接口整组缺失，换页上限无从落地；这是
+    内核命令行缺 ``swapaccount=1``，与「文件在但写入被拒」是两种故障，
+    分别报 absent 与写入未生效，排障时才不会绕到权限上。
+    """
+    base = Path(root)
+    if (base / CONTROLLERS).is_file():
+        return "v2", base, V2_SWAP
+    mem = base / MEM_DIR
+    if (mem / V1_MEMSW).is_file():
+        return "v1", mem, V1_MEMSW
+    if (mem / V1_USAGE).is_file():
+        return "v1", mem, ""
+    return "", base, ""
+
+
+def _read(path: Path) -> int | None:
+    """读上限值；``max`` 与 v1 的哨兵值都表示不限，按不可解析处理。"""
+    try:
+        text = path.read_text(encoding="ascii").strip()
+    except OSError:
+        return None
+    if not text or text == "max":
+        return None
+    try:
+        value = int(text, 10)
+    except ValueError:
+        return None
+    return value if value < (1 << 62) else None
+
+
+def _put(path: Path, value: int) -> bool:
+    """写入后回读；cgroupfs 会静默夹值，只信返回值等于没写。"""
+    try:
+        path.write_text(f"{value}\n", encoding="ascii")
+    except OSError:
+        return False
+    return _read(path) == value
+
+
+def _step(root: Path, file: str, item: Bound, plan: bool) -> Step:
+    """处理一个 slice：v1 补齐 memsw，v2 核对换页，超目标时拒写。"""
+    home = root / item.path
+    want = item.total if file == V1_MEMSW else item.swap
+    usage = _read(home / V1_USAGE) if file == V1_MEMSW else None
+    if not home.is_dir():
+        try:
+            home.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            return Step(item.path, want, None, usage, ABSENT, "目录不可创建")
+    target = home / file
+    if not target.is_file():
+        return Step(item.path, want, None, usage, ABSENT, f"缺少 {file}")
+    have = _read(target)
+    if have == want:
+        return Step(item.path, want, have, usage, OK)
+    if usage is not None and usage > want:
+        return Step(item.path, want, have, usage, TIGHT, "在用量已超目标")
+    if not plan:
+        return Step(item.path, want, have, usage, DIFFERS)
+    if not _put(target, want):
+        return Step(item.path, want, _read(target), usage, ABSENT, "写入未生效")
+    return Step(item.path, want, _read(target), usage, APPLIED)
+
+
+def _report(
+    root: str,
+    unitdir: str,
+    meminfo: str,
+    plan: bool,
+) -> Report:
+    """两种布局共用一条判定路径，plan 只决定末步是否落笔。"""
+    kind, base, file = _layout(root)
+    report = Report(kind)
+    if not kind:
+        return report
+    found = bounds(unitdir, meminfo)
+    if not file:
+        report.steps = [
+            Step(item.path, item.total, None, None, ABSENT, "未开 memsw 记账")
+            for item in found
+        ]
+        return report
+    report.steps = [_step(base, file, item, plan) for item in found]
+    return report
+
+
+def inspect(
+    root: str = DEFAULT_ROOT,
+    unitdir: str = DEFAULT_UNITDIR,
+    meminfo: str = DEFAULT_MEMINFO,
+) -> Report:
+    """只读判定，不写任何接口。"""
+    return _report(root, unitdir, meminfo, False)
+
+
+def apply(
+    root: str = DEFAULT_ROOT,
+    unitdir: str = DEFAULT_UNITDIR,
+    meminfo: str = DEFAULT_MEMINFO,
+) -> Report:
+    """落地上限并回读；在用量已超目标时保持原值并报 tight。"""
+    return _report(root, unitdir, meminfo, True)
