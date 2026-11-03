@@ -8,9 +8,15 @@
 # 卡顿现场正是这样来的——实时预算没超，CPU 全被普通 agent 抢占。
 #
 # 因此共存动作只有一个：桌面 slice 的 CPUWeight 在基线与保护值之间切换。
-# 触发信号用 PSI 的 CPU some avg10——它度量「有任务可运行却在等 CPU」的
-# 时间占比，正是桌面失响应的直接指标；/proc/loadavg 把不可中断睡眠也算
-# 进去，会在等 IO 时误判。读不到 PSI 时不提升权重：没有证据不做调整。
+# 触发信号首选 PSI 的 CPU some avg10——它度量「有任务可运行却在等 CPU」
+# 的时间占比，正是桌面失响应的直接指标。
+#
+# 285H 的 6.6.157-alk 没有编入 PSI，策略在唯一可验收的机器上因此恒为基线，
+# 等于没装。回退信号取 1 分钟负载均值除以核数，单位同样是「占满整机的比例」，
+# 但语义不同：loadavg 把不可中断睡眠也算进来，等 IO 时会虚高。两者因此不能
+# 共用一个阈值——PSI 用 20% 的有任务等 CPU 时间占比，负载回退要求整机平均
+# 可运行任务数达到核数（100%）才抬权重，把 IO 等待的虚高吸收掉。两个都读
+# 不到时才保持基线并如实说明，而不是把「没有读数」当成「没有争用」。
 #
 # 矩阵等级是准入而不是动作：不具备实时能力时，实时负载本来就不会被调度，
 # 桌面也不需要为它让路；等级与 governor/isolated/threadirqs 仍作为建议
@@ -38,13 +44,17 @@ from . import matrix
 __all__ = [
     "BASE_WEIGHT",
     "DEFAULT_DESKTOP",
+    "DEFAULT_LOADAVG",
     "DEFAULT_PRESSURE",
     "DEFAULT_SYSTEMCTL",
     "LIMIT",
+    "LOAD_LIMIT",
     "PROTECT_WEIGHT",
     "Coexist",
     "Mode",
     "Plan",
+    "Reading",
+    "Source",
     "advice",
     "apply",
     "decide",
@@ -57,11 +67,17 @@ DEFAULT_DESKTOP = "airymax-desktop.slice"
 
 DEFAULT_PRESSURE = "/proc/pressure/cpu"
 
+DEFAULT_LOADAVG = "/proc/loadavg"
+
+CPUINFO = "cpuinfo"
+
 BASE_WEIGHT = 50
 
 PROTECT_WEIGHT = 200
 
 LIMIT = 20.0
+
+LOAD_LIMIT = 100.0
 
 MODE_ADVICE = {
     "absent": "桌面 slice 未加载：按无桌面处理，不调整权重",
@@ -83,6 +99,24 @@ class Mode(Enum):
     PROTECT = "protect"
 
 
+@unique
+class Source(Enum):
+    """争用读数的来源；none 表示两条路径都读不到。"""
+
+    PSI = "psi"
+    LOAD = "loadavg"
+    NONE = "none"
+
+
+@dataclass(frozen=True, slots=True)
+class Reading:
+    """一次争用采样；百分比含义随来源变化，故与来源同时传递。"""
+
+    value: float | None
+    source: Source = Source.NONE
+    cores: int | None = None
+
+
 @dataclass(frozen=True, slots=True)
 class Coexist:
     """一次评估的输入；单元名与路径可替换，便于测试与救援环境。"""
@@ -90,7 +124,9 @@ class Coexist:
     unit: str = DEFAULT_DESKTOP
     systemctl: str = DEFAULT_SYSTEMCTL
     pressure: str = DEFAULT_PRESSURE
+    loadavg: str = DEFAULT_LOADAVG
     limit: float = LIMIT
+    load_limit: float = LOAD_LIMIT
     roots: matrix.Roots = matrix.Roots()
 
 
@@ -108,6 +144,8 @@ class Plan:
     applied: bool
     notes: tuple[str, ...] = ()
     detail: str = ""
+    origin: str = Source.NONE.value
+    cores: int | None = None
 
     @property
     def admit(self) -> bool:
@@ -122,6 +160,8 @@ class Plan:
             "weight": self.weight,
             "current": self.current,
             "pressure": self.pressure,
+            "origin": self.origin,
+            "cores": self.cores,
             "grade": self.grade.value,
             "present": self.present,
             "admit": self.admit,
@@ -160,8 +200,8 @@ def _assess(cfg: Coexist, push: bool) -> Plan:
         return _plan(cfg, found, Mode.FAILED, detail="LoadState 不可读")
     if state != "loaded":
         return _plan(cfg, found, Mode.ABSENT, detail=f"LoadState={state}")
-    pressure = _read(cfg.pressure)
-    mode, weight = decide(pressure, cfg.limit)
+    seen = _sample(cfg)
+    mode, weight = decide(seen.value, _limit(cfg, seen.source))
     current = _number(_query(cfg, "CPUWeight"))
     applied = current == weight
     detail = ""
@@ -171,19 +211,19 @@ def _assess(cfg: Coexist, push: bool) -> Plan:
         if not applied:
             detail = "set-property 未生效"
     return _plan(cfg, found, mode, weight=weight, current=current,
-                 pressure=pressure, present=True, applied=applied,
-                 detail=detail)
+                 seen=seen, present=True, applied=applied, detail=detail)
 
 
 def _plan(cfg: Coexist, found: matrix.Matrix, mode: Mode, *,
           weight: int = 0, current: int | None = None,
-          pressure: float | None = None, present: bool = False,
+          seen: Reading = Reading(None), present: bool = False,
           applied: bool = False, detail: str = "") -> Plan:
-    return Plan(mode, cfg.unit, weight, current, pressure, found.grade,
-                present, applied, _notes(found, pressure, present), detail)
+    return Plan(mode, cfg.unit, weight, current, seen.value, found.grade,
+                present, applied, _notes(found, seen, present), detail,
+                seen.source.value, seen.cores)
 
 
-def _notes(found: matrix.Matrix, pressure: float | None,
+def _notes(found: matrix.Matrix, seen: Reading,
            present: bool) -> tuple[str, ...]:
     items: list[str] = []
     if found.flag(matrix.GOVERNOR) is matrix.Flag.NO:
@@ -192,9 +232,57 @@ def _notes(found: matrix.Matrix, pressure: float | None,
         items.append("未隔离 CPU：实时与桌面共享全部核心")
     if found.flag(matrix.THREADIRQS) is matrix.Flag.NO:
         items.append("中断未线程化：延迟抖动可能来自硬中断")
-    if present and pressure is None:
-        items.append("无 PSI 计数：按基线权重运行")
+    if present and seen.source is Source.NONE:
+        items.append("无 CPU 争用读数：按基线权重运行")
+    if present and seen.source is Source.LOAD:
+        items.append(
+            f"无 PSI 计数：以 {seen.cores} 核 1 分钟负载均值判定"
+        )
     return tuple(items)
+
+
+def _sample(cfg: Coexist) -> Reading:
+    """先取 PSI；没有 PSI 时退回按核数归一的负载均值。"""
+    psi = _read(cfg.pressure)
+    if psi is not None:
+        return Reading(psi, Source.PSI)
+    cores = _cores(Path(cfg.roots.proc) / CPUINFO)
+    load = _load1(cfg.loadavg)
+    if not cores or load is None:
+        return Reading(None, Source.NONE, cores)
+    return Reading(round(load * 100 / cores, 1), Source.LOAD, cores)
+
+
+def _limit(cfg: Coexist, source: Source) -> float:
+    """负载均值含不可中断睡眠，只有整机平均满载才抬权重。"""
+    if source is Source.LOAD:
+        return cfg.load_limit
+    return cfg.limit
+
+
+def _cores(path: Path) -> int | None:
+    try:
+        text = path.read_text(encoding="ascii")
+    except OSError:
+        return None
+    count = sum(
+        1 for line in text.splitlines() if line.startswith("processor")
+    )
+    return count or None
+
+
+def _load1(path: str) -> float | None:
+    try:
+        text = Path(path).read_text(encoding="ascii")
+    except OSError:
+        return None
+    head = text.split(maxsplit=1)
+    if not head:
+        return None
+    try:
+        return float(head[0])
+    except ValueError:
+        return None
 
 
 def _read(path: str) -> float | None:

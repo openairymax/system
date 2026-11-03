@@ -133,6 +133,12 @@ def _opt() -> argparse.ArgumentParser:
         help="PSI CPU 计数文件（共存策略）",
     )
     opt.add_argument(
+        "--loadavg",
+        metavar="FILE",
+        default=argparse.SUPPRESS,
+        help="负载均值文件（共存策略回退信号）",
+    )
+    opt.add_argument(
         "--apply",
         action="store_true",
         default=argparse.SUPPRESS,
@@ -158,6 +164,7 @@ def _args(argv: Sequence[str] | None) -> argparse.Namespace:
         systemctl=coexist.DEFAULT_SYSTEMCTL,
         desktop=coexist.DEFAULT_DESKTOP,
         pressure=coexist.DEFAULT_PRESSURE,
+        loadavg=coexist.DEFAULT_LOADAVG,
         apply=False,
     )
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -192,6 +199,7 @@ def _coexist(args: argparse.Namespace) -> int:
         unit=args.desktop,
         systemctl=args.systemctl,
         pressure=args.pressure,
+        loadavg=args.loadavg,
         roots=_roots(args),
     )
     found = coexist.apply(cfg) if args.apply else coexist.inspect(cfg)
@@ -265,13 +273,16 @@ def _show_plan(found: coexist.Plan, as_json: bool) -> None:
     if as_json:
         print(json.dumps(found.dump(), ensure_ascii=False))
         return
-    risk = "-" if found.pressure is None else f"{found.pressure:.2f}"
+    risk = "-" if found.pressure is None else f"{found.pressure:.1f}%"
     print(
         f"{MARK} mode={found.mode.value} unit={found.unit}"
         f" weight={found.weight} current={found.current}"
         f" applied={found.applied}"
     )
-    print(f"grade {found.grade.value} admit={found.admit} psi={risk}")
+    print(
+        f"grade {found.grade.value} admit={found.admit}"
+        f" pressure={risk} origin={found.origin}"
+    )
     for note in found.notes:
         print(f"note   {note}")
     if found.detail:
