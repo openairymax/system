@@ -477,6 +477,9 @@ MEMCAP = "airy-rt-memcap.service"
 # slice，一旦把部分落地判成失败，memsw 就永远停在 infinity（285H 实证）。
 # 上限只依赖 slice 目录，开机即可完整落地；hybrid 层级上 systemd 只记录
 # MemorySwapMax 属性而不写 memory.memsw.limit_in_bytes，只能由 memcap 补。
+# 写入不跨 daemon-reload：systemd 在 v1 上每次 reload 都把它写回 infinity，
+# 所以配 airy-rt-memcap.timer 周期重写；未设 RemainAfterExit，timer 的
+# OnUnitInactiveSec 才有下一次触发。
 MEMCAP_PAIRS: dict[tuple[str, str], str] = {
     ("Unit", "After"): "slices.target",
     ("Unit", "Before"): "agentrt.target display-manager.service",
@@ -485,7 +488,6 @@ MEMCAP_PAIRS: dict[tuple[str, str], str] = {
     ("Service", "Type"): "oneshot",
     ("Service", "ExecStart"): "/usr/bin/airy-rt-cap memcap --apply",
     ("Service", "SuccessExitStatus"): "3",
-    ("Service", "RemainAfterExit"): "yes",
     ("Service", "TimeoutStartSec"): "60",
     ("Service", "ProtectSystem"): "strict",
     ("Service", "ProtectHome"): "yes",
@@ -684,6 +686,16 @@ TIMERS: dict[str, dict[tuple[str, str], str]] = {
         ("Timer", "OnUnitInactiveSec"): "60s",
         ("Timer", "AccuracySec"): "15s",
         ("Timer", "Unit"): COEXIST,
+        ("Install", "WantedBy"): "timers.target",
+    },
+    "airy-rt-memcap.timer": {
+        ("Unit", "Description"): (
+            "Periodic AirymaxOS memory and swap ceiling re-application"
+        ),
+        ("Timer", "OnBootSec"): "120s",
+        ("Timer", "OnUnitInactiveSec"): "60s",
+        ("Timer", "AccuracySec"): "15s",
+        ("Timer", "Unit"): MEMCAP,
         ("Install", "WantedBy"): "timers.target",
     },
 }
