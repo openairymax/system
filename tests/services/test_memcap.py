@@ -140,12 +140,14 @@ class V1Case(Tree):
             )
 
     def test_memory_usage_blocks(self) -> None:
+        """内存用量已超声明时只封顶、不压到用量以下，合计上限随之抬高。"""
         self.v1(memusage=str(TOTAL))
         found = self.apply()
-        self.assertEqual([item.state for item in found.steps], ["tight"] * 2)
-        self.assertEqual(
-            self.value("memory/user.slice", memcap.V1_MEMSW), "infinity"
-        )
+        self.assertEqual([item.state for item in found.steps], ["held"] * 2)
+        for home in ("airymax.slice/airymax-agent.slice", "user.slice"):
+            self.assertGreater(
+                int(self.value(f"memory/{home}", memcap.V1_MEMSW)), TOTAL
+            )
 
     def test_inspect_reports_drift(self) -> None:
         self.v1()
@@ -157,12 +159,37 @@ class V1Case(Tree):
             self.value("memory/user.slice", memcap.V1_MEMSW), "infinity"
         )
 
-    def test_tight_refuses_write(self) -> None:
+    def test_tight_holds_above_usage(self) -> None:
+        """超用时不再留白：按在用量加余量封顶，额度不低于在用量。"""
         self.v1(usage=str(TOTAL + 1))
         found = self.apply()
-        self.assertEqual([item.state for item in found.steps], ["tight"] * 2)
+        self.assertEqual([item.state for item in found.steps], ["held"] * 2)
+        for home in ("airymax.slice/airymax-agent.slice", "user.slice"):
+            held = int(self.value(f"memory/{home}", memcap.V1_MEMSW))
+            self.assertGreater(held, TOTAL)
+            self.assertLess(held, TOTAL + TOTAL // 10)
+
+    def test_hold_never_raises(self) -> None:
+        """封顶只收紧、不放松：现值低于封顶值时保持原值。"""
+        self.v1(usage=str(TOTAL + 10000))
+        keep = str(TOTAL + 8 * 4096)
+        home = "memory/user.slice/memory.memsw.limit_in_bytes"
+        self.file(home, keep)
+        found = self.apply()
+        self.assertEqual(found.steps[1].state, memcap.HELD)
+        self.assertEqual(self.value("memory/user.slice", memcap.V1_MEMSW), keep)
+
+    def test_hold_converges(self) -> None:
+        """在用量回落后，下一轮把封顶收回声明目标。"""
+        self.v1(usage=str(TOTAL + 1))
+        self.apply()
+        for home in ("airymax.slice/airymax-agent.slice", "user.slice"):
+            path = self.root / "memory" / home / "memory.memsw.usage_in_bytes"
+            path.write_text("0\n", encoding="ascii")
+        found = self.apply()
+        self.assertEqual([item.state for item in found.steps], ["applied"] * 2)
         self.assertEqual(
-            self.value("memory/user.slice", memcap.V1_MEMSW), "infinity"
+            self.value("memory/user.slice", memcap.V1_MEMSW), str(TOTAL)
         )
 
     def test_missing_memsw(self) -> None:
