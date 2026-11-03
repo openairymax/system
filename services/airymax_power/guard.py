@@ -24,12 +24,18 @@
 # 空闲深度的预算与档位同步决定：AC 且未过热时禁用退出延迟超过实时预算的
 # 空闲态，其余情况恢复固件默认。理由与档位一致——过热时先把热排掉，电池上
 # 先把电省下，两者都不该为了唤醒延迟而放弃降档。
+#
+# 档位之外还有一维连续的功耗上限：platform_profile 与 EPP 都是离散档，换一次
+# 就走完了可用空间，而 285H 的节流计数在温度远低于 critical 时仍持续增长。
+# 上限因此由温度余量、节流增速与整机负载三者取最严重的一档决定，与档位在同
+# 一次评估里一起落地；滞回与状态留在 ceiling 模块。
 
 """AirymaxOS power guard."""
 
 from __future__ import annotations
 
-from . import cooling, idle, load, stall, supply, thermal, throttle, tuning
+from . import ceiling, cooling, idle, load, stall, supply, thermal
+from . import throttle, tuning
 from .duty import Duty, decide, enforce
 from .policy import Policy, Tuning
 from .report import Report
@@ -63,21 +69,33 @@ def assess(policy: Policy, push: bool) -> Report:
     action = decide(source, level)
     hot = thermal.peak(heat.severity, throttle.grade(speed))
     wanted = choose(source, hot, level, policy, work.strain)
-    cap = _cap(source, hot)
+    ceil = ceiling.decide(policy, ceiling.of(
+        thermal.peak(hot, work.strain), _tight(source)))
+    cap = _idle_cap(source, hot)
     if push:
         pause = stall.watch(policy)
-        knobs = tuning.apply(policy, wanted) + idle.apply(policy, cap)
+        knobs = tuning.apply(policy, wanted, ceil) + idle.apply(policy, cap)
+        ceiling.save(policy.ceil, ceil)
         throttle.save(policy.state, _total(heat))
         load.alert(policy, work)
         _enforce(action, level, policy)
     else:
         pause = stall.recent(policy)
-        knobs = tuning.inspect(policy, wanted) + idle.inspect(policy, cap)
+        knobs = tuning.inspect(policy, wanted, ceil) + idle.inspect(policy, cap)
     return Report(tuning.verdict(knobs), source, level, heat, knobs, work,
-                  cool, pause, speed, action)
+                  cool, ceil, pause, speed, action)
 
 
-def _cap(source: Source, heat: Severity) -> bool:
+def _tight(source: Source) -> bool:
+    """只有确认在电池或弱供电上才压一阶。
+
+    供电未知时不能压：读不到 power_supply 不等于在用电池，按电池处理会把
+    一台台式机的上限凭空压掉一阶，而这台机器可能根本没有电池。
+    """
+    return source is Source.BATTERY or source is Source.WEAK
+
+
+def _idle_cap(source: Source, heat: Severity) -> bool:
     """只有 AC 且未过热时才限制空闲深度。"""
     return source is Source.AC and heat.rank < Severity.HOT.rank
 

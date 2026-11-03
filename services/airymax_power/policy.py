@@ -20,6 +20,7 @@ __all__ = [
     "BUSY",
     "COOL",
     "DEFAULT_BEAT",
+    "DEFAULT_CEIL",
     "DEFAULT_CHOICES",
     "DEFAULT_CPUFREQ",
     "DEFAULT_CPUS",
@@ -31,6 +32,7 @@ __all__ = [
     "DEFAULT_PRESS",
     "DEFAULT_PROFILE",
     "DEFAULT_PSI",
+    "DEFAULT_PSTATE",
     "DEFAULT_SUPPLY",
     "DEFAULT_THERMAL",
     "DEFAULT_STATE",
@@ -51,6 +53,8 @@ DEFAULT_CPUFREQ = "/sys/devices/system/cpu/cpufreq"
 
 DEFAULT_CPUS = "/sys/devices/system/cpu"
 
+DEFAULT_PSTATE = "/sys/devices/system/cpu/intel_pstate"
+
 DEFAULT_SUPPLY = "/sys/class/power_supply"
 
 DEFAULT_THERMAL = "/sys/class/thermal"
@@ -64,6 +68,8 @@ DEFAULT_LOADAVG = "/proc/loadavg"
 DEFAULT_MEMINFO = "/proc/meminfo"
 
 DEFAULT_STATE = "/run/airy-power/throttle"
+
+DEFAULT_CEIL = "/run/airy-power/ceiling"
 
 DEFAULT_PRESS = "/run/airy-power/pressure"
 
@@ -115,6 +121,7 @@ class Policy:
     choices: str = DEFAULT_CHOICES
     cpufreq: str = DEFAULT_CPUFREQ
     cpus: str = DEFAULT_CPUS
+    pstate: str = DEFAULT_PSTATE
     supply: str = DEFAULT_SUPPLY
     thermal: str = DEFAULT_THERMAL
     throttle: str = DEFAULT_THROTTLE
@@ -122,6 +129,7 @@ class Policy:
     loadavg: str = DEFAULT_LOADAVG
     meminfo: str = DEFAULT_MEMINFO
     state: str = DEFAULT_STATE
+    ceil: str = DEFAULT_CEIL
     press: str = DEFAULT_PRESS
     duty: str = DEFAULT_DUTY
     beat: str = DEFAULT_BEAT

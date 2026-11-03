@@ -51,6 +51,7 @@ class Tree(unittest.TestCase):
             "choices": str(self.choices),
             "cpufreq": str(self.base / "cpu"),
             "cpus": str(self.base / "cpus"),
+            "pstate": str(self.base / "pstate"),
             "supply": str(self.base / "supply"),
             "thermal": str(self.base / "thermal"),
             "throttle": str(self.base / "throttle"),
@@ -58,6 +59,7 @@ class Tree(unittest.TestCase):
             "loadavg": str(self.base / "loadavg"),
             "meminfo": str(self.base / "meminfo"),
             "state": str(self.base / "state"),
+            "ceil": str(self.base / "ceiling"),
             "press": str(self.base / "press"),
             "duty": str(self.base / "duty"),
             "beat": str(self.base / "beat"),
@@ -108,6 +110,18 @@ class Tree(unittest.TestCase):
         self._write(path / "energy_performance_preference", epp)
         self._write(path / "energy_performance_available_preferences",
                     "performance balance_performance balance_power power")
+
+    def pstate(self, cap: int = 100, turbo: int = 1,
+               minimum: int = 1) -> None:
+        """铺 intel_pstate 的连续控制点；285H 现场是 100% 上限、turbo 开。"""
+        path = self.base / "pstate"
+        path.mkdir(parents=True, exist_ok=True)
+        self._write(path / "max_perf_pct", str(cap))
+        self._write(path / "min_perf_pct", str(minimum))
+        self._write(path / "no_turbo", str(1 - turbo))
+
+    def ceiling(self, rung: int, strikes: int = 0) -> None:
+        self._write(self.base / "ceiling", f"{rung} {strikes}")
 
     def device(self, index: int, label: str = "Fan", limit: int = 1,
                state: str | None = "0") -> None:
@@ -175,6 +189,7 @@ class Tree(unittest.TestCase):
             "--choices", str(self.choices),
             "--cpufreq", str(self.base / "cpu"),
             "--cpus", str(self.base / "cpus"),
+            "--pstate", str(self.base / "pstate"),
             "--supply", str(self.base / "supply"),
             "--thermal", str(self.base / "thermal"),
             "--throttle", str(self.base / "throttle"),
@@ -182,6 +197,7 @@ class Tree(unittest.TestCase):
             "--loadavg", str(self.base / "loadavg"),
             "--meminfo", str(self.base / "meminfo"),
             "--state", str(self.base / "state"),
+            "--ceil", str(self.base / "ceiling"),
             "--press", str(self.base / "press"),
             "--duty", str(self.base / "duty"),
             "--beat", str(self.base / "beat"),
