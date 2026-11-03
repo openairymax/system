@@ -9,6 +9,7 @@
 #   ui_note <阶段名> <事实...>
 #   ui_fail <阶段名> <判据...>
 #   ui_beat <阶段名> <已用秒> <上限秒>
+#   ui_due  <阶段名>
 #   ui_gate <阶段名>
 #   ui_total
 #
@@ -29,7 +30,8 @@
 # 阶段行是「一次开机一条结论」，而电源、共存、换页上限三个单元由 timer
 # 每 60 秒重跑：不加约束时同一阶段每分钟刷一行，屏幕与 journal 都被淹没。
 # ui_gate 是这条约束的唯一实现：本次开机第一次返回 0，之后返回 1，调用方
-# 以 `ui_gate <阶段名> || return` 跳过整组输出。标记落 tmpfs，重启即清空；
+# 以 `ui_gate <阶段名> || return` 跳过整组输出；ui_due 是同一判定的只读版本，
+# 供「先判断再执行」的调用方使用。标记落 tmpfs，重启即清空；
 # 目录不可写时返回 0 照常输出——宁可重复一行，也不能在受限环境里把结论
 # 吞掉。默认目录取单元的 RuntimeDirectory（systemd 保证其可写，不受
 # ProtectSystem 影响），无该变量时才用 /run/airymax-ui。
@@ -164,22 +166,39 @@ ui_fail() {
     _ui_put "$1" 'FAIL' "${@:2}"
 }
 
-# 长等待的周期心跳：调用方每 10 秒调一次，行里同时给出已用与上限，
-# 「还在跑」与「已越界」因此不必靠猜。缺心跳就是越界的第一条证据。
+# 长等待的周期心跳：阶段运行器按 AIRY_STAGE_BEAT（默认 30 秒）调用，行里
+# 同时给出已用与上限，「还在跑」与「已越界」因此不必靠猜。
 ui_beat() {
     _ui_put "$1" 'wait' "used=${2:-0}s limit=${3:-60}s"
 }
 
-# 本次开机该阶段是否还没输出过。标记按阶段序号命名，与契约表同源，
-# 调用方写错的阶段名在这里就暴露，不必等到 ui_ok 那一行。
-ui_gate() {
-    local row dir
+# 去重标记目录：默认取单元的 RuntimeDirectory（systemd 保证可写，不受
+# ProtectSystem 影响），无该变量时才用 /run/airymax-ui。
+_ui_dir() {
+    printf '%s' "${UI_STATE:-${RUNTIME_DIRECTORY:-/run/airymax-ui}}"
+}
+
+# 本次开机该阶段是否还没输出过（只读，不占标记）。需要在执行命令之前就知道
+# 「这一阶段还会不会出结论」的调用方用它：阶段运行器据此决定要不要起心跳，
+# 否则 timer 重跑的每一轮都会冒出一串没有结论的 wait 行。
+ui_due() {
+    local row
 
     row="$(_ui_row "$1")" ||
         { _ui_err "${UI_EINVAL}" "阶段名不在契约表: $1"; return "${UI_EINVAL}"; }
-    dir="${UI_STATE:-${RUNTIME_DIRECTORY:-/run/airymax-ui}}"
+    [ -e "$(_ui_dir)/${row%%|*}" ] && return 1
+    return 0
+}
+
+# 占用输出资格。标记按阶段序号命名，与契约表同源，调用方写错的阶段名在这里
+# 就暴露，不必等到 ui_ok 那一行。
+ui_gate() {
+    local row dir
+
+    ui_due "$1" || return $?
+    row="$(_ui_row "$1")"
+    dir="$(_ui_dir)"
     mkdir -p "${dir}" 2>/dev/null || return 0
-    [ -e "${dir}/${row%%|*}" ] && return 1
     : >"${dir}/${row%%|*}" 2>/dev/null || return 0
     return 0
 }

@@ -32,6 +32,7 @@ TOOL = """#!/usr/bin/env bash
 set -euo pipefail
 printf '%s\\n' "${FAKE_FIRST:-}"
 printf 'zone cpu=1\\n'
+sleep "${FAKE_SLEEP:-0}"
 exit "${FAKE_RC:-0}"
 """
 
@@ -127,6 +128,35 @@ class StageCase(unittest.TestCase):
         res = self.stage()
         self.assertIn("zone cpu=1", res.stdout)
         self.assertTrue(self.journal.exists())
+
+    def test_begin_precedes_result(self) -> None:
+        """起始行先落，卡住的阶段才有一行可指认的「我在第几步」。"""
+        res = self.stage()
+        self.assertEqual(res.returncode, 0, res.stderr)
+        self.assertEqual(
+            res.stdout.splitlines()[0], "[ 6/9 ] 电源与热治理    ..."
+        )
+
+    def test_heartbeat_while_slow(self) -> None:
+        """跑过 BEAT 秒的阶段必须自报 used/limit，且结论行仍在最后。"""
+        res = self.stage(
+            AIRY_STAGE_BEAT="1", AIRY_STAGE_LIMIT="3", FAKE_SLEEP="2"
+        )
+        self.assertEqual(res.returncode, 0, res.stderr)
+        self.assertIn("wait used=1s limit=3s", res.stdout)
+        self.assertTrue(res.stdout.splitlines()[-1].endswith("charge=97%"))
+
+    def test_no_heartbeat_when_fast(self) -> None:
+        res = self.stage(AIRY_STAGE_BEAT="5")
+        self.assertEqual(res.returncode, 0, res.stderr)
+        self.assertNotIn("wait", res.stdout)
+
+    def test_no_heartbeat_on_repeat(self) -> None:
+        """timer 重跑已出过结论的阶段时不得再冒出没有结论的心跳行。"""
+        self.stage()
+        res = self.stage(AIRY_STAGE_BEAT="1", FAKE_SLEEP="2")
+        self.assertNotIn("wait", res.stdout)
+        self.assertNotIn("[ 6/9 ]", res.stdout)
 
     def test_usage(self) -> None:
         res = self.run_stage(STAGE, "3")

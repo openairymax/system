@@ -3,8 +3,9 @@
 # AirymaxOS 开机九阶段打印契约回归测试
 #
 # 在临时目录里以桩 logger 驱动 ui.sh，逐字比对四种动词的输出形态、
-# 契约表（序号、名称、显示宽度、总数）与三类契约拒绝；宽度在这里独立
-# 用 unicodedata 复算，避免表里的宽度与终端实际渲染分叉。
+# 契约表（序号、名称、显示宽度、总数）、三类契约拒绝，以及只读判定
+# （ui_due）不占标记的语义；宽度在这里独立用 unicodedata 复算，避免表里的
+# 宽度与终端实际渲染分叉。
 
 from __future__ import annotations
 
@@ -223,6 +224,39 @@ class GateCase(Case):
         )
         self.assertEqual(res.returncode, 0, res.stderr)
         self.assertTrue((self.dir / "run" / "6").exists())
+
+
+class DueCase(Case):
+    """只读判定：回答「还该不该出结论」，但不占标记。"""
+
+    def due(
+        self,
+        name: str = "电源与热治理",
+        state: str | None = None,
+    ) -> subprocess.CompletedProcess:
+        return self.run_ui(
+            f'ui_due "{name}"',
+            UI_STATE=state or str(self.dir / "ui"),
+        )
+
+    def test_read_only(self) -> None:
+        self.assertEqual(self.due().returncode, 0)
+        self.assertFalse((self.dir / "ui" / "6").exists())
+        self.assertEqual(self.due().returncode, 0)
+
+    def test_consumed_by_gate(self) -> None:
+        self.assertEqual(self.due().returncode, 0)
+        gate = self.run_ui('ui_gate "电源与热治理"', UI_STATE=str(self.dir / "ui"))
+        self.assertEqual(gate.returncode, 0, gate.stderr)
+        self.assertEqual(self.due().returncode, 1)
+
+    def test_unknown(self) -> None:
+        res = self.due("不存在的阶段")
+        self.assertEqual(res.returncode, 5, res.stderr)
+        self.assertIn("阶段名不在契约表", res.stderr)
+
+    def test_unwritable(self) -> None:
+        self.assertEqual(self.due(state="/proc/airy-no-such/ui").returncode, 0)
 
 
 if __name__ == "__main__":

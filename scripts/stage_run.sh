@@ -26,13 +26,20 @@
 # 秒重跑，不设闸时同一阶段每分钟刷一行。闸由 ui_gate 统一实现，标记落
 # tmpfs，重启即清空；周期复核的完整快照照旧逐轮进 journal。
 #
+# 打印要能回答「卡在哪一步、卡了多久」：工具的输出要等它退出才取得到（首行
+# 就是判据），卡在系统调用里时屏幕上不会再有新行。因此阶段开始先落一行 ...，
+# 跑过 BEAT 秒仍未返回就每 BEAT 秒补一行 wait（used/limit）。limit 是预期
+# 上限而不是杀进程的手：运行器无权改变服务生命周期，越界与否由单元的
+# TimeoutStartSec 收尾，心跳只负责把「慢」与「死」分开。
+#
 # 关键值只取工具给出的事实，缺项就不出现：不补默认值，因为「没有这个
 # 事实」与「事实是 0」在验收现场是两件不同的事；键的顺序由参数决定，
 # 因此工具内部字段顺序变化不会让阶段行的列漂移。
 #
 # 退出码：透传工具；打印契约库缺失按 6（与其它阶段脚本同一约定）；闸
 # 自身出错按闸的退出码（阶段名不在表内为 5）。
-# 环境变量：AIRY_STAGE_UI 覆盖契约库路径（回归用）。
+# 环境变量：AIRY_STAGE_UI 覆盖契约库路径（回归用）；AIRY_STAGE_BEAT /
+# AIRY_STAGE_LIMIT 覆盖心跳周期与预期上限（默认 30s / 60s）。
 # ===========================================================================
 
 set -euo pipefail
@@ -46,6 +53,8 @@ fi
 . "${UI_LIB}"
 
 readonly USAGE='用法: stage_run.sh <阶段名> <宽限码> <取值键> <命令> [参数...]'
+readonly BEAT="${AIRY_STAGE_BEAT:-30}"
+readonly LIMIT="${AIRY_STAGE_LIMIT:-60}"
 
 # 首行是工具对外的结论行，键值以空格分隔。只认识参数里登记的键，其它
 # 字段一律丢弃：工具的调试字段变化不该改变阶段行的形状。
@@ -96,24 +105,47 @@ emit() {
     fi
 }
 
+# 心跳：每 BEAT 秒一行 used/limit。sleep 的 stdout 必须丢掉——它比子壳活得
+# 久，若继承调用方的管道，管道的 EOF 要等到 BEAT 秒之后，把测试与采集器
+# 一起挂住。正常阶段的耗时远小于 BEAT，开机日志里通常一行心跳都没有。
+beat() {
+    local used=0
+
+    while sleep "${BEAT}" >/dev/null 2>&1; do
+        used=$((used + BEAT))
+        ui_beat "${STAGE}" "${used}" "${LIMIT}"
+    done
+}
+
 main() {
-    local out= rc=0 gate_rc=0 line
+    local out= rc=0 due=0 line ticker=''
+
+    ui_due "${STAGE}" || due=$?
+    case "${due}" in
+    0)
+        ui_begin "${STAGE}"
+        beat &
+        ticker=$!
+        ;;
+    1) : ;;
+    *) return "${due}" ;;
+    esac
 
     out=$("$@") || rc=$?
+
+    if [ -n "${ticker}" ]; then
+        kill "${ticker}" 2>/dev/null || :
+        wait "${ticker}" 2>/dev/null || :
+    fi
     if [ -n "${out}" ]; then
         printf '%s\n' "${out}"
     fi
 
-    # 闸必须在命令之后：先占标记再执行，命令失败时标记已被消耗，下一次
-    # 定时复核就再也不会把这条失败报出来。
-    ui_gate "${STAGE}" || gate_rc=$?
-    case "${gate_rc}" in
-    0) ;;
-    1) return "${rc}" ;;
-    *) return "${gate_rc}" ;;
-    esac
+    # 闸在命令之后：先占标记再执行，命令中途崩掉时标记已被消耗，这条
+    # 结论就再也不会出现。阶段名已由 ui_due 校验，这里只剩「本次开机
+    # 已出过结论」一种拒绝。
+    ui_gate "${STAGE}" || return "${rc}"
 
-    ui_begin "${STAGE}"
     line=$(facts "${out%%$'\n'*}" "${KEYS}")
     if [ "${rc}" -eq 0 ]; then
         if [ -n "${line}" ]; then
