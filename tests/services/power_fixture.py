@@ -118,6 +118,23 @@ class Tree(unittest.TestCase):
         for index in range(count):
             (path / f"cpu{index}").mkdir(parents=True, exist_ok=True)
 
+    def idle(self, count: int = 4, depth: int = 1048) -> None:
+        """按 285H 现场铺四个空闲态，最深态的退出延迟可改。"""
+        for index in range(count):
+            path = self.base / "cpus" / f"cpu{index}" / "cpuidle"
+            for slot, (name, latency) in enumerate(
+                    (("POLL", 0), ("C1_ACPI", 1), ("C2_ACPI", 127),
+                     ("C3_ACPI", depth))):
+                self._slot(path, slot, name, latency)
+
+    def _slot(self, path: Path, index: int, name: str, latency: int,
+              disable: int = 0) -> None:
+        entry = path / f"state{index}"
+        entry.mkdir(parents=True, exist_ok=True)
+        self._write(entry / "name", name)
+        self._write(entry / "latency", str(latency))
+        self._write(entry / "disable", str(disable))
+
     def loadavg(self, value: float = 0.10) -> None:
         self._write(self.base / "loadavg", f"{value:.2f} 0.10 0.10 1/100 1")
 

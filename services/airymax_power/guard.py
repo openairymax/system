@@ -20,12 +20,16 @@
 # 评估与落地共用同一条链路：同一份采样、同一份档位、同一组控制点，只有
 # 最后一步是否写 sysfs 不同。这样验收侧读到的结论与守护进程落地的结论
 # 不可能分叉。
+#
+# 空闲深度的预算与档位同步决定：AC 且未过热时禁用退出延迟超过实时预算的
+# 空闲态，其余情况恢复固件默认。理由与档位一致——过热时先把热排掉，电池上
+# 先把电省下，两者都不该为了唤醒延迟而放弃降档。
 
 """AirymaxOS power guard."""
 
 from __future__ import annotations
 
-from . import load, supply, thermal, throttle, tuning
+from . import idle, load, supply, thermal, throttle, tuning
 from .duty import Duty, decide, enforce
 from .policy import Policy, Tuning
 from .report import Report
@@ -56,17 +60,23 @@ def assess(policy: Policy, push: bool) -> Report:
     speed = throttle.rate(throttle.measure(_total(heat)),
                           throttle.load(policy.state))
     action = decide(source, level)
-    wanted = choose(source, thermal.peak(heat.severity, throttle.grade(speed)),
-                    level, policy, work.strain)
+    hot = thermal.peak(heat.severity, throttle.grade(speed))
+    wanted = choose(source, hot, level, policy, work.strain)
+    cap = _cap(source, hot)
     if push:
-        knobs = tuning.apply(policy, wanted)
+        knobs = tuning.apply(policy, wanted) + idle.apply(policy, cap)
         throttle.save(policy.state, _total(heat))
         load.alert(policy, work)
         _enforce(action, level, policy)
     else:
-        knobs = tuning.inspect(policy, wanted)
+        knobs = tuning.inspect(policy, wanted) + idle.inspect(policy, cap)
     return Report(tuning.verdict(knobs), source, level, heat, knobs, work,
                   speed, action)
+
+
+def _cap(source: Source, heat: Severity) -> bool:
+    """只有 AC 且未过热时才限制空闲深度。"""
+    return source is Source.AC and heat.rank < Severity.HOT.rank
 
 
 def _enforce(action: Duty, level: int | None, policy: Policy) -> None:

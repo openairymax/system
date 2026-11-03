@@ -10,7 +10,7 @@
 
 from __future__ import annotations
 
-from . import load
+from . import idle, load
 from .duty import CRITICAL_CHARGE, Duty
 from .policy import Policy
 from .supply import LOW_CHARGE
@@ -92,6 +92,10 @@ def reference(policy: Policy) -> str:
         f"swap 已用 {load.SWAP_HOT}/{load.SWAP_WARN}"
     )
     lines.append("# AC 上 strain >= warn 走 busy；内存 hot 时广播一次告警")
+    lines.append(
+        f"# AC 且热区未到 hot 时，禁用退出延迟 > {idle.BUDGET_US}us 的空闲态；"
+        "电池或过热时恢复固件默认"
+    )
     lines.append(f"# 关机 {policy.poweroff} poweroff --no-block，"
                  f"广播 {policy.wall}")
     return "\n".join(lines)
