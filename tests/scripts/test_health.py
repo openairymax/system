@@ -2,9 +2,9 @@
 #
 # AirymaxOS 启动健康自检脚本行为回归测试
 #
-# 在临时根目录中构造 PMEM、MGLRU 与待确认升级标记等真实文件，
+# 在临时根目录中构造 PMEM、MGLRU、PSI 与待确认升级标记等真实文件，
 # 并以 PATH 注入的假 systemctl 与假 rpm-ostree 驱动脚本分支，
-# 验证五项检查、三态计数与六种退出码契约。
+# 验证六项检查、三态计数与六种退出码契约。
 
 from __future__ import annotations
 
@@ -77,6 +77,7 @@ class HealthCase(unittest.TestCase):
         self.log = base / "ostree.log"
         self.fake("systemctl", SYSTEMCTL)
         self.fake("rpm-ostree", OSTREE)
+        self.psi()
 
     def tearDown(self) -> None:
         self.tmp.cleanup()
@@ -125,6 +126,13 @@ class HealthCase(unittest.TestCase):
         node = self.root / "sys" / "kernel" / "mm" / "lru_gen"
         node.mkdir(parents=True, exist_ok=True)
         (node / "enabled").write_text(value + "\n", encoding="utf-8")
+
+    def psi(self) -> None:
+        node = self.root / "proc" / "pressure"
+        node.mkdir(parents=True, exist_ok=True)
+        for name in ("cpu", "memory", "io"):
+            (node / name).write_text("some avg10=0.00 total=0\n",
+                                     encoding="utf-8")
 
 
 class ExitCase(HealthCase):
@@ -244,6 +252,24 @@ class CheckCase(HealthCase):
     def test_no_mglru(self) -> None:
         res = self.run_check()
         self.assertIn("lru_gen not exposed", res.stdout)
+
+    def test_psi_ok(self) -> None:
+        res = self.run_check()
+        self.assertEqual(res.returncode, 0, res.stderr)
+        self.assertIn("PSI: OK", res.stdout)
+
+    def test_psi_partial(self) -> None:
+        (self.root / "proc" / "pressure" / "io").unlink()
+        res = self.run_check()
+        self.assertEqual(res.returncode, 1, res.stderr)
+        self.assertIn("PSI: FAIL (unreadable: io)", res.stderr)
+
+    def test_no_psi(self) -> None:
+        shutil.rmtree(self.root / "proc" / "pressure")
+        res = self.run_check()
+        self.assertEqual(res.returncode, 1, res.stderr)
+        self.assertIn("PSI: FAIL (unreadable: cpu memory io)", res.stderr)
+        self.assertIn("fail=1", res.stdout)
 
 
 class LintCase(unittest.TestCase):

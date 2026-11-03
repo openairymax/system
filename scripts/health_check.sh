@@ -8,7 +8,15 @@
 #   2. agentrt.target 处于 active；
 #   3. 已安装的 agentrt daemon 全部处于 active；
 #   4. 具备 PMEM 设备时 memoryrovol/pmem 已挂载，无设备时跳过；
-#   5. 内核暴露 lru_gen 时 MGLRU 已启用，未暴露时跳过。
+#   5. 内核暴露 lru_gen 时 MGLRU 已启用，未暴露时跳过；
+#   6. PSI 三个压力文件可读。
+#
+# 第 6 项是必需能力而非可选特性：airy-power 以 PSI 的 cpu/memory/io 三路压力
+# 作降档判据，缺 PSI 时它只能退回 loadavg，而 loadavg 对 IO 等待与内存直接
+# 回收不敏感——285H 上本地模型长跑时整机卡死，正是这类压力被判据漏掉的表现。
+# 五份 airy 内核配置都以 openeuler_defconfig 为基底，PSI 默认开启；因此
+# /proc/pressure 缺失只有两种可能：跑了不符合本产品要求的内核，或内核以
+# psi=0 启动。两种都要在启动期暴露，而不是让调度静默降级。
 #
 # 对外只打一行：本脚本是九阶段契约第 9 阶段「自检与取证」的唯一实现，
 # 逐项结论仍写 stdout 供 journal 归因；屏幕上的结论汇总由 ui.sh 落盘，
@@ -55,6 +63,7 @@ readonly PMEM_DEV="${ROOT}/dev/pmem0"
 readonly PMEM_DIR="${STATE}/memoryrovol/pmem"
 readonly MOUNTINFO="${ROOT}/proc/self/mountinfo"
 readonly LRU_FILE="${ROOT}/sys/kernel/mm/lru_gen/enabled"
+readonly PSI_DIR="${ROOT}/proc/pressure"
 readonly MAX_FAILS=3
 readonly DAEMONS=(
     gateway cogn dev sched macro-superv audit
@@ -161,6 +170,18 @@ check_mglru() {
     fi
 }
 
+check_psi() {
+    local node missing=
+    for node in cpu memory io; do
+        [ -r "${PSI_DIR}/${node}" ] || missing="${missing} ${node}"
+    done
+    if [ -n "${missing}" ]; then
+        mark_fail 6 PSI "unreadable:${missing}"
+        return
+    fi
+    mark_pass 6 PSI
+}
+
 drop_pending() {
     if ! rm -f "$PENDING"; then
         printf '[健康检查] 无法清除待确认升级标记\n' >&2
@@ -205,6 +226,7 @@ main() {
     check_daemons
     check_pmem
     check_mglru
+    check_psi
     report
     if ((nfail >= MAX_FAILS)); then
         do_rollback || rc=$?
