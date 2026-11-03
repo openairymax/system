@@ -22,12 +22,18 @@ from collections.abc import Sequence
 
 from . import config, guard
 from .duty import Duty
+from .load import Load
 from .policy import (
     DEFAULT_CHOICES,
     DEFAULT_CPUFREQ,
+    DEFAULT_CPUS,
     DEFAULT_DUTY,
+    DEFAULT_LOADAVG,
+    DEFAULT_MEMINFO,
     DEFAULT_POWEROFF,
+    DEFAULT_PRESS,
     DEFAULT_PROFILE,
+    DEFAULT_PSI,
     DEFAULT_STATE,
     DEFAULT_SUPPLY,
     DEFAULT_THERMAL,
@@ -77,10 +83,15 @@ def _paths() -> tuple[tuple[str, str], ...]:
         ("--profile", "platform_profile 节点"),
         ("--choices", "platform_profile_choices 节点"),
         ("--cpufreq", "cpufreq 根目录"),
+        ("--cpus", "CPU 类目录，用于核数归一"),
         ("--supply", "power_supply 类目录"),
         ("--thermal", "thermal 类目录"),
         ("--throttle", "cpu0/thermal_throttle 目录"),
+        ("--psi", "PSI 根目录"),
+        ("--loadavg", "loadavg 节点"),
+        ("--meminfo", "meminfo 节点"),
         ("--state", "节流增速采样文件"),
+        ("--press", "内存压力状态文件"),
         ("--duty", "低电量动作状态文件"),
         ("--poweroff", "受控关机命令"),
         ("--wall", "低电量广播命令"),
@@ -98,10 +109,15 @@ def _args(argv: Sequence[str] | None) -> argparse.Namespace:
         profile=DEFAULT_PROFILE,
         choices=DEFAULT_CHOICES,
         cpufreq=DEFAULT_CPUFREQ,
+        cpus=DEFAULT_CPUS,
         supply=DEFAULT_SUPPLY,
         thermal=DEFAULT_THERMAL,
         throttle=DEFAULT_THROTTLE,
+        psi=DEFAULT_PSI,
+        loadavg=DEFAULT_LOADAVG,
+        meminfo=DEFAULT_MEMINFO,
         state=DEFAULT_STATE,
+        press=DEFAULT_PRESS,
         duty=DEFAULT_DUTY,
         poweroff=DEFAULT_POWEROFF,
         wall=DEFAULT_WALL,
@@ -118,10 +134,15 @@ def _policy(args: argparse.Namespace) -> Policy:
         profile=args.profile,
         choices=args.choices,
         cpufreq=args.cpufreq,
+        cpus=args.cpus,
         supply=args.supply,
         thermal=args.thermal,
         throttle=args.throttle,
+        psi=args.psi,
+        loadavg=args.loadavg,
+        meminfo=args.meminfo,
         state=args.state,
+        press=args.press,
         duty=args.duty,
         poweroff=args.poweroff,
         wall=args.wall,
@@ -153,6 +174,7 @@ def _emit(found: Report, as_json: bool) -> None:
               f" critical={_limit(zone)} mode={zone.mode or '-'}"
               f" severity={zone.severity.value}")
     print(f"  throttle package={found.heat.package} core={found.heat.core}")
+    print(f"  load {_load(found.load)}")
     for knob in found.knobs:
         print(f"  {knob.name:<20} target={knob.target or '-':<16}"
               f" current={knob.current or '-':<16} {_flag(knob)}")
@@ -164,6 +186,16 @@ def _emit(found: Report, as_json: bool) -> None:
 
 def _percent(charge: int | None) -> str:
     return "-" if charge is None else f"{charge}%"
+
+
+def _load(work: Load) -> str:
+    return (f"origin={work.origin} cpu={_value(work.cpu)}"
+            f" memory={_value(work.memory)} io={_value(work.io)}"
+            f" swap={_value(work.swap)} strain={work.strain.value}")
+
+
+def _value(value: float | None) -> str:
+    return "-" if value is None else f"{value:.1f}%"
 
 
 def _speed(rate: float | None) -> str:

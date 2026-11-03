@@ -2,10 +2,11 @@
 #
 # 电源与温度测试共用的临时机器
 #
-# 判定层与命令行层需要同一棵「带固件档位、cpufreq、热区与节流计数」的临时
-# 机器。把它收在一处，两个测试文件不再各抄一份目录拼装逻辑；默认值取
-# 285H 的现场形状——performance 档位、performance governor、一个贴着
-# critical 门限的热区——用例只需改动自己关心的那一处。
+# 判定层与命令行层需要同一棵「带固件档位、cpufreq、热区、节流计数与负载
+# 采样点」的临时机器。把它收在一处，两个测试文件不再各抄一份目录拼装逻辑；
+# 默认值取 285H 的现场形状——performance 档位、performance governor、一个
+# 贴着 critical 门限的热区——用例只需改动自己关心的那一处。负载默认走
+# proc 回退路径，因为 285H 的内核没有 PSI；需要 PSI 的用例自己造三条节点。
 
 """Shared temporary machine for the power tests."""
 
@@ -38,6 +39,9 @@ class Tree(unittest.TestCase):
         self.zone("x86_pkg_temp", 50000)
         self.cpu()
         self.throttle()
+        self.cores()
+        self.loadavg()
+        self.meminfo()
         self.poweroff = self.fake("poweroff")
         self.wall = self.fake("wall")
 
@@ -46,10 +50,15 @@ class Tree(unittest.TestCase):
             "profile": str(self.profile),
             "choices": str(self.choices),
             "cpufreq": str(self.base / "cpu"),
+            "cpus": str(self.base / "cpus"),
             "supply": str(self.base / "supply"),
             "thermal": str(self.base / "thermal"),
             "throttle": str(self.base / "throttle"),
+            "psi": str(self.base / "psi"),
+            "loadavg": str(self.base / "loadavg"),
+            "meminfo": str(self.base / "meminfo"),
             "state": str(self.base / "state"),
+            "press": str(self.base / "press"),
             "duty": str(self.base / "duty"),
             "poweroff": self.poweroff,
             "wall": self.wall,
@@ -104,6 +113,31 @@ class Tree(unittest.TestCase):
         self._write(path / "package_throttle_count", str(package))
         self._write(path / "core_throttle_count", str(core))
 
+    def cores(self, count: int = 4) -> None:
+        path = self.base / "cpus"
+        for index in range(count):
+            (path / f"cpu{index}").mkdir(parents=True, exist_ok=True)
+
+    def loadavg(self, value: float = 0.10) -> None:
+        self._write(self.base / "loadavg", f"{value:.2f} 0.10 0.10 1/100 1")
+
+    def meminfo(self, total: int = 32000000, available: int = 24000000,
+                swap_total: int = 8000000, swap_free: int = 8000000) -> None:
+        lines = (
+            f"MemTotal:       {total} kB",
+            f"MemAvailable:   {available} kB",
+            f"SwapTotal:      {swap_total} kB",
+            f"SwapFree:       {swap_free} kB",
+        )
+        self._write(self.base / "meminfo", "\n".join(lines))
+
+    def psi(self, cpu: float = 0.0, memory: float = 0.0,
+            io: float = 0.0) -> None:
+        path = self.base / "psi"
+        path.mkdir(parents=True, exist_ok=True)
+        for name, value in (("cpu", cpu), ("memory", memory), ("io", io)):
+            self._write(path / name, _psi_text(value))
+
     def args(self, cmd: str) -> list[str]:
         """把子命令接到本机临时路径上。"""
         return [
@@ -111,10 +145,15 @@ class Tree(unittest.TestCase):
             "--profile", str(self.profile),
             "--choices", str(self.choices),
             "--cpufreq", str(self.base / "cpu"),
+            "--cpus", str(self.base / "cpus"),
             "--supply", str(self.base / "supply"),
             "--thermal", str(self.base / "thermal"),
             "--throttle", str(self.base / "throttle"),
+            "--psi", str(self.base / "psi"),
+            "--loadavg", str(self.base / "loadavg"),
+            "--meminfo", str(self.base / "meminfo"),
             "--state", str(self.base / "state"),
+            "--press", str(self.base / "press"),
             "--duty", str(self.base / "duty"),
             "--poweroff", self.poweroff,
             "--wall", self.wall,
@@ -151,3 +190,9 @@ class Tree(unittest.TestCase):
     @staticmethod
     def _write(path: Path, value: str) -> None:
         path.write_text(f"{value}\n", encoding="ascii")
+
+
+def _psi_text(value: float) -> str:
+    """按内核格式写一条 PSI 节点；判定只读 some 行的 avg10。"""
+    return (f"some avg10={value:.2f} avg60=0.00 avg300=0.00 total=0\n"
+            f"full avg10={value:.2f} avg60=0.00 avg300=0.00 total=0")

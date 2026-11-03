@@ -20,11 +20,9 @@
 
 from __future__ import annotations
 
-import subprocess
 from enum import Enum, unique
-from pathlib import Path
-from typing import Sequence
 
+from . import notify
 from .policy import Policy
 from .supply import LOW_CHARGE, Source
 
@@ -55,33 +53,9 @@ def enforce(duty: Duty, charge: int, policy: Policy) -> None:
     """执行动作；广播只在等级变化时发一次，关机本身是幂等的。"""
     if duty is Duty.NONE:
         return
-    first = _last(policy.duty) != duty.value
-    _store(policy.duty, duty.value)
+    first = notify.last(policy.duty) != duty.value
+    notify.store(policy.duty, duty.value)
     if duty is Duty.POWEROFF:
-        _call(policy.poweroff, ("poweroff", "--no-block"))
+        notify.call(policy.poweroff, ("poweroff", "--no-block"))
     elif first:
-        _call(policy.wall, (MESSAGE % (charge, CRITICAL_CHARGE),))
-
-
-def _call(command: str, args: Sequence[str]) -> None:
-    try:
-        subprocess.run([command, *args], capture_output=True, check=False,
-                       timeout=15)
-    except (OSError, subprocess.SubprocessError):
-        pass
-
-
-def _last(path: str) -> str:
-    try:
-        return Path(path).read_text(encoding="ascii").strip()
-    except OSError:
-        return ""
-
-
-def _store(path: str, value: str) -> None:
-    try:
-        target = Path(path)
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(value + "\n", encoding="ascii")
-    except OSError:
-        pass
+        notify.call(policy.wall, (MESSAGE % (charge, CRITICAL_CHARGE),))
