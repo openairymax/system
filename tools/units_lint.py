@@ -453,6 +453,11 @@ RT_BANDWIDTH = "airy-rt-bandwidth.service"
 # 尚未实例化的 slice 由本单元创建，systemd 之后接管同一目录也不会重置
 # cpu.rt_runtime_us——它不管理这个文件。退出码 1/3 都按失败上报：部分
 # 落地同样是故障，交给 incident 通道而不是降级成一条日志。
+#
+# 内存与换页上限顺带在这里落地：hybrid 层级上 systemd 只记录
+# MemorySwapMax 属性而不写 memory.memsw.limit_in_bytes，只能由 memcap
+# 补齐。放在同一个 oneshot 里而不是另起单元，是因为两者都要求在用户
+# 登录会话建起来之前完成，多一个单元只会多一条启动顺序约束。
 RT_PAIRS: dict[tuple[str, str], str] = {
     ("Unit", "After"): "slices.target",
     ("Unit", "Before"): (
@@ -461,6 +466,7 @@ RT_PAIRS: dict[tuple[str, str], str] = {
     ("Unit", "OnFailure"): "airy-incident@%n.service",
     ("Service", "Type"): "oneshot",
     ("Service", "ExecStart"): "/usr/bin/airy-rt-cap apply",
+    ("Service", "ExecStartPost"): "/usr/bin/airy-rt-cap memcap --apply",
     ("Service", "RemainAfterExit"): "yes",
     ("Service", "TimeoutStartSec"): "60",
     ("Install", "WantedBy"): "multi-user.target",

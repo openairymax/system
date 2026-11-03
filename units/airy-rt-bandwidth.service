@@ -8,6 +8,7 @@ OnFailure=airy-incident@%n.service
 [Service]
 Type=oneshot
 ExecStart=/usr/bin/airy-rt-cap apply
+ExecStartPost=/usr/bin/airy-rt-cap memcap --apply
 RemainAfterExit=yes
 TimeoutStartSec=60
 
