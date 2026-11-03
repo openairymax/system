@@ -454,10 +454,8 @@ RT_BANDWIDTH = "airy-rt-bandwidth.service"
 # cpu.rt_runtime_us——它不管理这个文件。退出码 1/3 都按失败上报：部分
 # 落地同样是故障，交给 incident 通道而不是降级成一条日志。
 #
-# 内存与换页上限顺带在这里落地：hybrid 层级上 systemd 只记录
-# MemorySwapMax 属性而不写 memory.memsw.limit_in_bytes，只能由 memcap
-# 补齐。放在同一个 oneshot 里而不是另起单元，是因为两者都要求在用户
-# 登录会话建起来之前完成，多一个单元只会多一条启动顺序约束。
+# 预算在开机时必然只落 3/4 个 slice（airymax-desktop.slice 登录后才存在），
+# 因此退出码 3 是剖面事实而不是故障，声明为成功；门禁仍按退出码区分。
 RT_PAIRS: dict[tuple[str, str], str] = {
     ("Unit", "After"): "slices.target",
     ("Unit", "Before"): (
@@ -466,9 +464,33 @@ RT_PAIRS: dict[tuple[str, str], str] = {
     ("Unit", "OnFailure"): "airy-incident@%n.service",
     ("Service", "Type"): "oneshot",
     ("Service", "ExecStart"): "/usr/bin/airy-rt-cap apply",
-    ("Service", "ExecStartPost"): "/usr/bin/airy-rt-cap memcap --apply",
+    ("Service", "SuccessExitStatus"): "3",
     ("Service", "RemainAfterExit"): "yes",
     ("Service", "TimeoutStartSec"): "60",
+    ("Install", "WantedBy"): "multi-user.target",
+}
+
+MEMCAP = "airy-rt-memcap.service"
+
+# 换页上限必须是独立单元，不能挂在带宽单元的 ExecStartPost 上：systemd
+# 只在 ExecStart 成功后执行 ExecStartPost，而带宽预算在开机时只落 3/4 个
+# slice，一旦把部分落地判成失败，memsw 就永远停在 infinity（285H 实证）。
+# 上限只依赖 slice 目录，开机即可完整落地；hybrid 层级上 systemd 只记录
+# MemorySwapMax 属性而不写 memory.memsw.limit_in_bytes，只能由 memcap 补。
+MEMCAP_PAIRS: dict[tuple[str, str], str] = {
+    ("Unit", "After"): "slices.target",
+    ("Unit", "Before"): "agentrt.target display-manager.service",
+    ("Unit", "OnFailure"): "airy-incident@%n.service",
+    ("Unit", "ConditionPathExists"): "/usr/bin/airy-rt-cap",
+    ("Service", "Type"): "oneshot",
+    ("Service", "ExecStart"): "/usr/bin/airy-rt-cap memcap --apply",
+    ("Service", "SuccessExitStatus"): "3",
+    ("Service", "RemainAfterExit"): "yes",
+    ("Service", "TimeoutStartSec"): "60",
+    ("Service", "ProtectSystem"): "strict",
+    ("Service", "ProtectHome"): "yes",
+    ("Service", "PrivateTmp"): "yes",
+    ("Service", "NoNewPrivileges"): "yes",
     ("Install", "WantedBy"): "multi-user.target",
 }
 
@@ -674,6 +696,7 @@ UNITS = frozenset(SERVICES) | frozenset(TARGETS) | frozenset(TEMPLATES) | {
     FIRSTBOOT,
     HEALTH,
     LLM,
+    MEMCAP,
     POWER,
     RT_BANDWIDTH,
     UPDATE_CHECK,
@@ -941,6 +964,8 @@ def _body_bad(name: str, cfg: ConfigParser) -> list[str]:
         return _pairs_bad(name, cfg, dict(DISK_HEALTH_PAIRS))
     if name == RT_BANDWIDTH:
         return _pairs_bad(name, cfg, dict(RT_PAIRS))
+    if name == MEMCAP:
+        return _pairs_bad(name, cfg, dict(MEMCAP_PAIRS))
     if name == POWER:
         return _pairs_bad(name, cfg, dict(POWER_PAIRS))
     if name == COEXIST:

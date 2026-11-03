@@ -1,0 +1,37 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# ===========================================================================
+# airy-rt-memcap.service — 补齐 cgroup v1 上 systemd 不写的换页上限
+#
+# 与带宽预算分开成两个单元，是因为两者失败域不同：带宽预算依赖桌面 slice，
+# 登录前必然只落一部分；换页上限只依赖 slice 目录，开机就该完整落地。
+# 曾经把 memcap 挂在带宽单元的 ExecStartPost 上，285H 实测 apply 只落了
+# 3/4 个 slice 便以 3 退出，ExecStartPost 因而从未执行，memsw 停在 infinity
+# 而单元只显示一句「partially applied」——换页治理就这样静默缺席，且从
+# 带宽单元的状态上看不出来。分开后两者各自可重启、可归因。
+#
+# 退出码 3 只表示部分落地：某条 slice 的当前用量已越过目标，写入被守卫
+# 拒绝，等人决定是重启还是先减实例。这在运行中的机器上是正常结局，不是
+# 启动失败；验收门禁直接读退出码，不看本单元的启动结果。
+# ===========================================================================
+
+[Unit]
+Description=Apply AirymaxOS memory and swap ceiling
+Documentation=https://docs.agentrt.local/170-performance/07-rt-matrix
+After=slices.target
+Before=agentrt.target display-manager.service
+ConditionPathExists=/usr/bin/airy-rt-cap
+OnFailure=airy-incident@%n.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/airy-rt-cap memcap --apply
+SuccessExitStatus=3
+RemainAfterExit=yes
+TimeoutStartSec=60
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=multi-user.target
