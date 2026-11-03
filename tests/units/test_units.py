@@ -29,6 +29,7 @@ FIRSTBOOT = "agentrt-firstboot.service"
 UPDATE_CHECK = "airymax-update-check.service"
 UPDATE_TIMER = "airymax-update-check.timer"
 LLM = "airy-llm.service"
+AGENT_SLICE = "airymax-agent.slice"
 DISK_MOUNT = "airy-disk-mount.service"
 DISK_HEALTH = "airy-disk-health.service"
 DISK_TIMER = "airy-disk-health.timer"
@@ -344,6 +345,39 @@ class LlmCase(UnitsCase):
             "CapabilityBoundingSet=CAP_NET_BIND_SERVICE\n",
         )
         self.assert_bad("CapabilityBoundingSet")
+
+
+class SliceCase(UnitsCase):
+    """推理负载的内存边界契约。
+
+    285H 现场三个实例把 RSS 推到 29.5G / 30G 后整机进入 direct reclaim，
+    桌面与 SSH 一起失去响应。边界因此必须存在于 slice 上：推理单元只声明
+    归属，重复声明会让「哪一层在生效」无从判断。
+    """
+
+    def test_slice_missing(self) -> None:
+        (self.root / AGENT_SLICE).unlink()
+        self.assert_bad(f"missing unit {AGENT_SLICE}")
+
+    def test_slice_max(self) -> None:
+        """硬上限抬到整机规模等于没有边界。"""
+        self.edit(AGENT_SLICE, "MemoryMax=90%", "MemoryMax=99%")
+        self.assert_bad("MemoryMax")
+
+    def test_slice_v2_only(self) -> None:
+        """MemoryHigh/MemorySwapMax 在 v1 hybrid 上不落地，不得回流。"""
+        self.edit(AGENT_SLICE, "TasksMax=80%\n",
+                  "TasksMax=80%\nMemoryHigh=75%\n")
+        self.assert_bad("unexpected directive")
+
+    def test_llm_membership(self) -> None:
+        self.edit(LLM, f"Slice={AGENT_SLICE}\n", "")
+        self.assert_bad("Slice")
+
+    def test_llm_dup_limit(self) -> None:
+        """上限只能声明一次：单元与 slice 同时声明必然分叉。"""
+        self.edit(LLM, "TasksMax=512\n", "TasksMax=512\nMemoryMax=90%\n")
+        self.assert_bad("unexpected directive")
 
 
 class DiskCase(UnitsCase):

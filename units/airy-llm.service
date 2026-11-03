@@ -16,6 +16,7 @@ Restart=on-failure
 RestartSec=5s
 TimeoutStopSec=30
 KillMode=mixed
+Slice=airymax-agent.slice
 User=airy
 Group=airy
 SupplementaryGroups=airy-cogn

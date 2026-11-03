@@ -1,0 +1,34 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later OR Apache-2.0
+# ===========================================================================
+# airymax-agent.slice — 模型推理与 agent 负载的内存边界
+#
+# 285H 现场：三个推理实例 RSS 合计 29.5G / 30G，swap 已用 11G，MemFree
+# 只剩 250~380MB。此时每一次分配都要先唤醒 kswapd 或走 direct reclaim，
+# 整机实时延迟出现毫秒级尖峰，桌面与 SSH 会话一起失去响应。根因不是某个
+# 进程申请得太多，而是这些进程没有任何 cgroup 边界：它们的峰值得以吃掉
+# 留给内核、桌面与页缓存的那部分内存。
+#
+# 边界用比例而不是绝对字节：模型尺寸随机型变化，钉死一个值会在换机型时
+# 把本来能跑的模型 OOM 掉；「内核与桌面按机器规模预留一成」与机型无关。
+# 取 MemoryMax 而不是 MemoryHigh：0.0.4 的目标机是 openEuler 24.03 的
+# hybrid 层级（/sys/fs/cgroup 为 tmpfs，memory 控制器走 v1），而
+# MemoryHigh/MemoryLow 是 v2 专有属性，在 v1 上 systemd 不会写
+# memory.soft_limit_in_bytes，写了也不生效。只声明真正会落地的硬上限，
+# 越过时由 OOM killer 在本组内选 victim，而不是让整机陪着一起卡死。
+# 同理不声明 MemorySwapMax：v1 的 memsw 记账需要 swapaccount=1，285H
+# 的 cmdline 没有开，该属性同样只会停在默认值。
+#
+# CPU 权重与桌面 slice 的基线一致（100 对 50）：模型跑满核是正常工作，
+# 不该被压；需要让路时由 airy-rt-coexist 按 CPU 争用把桌面抬到保护档。
+# ===========================================================================
+
+[Unit]
+Description=AirymaxOS model and agent workload slice
+Documentation=https://docs.agentrt.local/170-performance/07-rt-matrix
+Before=slices.target
+
+[Slice]
+CPUWeight=100
+IOWeight=100
+MemoryMax=90%
+TasksMax=80%
