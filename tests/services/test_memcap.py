@@ -67,10 +67,17 @@ class Tree(unittest.TestCase):
         path.write_text(text + "\n", encoding="ascii")
         return path
 
-    def v1(self, usage: str = "0") -> None:
-        """hybrid 层级：memsw 接口齐全，两个 slice 目录已存在。"""
+    def v1(
+        self,
+        usage: str = "0",
+        mem: str = "infinity",
+        memusage: str = "0",
+    ) -> None:
+        """hybrid 层级：memsw 与内存接口齐全，两个 slice 目录已存在。"""
         self.file("memory/memory.memsw.limit_in_bytes", "infinity")
         for home in ("airymax.slice/airymax-agent.slice", "user.slice"):
+            self.file(f"memory/{home}/memory.limit_in_bytes", mem)
+            self.file(f"memory/{home}/memory.usage_in_bytes", memusage)
             self.file(f"memory/{home}/memory.memsw.limit_in_bytes", "infinity")
             self.file(f"memory/{home}/memory.memsw.usage_in_bytes", usage)
 
@@ -118,6 +125,27 @@ class V1Case(Tree):
         self.apply()
         found = self.apply()
         self.assertEqual([item.state for item in found.steps], ["ok"] * 2)
+
+    def test_memory_limit_first(self) -> None:
+        """memsw 不得低于内存上限，先把声明里的 MemoryMax 落地。"""
+        self.v1()
+        self.apply()
+        homes = (
+            ("airymax.slice/airymax-agent.slice", "921600000"),
+            ("user.slice", "870400000"),
+        )
+        for home, want in homes:
+            self.assertEqual(
+                self.value(f"memory/{home}", memcap.V1_MEM), want
+            )
+
+    def test_memory_usage_blocks(self) -> None:
+        self.v1(memusage=str(TOTAL))
+        found = self.apply()
+        self.assertEqual([item.state for item in found.steps], ["tight"] * 2)
+        self.assertEqual(
+            self.value("memory/user.slice", memcap.V1_MEMSW), "infinity"
+        )
 
     def test_inspect_reports_drift(self) -> None:
         self.v1()
