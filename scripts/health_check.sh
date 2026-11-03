@@ -10,6 +10,10 @@
 #   4. 具备 PMEM 设备时 memoryrovol/pmem 已挂载，无设备时跳过；
 #   5. 内核暴露 lru_gen 时 MGLRU 已启用，未暴露时跳过。
 #
+# 对外只打一行：本脚本是九阶段契约第 9 阶段「自检与取证」的唯一实现，
+# 逐项结论仍写 stdout 供 journal 归因；屏幕上的结论汇总由 ui.sh 落盘，
+# pass/fail/skip 三项是真实计数，不是文案。
+#
 # 第 3 项按「unit 的 ExecStart 载荷是否存在」分档：0.0.3 只交付 unit 接口面，
 # daemon 可执行体属于另一个子仓，尚未纳入本版镜像。载荷缺失记跳过（不适用），
 # 载荷在而进程不在记失败，否则「本版不交付」会被误报成「运行故障」。
@@ -25,6 +29,7 @@
 #   3 失败达到阈值，回滚工具不可用（ENOTSUP）
 #   4 回滚已执行，下次启动生效
 #   5 回滚命令执行失败或标记清除失败
+#   6 打印契约库 ui.sh 缺失
 #
 # 环境变量：
 #   AIRY_HEALTH_ROOT     校验根前缀，默认 /（离线镜像校验用）
@@ -32,6 +37,14 @@
 # ===========================================================================
 
 set -euo pipefail
+
+readonly UI_LIB="${AIRY_HEALTH_UI:-${0%/*}/ui.sh}"
+if [ ! -r "${UI_LIB}" ]; then
+    printf '[健康检查] 打印契约库缺失：%s\n' "${UI_LIB}" >&2
+    exit 6
+fi
+# shellcheck source=ui.sh
+. "${UI_LIB}"
 
 readonly BASE="${AIRY_HEALTH_ROOT:-/}"
 readonly ROOT="${BASE%/}"
@@ -176,13 +189,17 @@ do_rollback() {
 }
 
 report() {
-    printf '[健康检查] 通过 %d，失败 %d，跳过 %d\n' \
-        "$npass" "$nfail" "$nskip"
+    local facts="pass=${npass} fail=${nfail} skip=${nskip}"
+    if ((nfail > 0)); then
+        ui_fail 自检与取证 "${facts}"
+    else
+        ui_ok 自检与取证 "${facts}"
+    fi
 }
 
 main() {
     local rc=0
-    printf '[健康检查] 开始\n'
+    ui_step 9 9 自检与取证
     check_kernel
     check_target
     check_daemons

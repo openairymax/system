@@ -133,7 +133,7 @@ class ExitCase(HealthCase):
     def test_pass(self) -> None:
         res = self.run_check()
         self.assertEqual(res.returncode, 0, res.stderr)
-        self.assertIn("失败 0", res.stdout)
+        self.assertIn("fail=0", res.stdout)
 
     def test_clear(self) -> None:
         mark = self.pending()
@@ -147,7 +147,8 @@ class ExitCase(HealthCase):
         res = self.run_check(FAKE_DOWN="agentrt-mem.service")
         self.assertEqual(res.returncode, 1, res.stderr)
         self.assertTrue(mark.exists())
-        self.assertIn("失败 1", res.stdout)
+        self.assertIn("FAIL", res.stdout)
+        self.assertIn("fail=1", res.stdout)
 
     def test_threshold(self) -> None:
         self.pmem()
