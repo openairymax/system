@@ -233,9 +233,10 @@ def bounds(unitdir: str, meminfo: str = DEFAULT_MEMINFO) -> list[Bound]:
 def _layout(root: str) -> tuple[str, Path, str]:
     """识别记账布局，返回（类型，memory 根目录，换页上限文件名）。
 
-    v1 未开 swapaccount 时 memsw 接口整组缺失，换页上限无从落地；这是
-    内核命令行缺 ``swapaccount=1``，与「文件在但写入被拒」是两种故障，
-    分别报 absent 与写入未生效，排障时才不会绕到权限上。
+    memsw 接口整组缺失说明内核没有编入换页记账，换页上限无从落地；
+    这与「文件在但写入被拒」是两种故障，分别报 absent 与写入未生效，
+    排障时才不会绕到权限上。285H 属于后者：文件齐全、记账正常，只是
+    systemd 在 hybrid 层级上不写。
     """
     base = Path(root)
     if (base / CONTROLLERS).is_file():
