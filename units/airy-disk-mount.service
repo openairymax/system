@@ -7,7 +7,7 @@ OnFailure=airy-incident@%n.service
 
 [Service]
 Type=oneshot
-ExecStart=/usr/bin/airy-disk mount
+ExecStart=/usr/lib/airymaxos/scripts/stage_run.sh 数据分区 4 - /usr/bin/airy-disk mount
 # 退出码 4 是「本机未启用数据分区」：0.0.3 及更早装成的系统没有 /data，
 # 缺记录不是故障。不把 4 当作成功会让这类机器每次开机都留一个 failed
 # 单元并触发 airy-incident@，真正需要修的挂载失败反而被噪声淹没。

@@ -7,7 +7,7 @@ OnFailure=airy-incident@%n.service
 
 [Service]
 Type=oneshot
-ExecStart=/usr/lib/airymaxos/scripts/power_stage.sh
+ExecStart=/usr/lib/airymaxos/scripts/stage_run.sh 电源与热治理 3 landed,cap,severity,charge /usr/bin/airy-power apply
 SuccessExitStatus=3
 TimeoutStartSec=60
 ProtectSystem=strict

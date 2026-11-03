@@ -31,7 +31,7 @@ OnFailure=airy-incident@%n.service
 
 [Service]
 Type=oneshot
-ExecStart=/usr/bin/airy-rt-cap memcap --apply
+ExecStart=/usr/lib/airymaxos/scripts/stage_run.sh 换页上限 3 layout,steps /usr/bin/airy-rt-cap memcap --apply
 SuccessExitStatus=3
 TimeoutStartSec=60
 ProtectSystem=strict
