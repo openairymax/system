@@ -74,7 +74,7 @@ PRESSED = "hot"
 
 RELEASED = "ok"
 
-MESSAGE = ("AirymaxOS 内存压力升高（回收停顿 %s，swap 已用 %s）；"
+MESSAGE = ("AirymaxOS 整机负载进入热区（CPU %s，内存 %s，swap %s）；"
            "本地模型长任务可能把整机拖入交换抖动，"
            "请减少常驻模型或扩容内存")
 
@@ -131,15 +131,19 @@ def grade(value: float | None, warn: float, hot: float) -> Severity:
 
 
 def alert(policy: Policy, work: Load) -> None:
-    """内存压力到 hot 时广播一次；回落后复位，下一次升高再报。"""
-    pressed = _memory(work).rank >= Severity.HOT.rank
+    """负载到 hot 时广播一次；回落后复位，下一次升高再报。
+
+    判据与档位共用 work.strain，不另立一套「什么算压力」：285H 现场内存
+    尚有余量而 swap 已用六成，只看内存就会既不抬档也不告警。
+    """
+    pressed = work.strain.rank >= Severity.HOT.rank
     state = PRESSED if pressed else RELEASED
     if notify.last(policy.press) == state:
         return
     notify.store(policy.press, state)
     if pressed:
-        notify.call(policy.wall,
-                    (MESSAGE % (_text(work.memory), _text(work.swap)),))
+        notify.call(policy.wall, (MESSAGE % (
+            _text(work.cpu), _text(work.memory), _text(work.swap)),))
 
 
 def _cpu(work: Load) -> Severity:

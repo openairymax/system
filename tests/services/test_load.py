@@ -135,6 +135,14 @@ class AlertTest(Tree):
         guard.apply(self.policy())
         self.assertEqual(len(self.calls("wall")), 2)
 
+    def test_swap_alone_presses(self) -> None:
+        """内存有余量但 swap 过线时同样告警，判据与档位共用 strain。"""
+        self.meminfo(swap_total=1000, swap_free=200)
+        guard.apply(self.policy())
+        wall = self.calls("wall")
+        self.assertEqual(len(wall), 1)
+        self.assertIn("swap 80.0%", wall[0])
+
     def test_inspect_silent(self) -> None:
         self.psi(memory=70.0)
         guard.inspect(self.policy())
