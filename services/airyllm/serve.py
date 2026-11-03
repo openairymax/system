@@ -8,6 +8,11 @@
 #
 # 监听地址固定回环：本机模型只服务本机的 agent 运行时，对外暴露等于把
 # 无认证的推理端点交给整个网段。
+#
+# 常驻量同样由本层给出：权重必须整份驻留，引擎与默认上下文的 KV 缓存另加
+# 一份地板。地板取 2 GiB，来自 285H 上 27B 单 slot 实例的实测差值——RSS
+# 18.5 G、权重约 16.5 G。多 slot 会在这之上继续叠加，那部分由 slice 的
+# 硬上限兜底；准入要挡的是「权重加地板都装不下还硬起」，不猜并发规模。
 
 """AirymaxOS inference engine launch parameters (K-20-11).
 
@@ -25,7 +30,8 @@ from pathlib import Path
 from . import model
 from .failure import Failure
 
-__all__ = ["HOST", "MODEL_SUFFIX", "PORT", "argv", "model_path"]
+__all__ = ["FLOOR", "HOST", "MODEL_SUFFIX", "PORT", "argv", "model_path",
+           "need"]
 
 HOST = "127.0.0.1"
 
@@ -34,6 +40,8 @@ PORT = 11435
 MODEL_SUFFIX = ".gguf"
 
 GPU_LAYERS = 999
+
+FLOOR = 2 << 30
 
 
 def model_path(entry: model.Manifest, home: Path) -> Path:
@@ -83,3 +91,19 @@ def argv(entry: model.Manifest, backend: model.Backend,
 def _layers(backend: model.Backend) -> int:
     """加速后端卸载全部层，CPU 后端显式卸载零层。"""
     return 0 if backend is model.Backend.CPU else GPU_LAYERS
+
+
+def need(entry: model.Manifest) -> int:
+    """估算一个实例的常驻量，供启动前准入判定使用。
+
+    只把「一定会驻留」的部分加起来：全部资产字节数与引擎地板。并发放大
+    不在此估计——并发规模由调用方现场决定，猜一个只会让判定失去依据。
+
+    Args:
+        entry: 已通过校验的清单。
+
+    Returns:
+        预计常驻字节数。
+    """
+    return sum(asset.size for asset in entry.assets) + FLOOR
+
