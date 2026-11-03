@@ -13,6 +13,9 @@ ExecStart=/usr/lib/airymaxos/scripts/stage_run.sh 数据分区 4 - /usr/bin/airy
 # 单元并触发 airy-incident@，真正需要修的挂载失败反而被噪声淹没。
 SuccessExitStatus=4
 RemainAfterExit=yes
+# 慢盘上挂载真的会跑满两分钟，预期上限必须跟着单元超时走到 120 秒，
+# 否则心跳一边走、上限一边提前宣告超时，现场无法判断该等还是该动。
+Environment=AIRY_STAGE_LIMIT=120
 TimeoutStartSec=120
 
 [Install]
