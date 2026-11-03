@@ -22,6 +22,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 __all__ = [
+    "AGENT_SLICE",
     "COEXIST",
     "FIRSTBOOT",
     "SERVICES",
@@ -532,11 +533,28 @@ CHECK_PAIRS: dict[tuple[str, str], str] = {
 
 LLM = "airy-llm.service"
 
+AGENT_SLICE = "airymax-agent.slice"
+
+# 推理单元的峰值内存取决于权重尺寸，绝对值上限会在换机型时把能跑的模型
+# 杀掉；比例上限则与机型无关，且正是 285H 需要的约束——现场三个实例把
+# RSS 推到 29.5G / 30G 后，整机进入 direct reclaim，桌面与 SSH 一起失去
+# 响应。只声明 v1 hybrid 上真正会落地的 MemoryMax：MemoryHigh 是 v2 专有
+# 属性，在 v1 上根本不写 memory.soft_limit_in_bytes，声明了只会制造
+# 「看起来有软限」的假象。层级由 Slice= 指定，上限只在 slice 上声明一处，
+# 推理单元自身不再重复 MemoryMax。
+AGENT_SLICE_PAIRS: dict[tuple[str, str], str] = {
+    ("Unit", "Description"): "AirymaxOS model and agent workload slice",
+    ("Unit", "Before"): "slices.target",
+    ("Slice", "CPUWeight"): "100",
+    ("Slice", "IOWeight"): "100",
+    ("Slice", "MemoryMax"): "90%",
+    ("Slice", "TasksMax"): "80%",
+}
+
 # 推理单元不是 agentrt 的 daemon：它只消费首启准备好的清单与资产，不参与
-# 依赖矩阵，也不申请任何 capability。内存与 CPU 不设上限——模型加载与
-# 推理的峰值取决于权重尺寸，按机型拍一个值只会在换机型时被 OOM 杀掉；
-# 需要限额的部署用单元 drop-in 覆盖。PrivateDevices 不能开：GPU 后端
-# 依赖 /dev 下的设备节点。
+# 依赖矩阵，也不申请任何 capability。内存上限由 airymax-agent.slice 统一
+# 声明，单元自身只声明归属；PrivateDevices 不能开：GPU 后端依赖 /dev 下的
+# 设备节点。
 LLM_PAIRS: dict[tuple[str, str], str] = {
     ("Unit", "After"): "agentrt-firstboot.service",
     ("Unit", "Requires"): "agentrt-firstboot.service",
@@ -552,6 +570,7 @@ LLM_PAIRS: dict[tuple[str, str], str] = {
     ("Service", "RestartSec"): "5s",
     ("Service", "TimeoutStopSec"): "30",
     ("Service", "KillMode"): "mixed",
+    ("Service", "Slice"): AGENT_SLICE,
     ("Service", "User"): "airy",
     ("Service", "Group"): "airy",
     ("Service", "SupplementaryGroups"): "airy-cogn",
@@ -620,6 +639,7 @@ TIMERS: dict[str, dict[tuple[str, str], str]] = {
 }
 
 UNITS = frozenset(SERVICES) | frozenset(TARGETS) | frozenset(TEMPLATES) | {
+    AGENT_SLICE,
     COEXIST,
     DISK_HEALTH,
     DISK_MOUNT,
@@ -631,7 +651,7 @@ UNITS = frozenset(SERVICES) | frozenset(TARGETS) | frozenset(TEMPLATES) | {
     UPDATE_CHECK,
 } | frozenset(TIMERS)
 
-_SECTIONS = frozenset({"Unit", "Service", "Timer", "Install"})
+_SECTIONS = frozenset({"Unit", "Service", "Slice", "Timer", "Install"})
 _META = frozenset({
     ("Unit", "Description"),
     ("Unit", "Documentation"),
@@ -901,6 +921,8 @@ def _body_bad(name: str, cfg: ConfigParser) -> list[str]:
         return _check_bad(name, cfg)
     if name == LLM:
         return _llm_bad(name, cfg)
+    if name == AGENT_SLICE:
+        return _pairs_bad(name, cfg, dict(AGENT_SLICE_PAIRS))
     if name in TIMERS:
         return _timer_bad(name, cfg)
     return _incident_bad(name, cfg)
