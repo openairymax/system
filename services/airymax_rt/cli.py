@@ -4,8 +4,9 @@
 #
 # 子命令对应三张契约表：status/apply/config 管实时带宽，matrix/coexist 管
 # 能力探测与桌面共存，memcap 补上 systemd 在 v1 层级上不写的那一半内存
-# 天花板。启动单元与验收门禁共用同一份判定实现，避免「启动时写成功、
-# 门禁读失败」的两套口径；能力矩阵同理，探测与报告只此一处。
+# 天花板，admit 在启动前决定新实例装不装得下。启动单元与验收门禁共用同一
+# 份判定实现，避免「启动时写成功、门禁读失败」的两套口径；能力矩阵同理，
+# 探测与报告只此一处。
 #
 # 退出码：0 表示已全部落地、内核不限预算或整机满足完整实时；3 表示部分
 # 落地或仅有软实时；1 表示未通过且没有任何 slice 落地或完全不具备实时；
@@ -27,7 +28,7 @@ import json
 import sys
 from collections.abc import Sequence
 
-from . import bandwidth, coexist, config, matrix, memcap
+from . import admit, bandwidth, coexist, config, matrix, memcap
 from .policy import (
     DEFAULT_CGROUP,
     DEFAULT_PERIOD,
@@ -37,9 +38,11 @@ from .policy import (
 )
 from .report import Report, State
 
-__all__ = ["EXIT_FAIL", "EXIT_PARTIAL", "main"]
+__all__ = ["EXIT_FAIL", "EXIT_PARTIAL", "EXIT_USAGE", "main"]
 
 EXIT_FAIL = 1
+
+EXIT_USAGE = 2
 
 EXIT_PARTIAL = 3
 
@@ -55,6 +58,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _coexist(args)
     if args.cmd == "memcap":
         return _memcap(args)
+    if args.cmd == "admit":
+        return _admit(args)
     policy = _policy(args)
     if args.cmd == "config":
         sys.stdout.write(config.reference())
@@ -153,6 +158,18 @@ def _opt() -> argparse.ArgumentParser:
         default=argparse.SUPPRESS,
         help="单元目录（内存上限的声明来源）",
     )
+    opt.add_argument(
+        "--need",
+        metavar="SIZE",
+        default=argparse.SUPPRESS,
+        help="新实例预计占用（准入判定）",
+    )
+    opt.add_argument(
+        "--meminfo",
+        metavar="FILE",
+        default=argparse.SUPPRESS,
+        help="meminfo 路径（准入判定的内存来源）",
+    )
     return opt
 
 
@@ -175,6 +192,8 @@ def _args(argv: Sequence[str] | None) -> argparse.Namespace:
         pressure=coexist.DEFAULT_PRESSURE,
         loadavg=coexist.DEFAULT_LOADAVG,
         unitdir=memcap.DEFAULT_UNITDIR,
+        need="",
+        meminfo=admit.DEFAULT_MEMINFO,
         apply=False,
     )
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -195,6 +214,9 @@ def _args(argv: Sequence[str] | None) -> argparse.Namespace:
     )
     sub.add_parser(
         "memcap", parents=[_opt()], help="补齐内存与换页上限"
+    )
+    sub.add_parser(
+        "admit", parents=[_opt()], help="判定新实例能否装入"
     )
     return parser.parse_args(argv)
 
@@ -228,6 +250,17 @@ def _memcap(args: argparse.Namespace) -> int:
         found = memcap.inspect(args.cgroup, args.unitdir)
     _show_mem(found, args.json)
     return _memcode(found)
+
+
+def _admit(args: argparse.Namespace) -> int:
+    """准入只判不驱逐：拒绝时给出缺口，已在跑的实例一个都不动。"""
+    need = admit.size(args.need)
+    if need <= 0:
+        sys.stderr.write("airy-rt-cap: 需要 --need SIZE，例如 --need 12G\n")
+        return EXIT_USAGE
+    found = admit.check(need, args.meminfo, args.unitdir)
+    _show_admit(found, args.json)
+    return 0 if found.state == admit.FIT else EXIT_PARTIAL
 
 
 def _roots(args: argparse.Namespace) -> matrix.Roots:
@@ -334,6 +367,23 @@ def _show_mem(found: memcap.Report, as_json: bool) -> None:
         )
         if item.note:
             print(f"note   {item.path} {item.note}")
+
+
+def _show_admit(found: admit.Verdict, as_json: bool) -> None:
+    if as_json:
+        print(json.dumps(found.dump(), ensure_ascii=False))
+        return
+    print(
+        f"{MARK} admit={found.state} need={found.need}"
+        f" free={found.free} short={found.short}"
+    )
+    print(
+        f"total  {found.total}  avail {found.avail}"
+        f"  reserve {found.keep}  swap {found.swap}"
+    )
+    if found.note:
+        print(f"note   {found.note}")
+    print(f"advice {admit.advice(found.state)}")
 
 
 def _memcode(found: memcap.Report) -> int:
