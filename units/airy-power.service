@@ -7,7 +7,7 @@ OnFailure=airy-incident@%n.service
 
 [Service]
 Type=oneshot
-ExecStart=/usr/bin/airy-power apply
+ExecStart=/usr/lib/airymaxos/scripts/power_stage.sh
 SuccessExitStatus=3
 TimeoutStartSec=60
 ProtectSystem=strict
