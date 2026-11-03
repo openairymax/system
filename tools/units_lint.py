@@ -612,6 +612,8 @@ LLM_PAIRS: dict[tuple[str, str], str] = {
     ("Service", "ExecStart"): "/usr/bin/airy-model serve",
     ("Service", "Restart"): "on-failure",
     ("Service", "RestartSec"): "5s",
+    # 准入拒绝(75)与资产缺失(78)是确定结论，重试只会在更紧的内存里再撞一次。
+    ("Service", "RestartPreventExitStatus"): "75 78",
     ("Service", "TimeoutStopSec"): "30",
     ("Service", "KillMode"): "mixed",
     ("Service", "Slice"): AGENT_SLICE,

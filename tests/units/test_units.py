@@ -352,6 +352,11 @@ class LlmCase(UnitsCase):
         )
         self.assert_bad("CapabilityBoundingSet")
 
+    def test_llm_refusal_not_retried(self) -> None:
+        """准入拒绝与资产缺失是确定结论，不能被重启策略反复放大。"""
+        self.edit(LLM, "RestartPreventExitStatus=75 78\n", "")
+        self.assert_bad("RestartPreventExitStatus")
+
 
 class SliceCase(UnitsCase):
     """推理负载的内存边界契约。
