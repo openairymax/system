@@ -365,10 +365,16 @@ TARGETS: dict[str, Target] = {
     ),
 }
 
+# 失败处理模板必须自己先能起来。285H 现场：数据盘挂载失败触发本模板，
+# 本模板因 airyctl 未装、airy 账户不存在而失败，于是「一次失败」变成
+# 「两条 failed 单元」，桌面就绪探针再据此判整机未就绪。0.0.4 只交付
+# 单元接口面，airyctl 与账户属于 agentrt 载荷，尚未进入本版镜像；缺载荷
+# 时报跳过而不是失败，原始失败单元仍在 systemctl --failed 里可见。
 TEMPLATES: dict[str, tuple[tuple[str, str, str], ...]] = {
     "airy-incident@.service": (
         ("Unit", "Description", "Handle failure of %i"),
         ("Unit", "After", "%i"),
+        ("Unit", "ConditionPathExists", "/usr/sbin/airyctl"),
         ("Service", "Type", "oneshot"),
         (
             "Service",
