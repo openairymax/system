@@ -19,12 +19,14 @@ from dataclasses import dataclass
 __all__ = [
     "BUSY",
     "COOL",
+    "DEFAULT_BEAT",
     "DEFAULT_CHOICES",
     "DEFAULT_CPUFREQ",
     "DEFAULT_CPUS",
     "DEFAULT_DUTY",
     "DEFAULT_LOADAVG",
     "DEFAULT_MEMINFO",
+    "DEFAULT_PAUSE",
     "DEFAULT_POWEROFF",
     "DEFAULT_PRESS",
     "DEFAULT_PROFILE",
@@ -66,6 +68,10 @@ DEFAULT_STATE = "/run/airy-power/throttle"
 DEFAULT_PRESS = "/run/airy-power/pressure"
 
 DEFAULT_DUTY = "/run/airy-power/duty"
+
+DEFAULT_BEAT = "/run/airy-power/beat"
+
+DEFAULT_PAUSE = "/run/airy-power/pause"
 
 DEFAULT_POWEROFF = "/usr/bin/systemctl"
 
@@ -118,6 +124,8 @@ class Policy:
     state: str = DEFAULT_STATE
     press: str = DEFAULT_PRESS
     duty: str = DEFAULT_DUTY
+    beat: str = DEFAULT_BEAT
+    pause: str = DEFAULT_PAUSE
     poweroff: str = DEFAULT_POWEROFF
     wall: str = DEFAULT_WALL
     ac: Tuning = NORMAL_AC

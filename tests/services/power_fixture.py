@@ -60,6 +60,8 @@ class Tree(unittest.TestCase):
             "state": str(self.base / "state"),
             "press": str(self.base / "press"),
             "duty": str(self.base / "duty"),
+            "beat": str(self.base / "beat"),
+            "pause": str(self.base / "pause"),
             "poweroff": self.poweroff,
             "wall": self.wall,
         }
@@ -182,6 +184,8 @@ class Tree(unittest.TestCase):
             "--state", str(self.base / "state"),
             "--press", str(self.base / "press"),
             "--duty", str(self.base / "duty"),
+            "--beat", str(self.base / "beat"),
+            "--pause", str(self.base / "pause"),
             "--poweroff", self.poweroff,
             "--wall", self.wall,
         ]
