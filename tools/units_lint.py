@@ -515,12 +515,17 @@ POWER = "airy-power.service"
 # ProtectSystem=strict 不覆盖 /dev、/proc、/sys，sysfs 写入照常。节流采样
 # 落在 /run/airy-power，oneshot 每次退出都会回收运行时目录；Preserve=yes
 # 才能把上一次的计数留到下一次，否则每轮都当作首次采样，永远算不出增速。
+#
+# ExecStart 指向 power_stage.sh 而不是 airy-power 本体：阶段 6 的结论行必须
+# 与九阶段契约同源，而 airy-power 是 Python 入口、无法 source ui.sh。脚本只
+# 做取值与分档，阶段名与列宽仍由 ui.sh 的表持有；一次开机只打一行由
+# ui_gate 保证，标记落本单元的运行时目录（Preserve=yes 使其跨重跑留存）。
 POWER_PAIRS: dict[tuple[str, str], str] = {
     ("Unit", "After"): "sysinit.target",
     ("Unit", "Before"): "agentrt.target display-manager.service",
     ("Unit", "OnFailure"): "airy-incident@%n.service",
     ("Service", "Type"): "oneshot",
-    ("Service", "ExecStart"): "/usr/bin/airy-power apply",
+    ("Service", "ExecStart"): "/usr/lib/airymaxos/scripts/power_stage.sh",
     ("Service", "SuccessExitStatus"): "3",
     ("Service", "TimeoutStartSec"): "60",
     ("Service", "RuntimeDirectory"): "airy-power",

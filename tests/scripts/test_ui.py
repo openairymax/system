@@ -183,5 +183,47 @@ class Case(unittest.TestCase):
         self.assertEqual(len(out.stdout.splitlines()), 1)
 
 
+class GateCase(Case):
+    """一次开机只打一行的看门。"""
+
+    def gate(
+        self,
+        name: str = "电源与热治理",
+        state: str | None = None,
+    ) -> subprocess.CompletedProcess:
+        res = self.run_ui(
+            f'ui_gate "{name}"',
+            UI_STATE=state or str(self.dir / "ui"),
+        )
+        return res
+
+    def test_first(self) -> None:
+        res = self.gate()
+        self.assertEqual(res.returncode, 0, res.stderr)
+        self.assertTrue((self.dir / "ui" / "6").exists())
+
+    def test_second(self) -> None:
+        self.assertEqual(self.gate().returncode, 0)
+        self.assertEqual(self.gate().returncode, 1)
+
+    def test_unknown(self) -> None:
+        res = self.gate("不存在的阶段")
+        self.assertEqual(res.returncode, 5, res.stderr)
+        self.assertIn("阶段名不在契约表", res.stderr)
+
+    def test_unwritable(self) -> None:
+        state = "/proc/airy-no-such/ui"
+        self.assertEqual(self.gate(state=state).returncode, 0)
+        self.assertEqual(self.gate(state=state).returncode, 0)
+
+    def test_runtime_dir(self) -> None:
+        res = self.run_ui(
+            'ui_gate "电源与热治理"',
+            RUNTIME_DIRECTORY=str(self.dir / "run"),
+        )
+        self.assertEqual(res.returncode, 0, res.stderr)
+        self.assertTrue((self.dir / "run" / "6").exists())
+
+
 if __name__ == "__main__":
     sys.exit(unittest.main())
