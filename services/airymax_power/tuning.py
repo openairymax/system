@@ -21,6 +21,7 @@ from enum import Enum, unique
 from pathlib import Path
 
 from . import sysfs
+from .ceiling import Ceiling
 from .policy import Policy, Tuning
 
 __all__ = ["Knob", "State", "apply", "inspect", "verdict"]
@@ -34,6 +35,10 @@ GOV_SET = "scaling_available_governors"
 EPP = "energy_performance_preference"
 
 EPP_SET = "energy_performance_available_preferences"
+
+CAP = "max_perf_pct"
+
+NO_TURBO = "no_turbo"
 
 
 @unique
@@ -65,16 +70,18 @@ class _Spec:
     allow: Path | None
 
 
-def inspect(policy: Policy, wanted: Tuning) -> tuple[Knob, ...]:
+def inspect(policy: Policy, wanted: Tuning,
+            found: Ceiling) -> tuple[Knob, ...]:
     """只读检查，不写任何节点。"""
-    return tuple(_knob(spec) for spec in _specs(policy, wanted))
+    return tuple(_knob(spec) for spec in _specs(policy, wanted, found))
 
 
-def apply(policy: Policy, wanted: Tuning) -> tuple[Knob, ...]:
+def apply(policy: Policy, wanted: Tuning,
+          found: Ceiling) -> tuple[Knob, ...]:
     """写入未落地的控制点，再整体回读。"""
-    for spec in _specs(policy, wanted):
+    for spec in _specs(policy, wanted, found):
         _push(spec)
-    return inspect(policy, wanted)
+    return inspect(policy, wanted, found)
 
 
 def verdict(knobs: tuple[Knob, ...]) -> State:
@@ -87,10 +94,14 @@ def verdict(knobs: tuple[Knob, ...]) -> State:
     return State.PARTIAL if landed else State.FAILED
 
 
-def _specs(policy: Policy, wanted: Tuning) -> tuple[_Spec, ...]:
+def _specs(policy: Policy, wanted: Tuning,
+           found: Ceiling) -> tuple[_Spec, ...]:
     specs = [
         _Spec(PROFILE, (wanted.profile,), Path(policy.profile),
               Path(policy.choices)),
+        _Spec(CAP, (str(found.cap),), Path(policy.pstate) / CAP, None),
+        _Spec(NO_TURBO, (str(1 - found.turbo),), Path(policy.pstate) / NO_TURBO,
+              None),
     ]
     for entry in _policies(Path(policy.cpufreq)):
         specs.append(_Spec(f"{entry.name}/governor", wanted.governors,

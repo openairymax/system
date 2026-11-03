@@ -21,11 +21,13 @@ import json
 from collections.abc import Sequence
 
 from . import config, guard
+from .ceiling import RECOVER, Ceiling
 from .cooling import FAN, Cooling
 from .duty import Duty
 from .load import Load
 from .policy import (
     DEFAULT_BEAT,
+    DEFAULT_CEIL,
     DEFAULT_CHOICES,
     DEFAULT_CPUFREQ,
     DEFAULT_CPUS,
@@ -37,6 +39,7 @@ from .policy import (
     DEFAULT_PRESS,
     DEFAULT_PROFILE,
     DEFAULT_PSI,
+    DEFAULT_PSTATE,
     DEFAULT_STATE,
     DEFAULT_SUPPLY,
     DEFAULT_THERMAL,
@@ -88,6 +91,7 @@ def _paths() -> tuple[tuple[str, str], ...]:
         ("--choices", "platform_profile_choices 节点"),
         ("--cpufreq", "cpufreq 根目录"),
         ("--cpus", "CPU 类目录，用于核数归一"),
+        ("--pstate", "intel_pstate 根目录"),
         ("--supply", "power_supply 类目录"),
         ("--thermal", "thermal 类目录"),
         ("--throttle", "cpu0/thermal_throttle 目录"),
@@ -95,6 +99,7 @@ def _paths() -> tuple[tuple[str, str], ...]:
         ("--loadavg", "loadavg 节点"),
         ("--meminfo", "meminfo 节点"),
         ("--state", "节流增速采样文件"),
+        ("--ceil", "性能上限滞回状态文件"),
         ("--press", "内存压力状态文件"),
         ("--duty", "低电量动作状态文件"),
         ("--beat", "周期心跳文件"),
@@ -116,6 +121,7 @@ def _args(argv: Sequence[str] | None) -> argparse.Namespace:
         choices=DEFAULT_CHOICES,
         cpufreq=DEFAULT_CPUFREQ,
         cpus=DEFAULT_CPUS,
+        pstate=DEFAULT_PSTATE,
         supply=DEFAULT_SUPPLY,
         thermal=DEFAULT_THERMAL,
         throttle=DEFAULT_THROTTLE,
@@ -123,6 +129,7 @@ def _args(argv: Sequence[str] | None) -> argparse.Namespace:
         loadavg=DEFAULT_LOADAVG,
         meminfo=DEFAULT_MEMINFO,
         state=DEFAULT_STATE,
+        ceil=DEFAULT_CEIL,
         press=DEFAULT_PRESS,
         duty=DEFAULT_DUTY,
         beat=DEFAULT_BEAT,
@@ -143,6 +150,7 @@ def _policy(args: argparse.Namespace) -> Policy:
         choices=args.choices,
         cpufreq=args.cpufreq,
         cpus=args.cpus,
+        pstate=args.pstate,
         supply=args.supply,
         thermal=args.thermal,
         throttle=args.throttle,
@@ -150,6 +158,7 @@ def _policy(args: argparse.Namespace) -> Policy:
         loadavg=args.loadavg,
         meminfo=args.meminfo,
         state=args.state,
+        ceil=args.ceil,
         press=args.press,
         duty=args.duty,
         beat=args.beat,
@@ -178,12 +187,16 @@ def _emit(found: Report, as_json: bool) -> None:
           f" charge={_percent(found.charge)} duty={found.duty.value}"
           f" severity={found.severity.value}"
           f" rate={_speed(found.rate)}"
+          f" cap={found.ceiling.cap}% turbo={_turbo(found.ceiling)}"
           f" landed={found.landed}/{found.present}")
     for zone in found.heat.zones:
         print(f"  zone {zone.name} {zone.celsius:.1f}C"
               f" critical={_limit(zone)} mode={zone.mode or '-'}"
               f" severity={zone.severity.value}")
     print(f"  throttle package={found.heat.package} core={found.heat.core}")
+    print(f"  ceiling rung={found.ceiling.rung} cap={found.ceiling.cap}%"
+          f" turbo={_turbo(found.ceiling)}"
+          f" strikes={found.ceiling.strikes}/{RECOVER}")
     print(f"  load {_load(found.load)}")
     if found.pause is not None:
         print(f"  pause {_pause(found.pause)}")
@@ -199,6 +212,10 @@ def _emit(found: Report, as_json: bool) -> None:
 
 def _percent(charge: int | None) -> str:
     return "-" if charge is None else f"{charge}%"
+
+
+def _turbo(found: Ceiling) -> str:
+    return "on" if found.turbo else "off"
 
 
 def _load(work: Load) -> str:

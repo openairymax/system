@@ -20,6 +20,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from . import throttle
+from .ceiling import Ceiling
 from .cooling import Cooling
 from .duty import Duty
 from .load import Load
@@ -40,6 +41,7 @@ class Report:
     knobs: tuple[Knob, ...]
     load: Load
     cool: Cooling
+    ceiling: Ceiling
     pause: Pause | None = None
     rate: float | None = None
     duty: Duty = Duty.NONE
@@ -63,6 +65,7 @@ class Report:
             "charge": self.charge,
             "duty": self.duty.value,
             "severity": self.severity.value,
+            "ceiling": _ceiling(self.ceiling),
             "present": self.present,
             "landed": self.landed,
             "package_throttle": self.heat.package,
@@ -87,6 +90,15 @@ def _zone(zone: Zone) -> dict[str, object]:
         "critical": None if zone.critical is None else zone.critical / 1000,
         "mode": zone.mode,
         "severity": zone.severity.value,
+    }
+
+
+def _ceiling(found: Ceiling) -> dict[str, object]:
+    return {
+        "rung": found.rung,
+        "cap": found.cap,
+        "turbo": found.turbo,
+        "strikes": found.strikes,
     }
 
 

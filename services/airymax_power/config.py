@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 from . import idle, load, stall
+from .ceiling import LADDER, RECOVER
 from .duty import CRITICAL_CHARGE, Duty
 from .policy import Policy
 from .supply import LOW_CHARGE
@@ -92,6 +93,16 @@ def reference(policy: Policy) -> str:
         f"swap 已用 {load.SWAP_HOT}/{load.SWAP_WARN}"
     )
     lines.append("# AC 上 strain >= warn 走 busy；内存 hot 时广播一次告警")
+    lines.append(
+        "# 性能上限取热余量、节流增速与负载中最严重的一档，按 "
+        + " → ".join(f"{item.cap}%/turbo={'on' if item.turbo else 'off'}"
+                     for item in LADDER)
+        + " 落地（由紧到松）；电池或弱供电侧整体压一阶"
+    )
+    lines.append(
+        f"# 上限升阶需连续 {RECOVER} 次评估都给出更宽松结论，"
+        "降阶立即生效；状态记在 /run，重启后按当前结论直接落地"
+    )
     lines.append(
         f"# AC 且热区未到 hot 时，禁用退出延迟 > {idle.BUDGET_US}us 的空闲态；"
         "电池或过热时恢复固件默认"
