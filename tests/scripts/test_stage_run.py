@@ -1,10 +1,10 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later OR Apache-2.0
 #
-# AirymaxOS 阶段 6「电源与热治理」入口回归测试
+# AirymaxOS 开机阶段运行器回归测试
 #
-# 以桩 airy-power 提供首行结论与退出码，桩 logger 承接契约库的日志调用，
-# 验证分档、取值、一次开机只打一行与退出码透传。桩只复刻对外接口
-# （stdout 首行、退出码），不复制 airy-power 的任何判据。
+# 以桩工具提供首行结论与退出码，桩 logger 承接契约库的日志调用，验证分档、
+# 取值、一次开机只打一行、参数校验与退出码透传。桩只复刻对外接口（stdout
+# 首行、退出码），不复制任何子命令的判据。
 
 from __future__ import annotations
 
@@ -20,12 +20,13 @@ sys.path.insert(0, str(ROOT / "tools"))
 
 import units_lint  # noqa: E402
 
-SCRIPT = ROOT / "scripts" / "power_stage.sh"
+SCRIPT = ROOT / "scripts" / "stage_run.sh"
 
 FIRST = (
     "airy-power: state=ready source=ac charge=97% duty=40% severity=ok"
     " rate=schedutil cap=100% turbo=on landed=49/49"
 )
+STAGE = "电源与热治理"
 
 TOOL = """#!/usr/bin/env bash
 set -euo pipefail
@@ -59,12 +60,11 @@ class StageCase(unittest.TestCase):
         self.state = base / "ui"
         self.console = base / "console"
 
-    def run_stage(self, first: str, rc: int = 0, **env2: str):
+    def run_stage(self, *args: str, first: str = FIRST, rc: int = 0, **env2: str):
         env = dict(os.environ)
         env["PATH"] = f"{self.bin}{os.pathsep}{env['PATH']}"
         env.update(
             {
-                "AIRY_POWER_TOOL": str(self.tool),
                 "FAKE_FIRST": first,
                 "FAKE_RC": str(rc),
                 "FAKE_JOURNAL": str(self.journal),
@@ -75,51 +75,69 @@ class StageCase(unittest.TestCase):
         )
         env.update(env2)
         return subprocess.run(
-            ["bash", str(SCRIPT)],
+            ["bash", str(SCRIPT), *args],
             capture_output=True,
             text=True,
             env=env,
             check=False,
         )
 
+    def stage(self, notes: str = "3", keys: str = "landed,cap,severity,charge", **kw):
+        return self.run_stage(STAGE, notes, keys, str(self.tool), **kw)
+
     def test_ok(self) -> None:
-        res = self.run_stage(FIRST)
+        res = self.stage()
         self.assertEqual(res.returncode, 0, res.stderr)
-        self.assertIn("[ 6/9 ] 电源与热治理", res.stdout)
         self.assertIn(
             "[ 6/9 ] 电源与热治理    ok   landed=49/49 cap=100%"
             " severity=ok charge=97%",
             res.stdout,
         )
 
-    def test_hot(self) -> None:
-        res = self.run_stage(FIRST, rc=3)
+    def test_note(self) -> None:
+        res = self.stage(first=FIRST, rc=3)
         self.assertEqual(res.returncode, 3, res.stderr)
         self.assertIn("note", res.stdout)
         self.assertIn("severity=ok", res.stdout)
 
-    def test_down(self) -> None:
-        res = self.run_stage(FIRST, rc=1)
+    def test_fail(self) -> None:
+        res = self.stage(first=FIRST, rc=1)
         self.assertEqual(res.returncode, 1, res.stderr)
         self.assertIn("FAIL", res.stdout)
         self.assertIn("rc=1", res.stdout)
 
     def test_once(self) -> None:
-        self.assertEqual(self.run_stage(FIRST).returncode, 0)
-        res = self.run_stage(FIRST)
+        self.assertEqual(self.stage().returncode, 0)
+        res = self.stage()
         self.assertEqual(res.returncode, 0, res.stderr)
         self.assertNotIn("[ 6/9 ]", res.stdout)
         self.assertTrue((self.state / "6").exists())
 
+    def test_order(self) -> None:
+        res = self.stage(keys="charge,landed")
+        self.assertEqual(res.returncode, 0, res.stderr)
+        self.assertIn("ok   charge=97% landed=49/49\n", res.stdout)
+
     def test_no_facts(self) -> None:
-        res = self.run_stage("airy-power: state=ready")
+        res = self.stage(keys="-")
         self.assertEqual(res.returncode, 0, res.stderr)
         self.assertIn("[ 6/9 ] 电源与热治理    ok\n", res.stdout)
 
     def test_raw(self) -> None:
-        res = self.run_stage(FIRST)
+        res = self.stage()
         self.assertIn("zone cpu=1", res.stdout)
         self.assertTrue(self.journal.exists())
+
+    def test_usage(self) -> None:
+        res = self.run_stage(STAGE, "3")
+        self.assertEqual(res.returncode, 64, res.stderr)
+        self.assertEqual(res.stdout, "")
+
+    def test_unknown(self) -> None:
+        res = self.run_stage("桌面美容", "3", "-", str(self.tool))
+        self.assertEqual(res.returncode, 5, res.stderr)
+        self.assertNotIn("[ 6/9 ]", res.stdout)
+        self.assertIn("不在契约表", res.stderr)
 
 
 class LintCase(unittest.TestCase):

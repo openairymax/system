@@ -430,7 +430,10 @@ DISK_MOUNT_PAIRS: dict[tuple[str, str], str] = {
     ("Unit", "Before"): "agentrt.target multi-user.target",
     ("Unit", "OnFailure"): "airy-incident@%n.service",
     ("Service", "Type"): "oneshot",
-    ("Service", "ExecStart"): "/usr/bin/airy-disk mount",
+    ("Service", "ExecStart"): (
+        "/usr/lib/airymaxos/scripts/stage_run.sh"
+        " 数据分区 4 - /usr/bin/airy-disk mount"
+    ),
     # 4 是「本机未启用数据分区」：0.0.3 及更早装成的系统没有 /data，缺记录
     # 不是故障，与 airy-disk-health 的 ConditionPathIsMountPoint 同一口径。
     ("Service", "SuccessExitStatus"): "4",
@@ -472,7 +475,10 @@ RT_PAIRS: dict[tuple[str, str], str] = {
     ),
     ("Unit", "OnFailure"): "airy-incident@%n.service",
     ("Service", "Type"): "oneshot",
-    ("Service", "ExecStart"): "/usr/bin/airy-rt-cap apply",
+    ("Service", "ExecStart"): (
+        "/usr/lib/airymaxos/scripts/stage_run.sh 运行时带宽 3 state,applied"
+        " /usr/bin/airy-rt-cap apply"
+    ),
     ("Service", "SuccessExitStatus"): "3",
     ("Service", "RemainAfterExit"): "yes",
     ("Service", "TimeoutStartSec"): "60",
@@ -495,7 +501,10 @@ MEMCAP_PAIRS: dict[tuple[str, str], str] = {
     ("Unit", "OnFailure"): "airy-incident@%n.service",
     ("Unit", "ConditionPathExists"): "/usr/bin/airy-rt-cap",
     ("Service", "Type"): "oneshot",
-    ("Service", "ExecStart"): "/usr/bin/airy-rt-cap memcap --apply",
+    ("Service", "ExecStart"): (
+        "/usr/lib/airymaxos/scripts/stage_run.sh 换页上限 3 layout,steps"
+        " /usr/bin/airy-rt-cap memcap --apply"
+    ),
     ("Service", "SuccessExitStatus"): "3",
     ("Service", "TimeoutStartSec"): "60",
     ("Service", "ProtectSystem"): "strict",
@@ -516,16 +525,20 @@ POWER = "airy-power.service"
 # 落在 /run/airy-power，oneshot 每次退出都会回收运行时目录；Preserve=yes
 # 才能把上一次的计数留到下一次，否则每轮都当作首次采样，永远算不出增速。
 #
-# ExecStart 指向 power_stage.sh 而不是 airy-power 本体：阶段 6 的结论行必须
-# 与九阶段契约同源，而 airy-power 是 Python 入口、无法 source ui.sh。脚本只
-# 做取值与分档，阶段名与列宽仍由 ui.sh 的表持有；一次开机只打一行由
-# ui_gate 保证，标记落本单元的运行时目录（Preserve=yes 使其跨重跑留存）。
+# ExecStart 一律经由 stage_run.sh 而不是工具本体：阶段结论行必须与九阶段
+# 契约同源，而各工具是 Python 入口、无法 source ui.sh。运行器只做取值与
+# 分档，阶段名、序号与列宽仍由 ui.sh 的表持有；一次开机只打一行由
+# ui_gate 保证，标记落 tmpfs。参数依次是阶段名、按 note 上报的退出码、
+# 要搬进阶段行的键，其余原样交给工具。
 POWER_PAIRS: dict[tuple[str, str], str] = {
     ("Unit", "After"): "sysinit.target",
     ("Unit", "Before"): "agentrt.target display-manager.service",
     ("Unit", "OnFailure"): "airy-incident@%n.service",
     ("Service", "Type"): "oneshot",
-    ("Service", "ExecStart"): "/usr/lib/airymaxos/scripts/power_stage.sh",
+    ("Service", "ExecStart"): (
+        "/usr/lib/airymaxos/scripts/stage_run.sh 电源与热治理 3"
+        " landed,cap,severity,charge /usr/bin/airy-power apply"
+    ),
     ("Service", "SuccessExitStatus"): "3",
     ("Service", "TimeoutStartSec"): "60",
     ("Service", "RuntimeDirectory"): "airy-power",
@@ -550,7 +563,10 @@ COEXIST_PAIRS: dict[tuple[str, str], str] = {
     ("Unit", "Before"): "display-manager.service",
     ("Unit", "ConditionPathExists"): "/usr/bin/airy-rt-cap",
     ("Service", "Type"): "oneshot",
-    ("Service", "ExecStart"): "/usr/bin/airy-rt-cap coexist --apply",
+    ("Service", "ExecStart"): (
+        "/usr/lib/airymaxos/scripts/stage_run.sh 桌面与 RT 共存 -"
+        " mode,weight,current,applied /usr/bin/airy-rt-cap coexist --apply"
+    ),
     ("Service", "TimeoutStartSec"): "60",
     ("Service", "ProtectSystem"): "strict",
     ("Service", "ProtectHome"): "yes",

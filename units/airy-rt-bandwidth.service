@@ -18,7 +18,7 @@ OnFailure=airy-incident@%n.service
 
 [Service]
 Type=oneshot
-ExecStart=/usr/bin/airy-rt-cap apply
+ExecStart=/usr/lib/airymaxos/scripts/stage_run.sh 运行时带宽 3 state,applied /usr/bin/airy-rt-cap apply
 SuccessExitStatus=3
 RemainAfterExit=yes
 TimeoutStartSec=60

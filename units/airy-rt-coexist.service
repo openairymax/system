@@ -20,7 +20,7 @@ ConditionPathExists=/usr/bin/airy-rt-cap
 
 [Service]
 Type=oneshot
-ExecStart=/usr/bin/airy-rt-cap coexist --apply
+ExecStart=/usr/lib/airymaxos/scripts/stage_run.sh 桌面与 RT 共存 - mode,weight,current,applied /usr/bin/airy-rt-cap coexist --apply
 TimeoutStartSec=60
 ProtectSystem=strict
 ProtectHome=yes
