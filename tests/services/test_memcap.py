@@ -173,6 +173,32 @@ class V1Case(Tree):
         self.assertIn("memsw", found.steps[0].note)
 
 
+class PageCase(Tree):
+    """上限按页对齐：内核向下取整，目标不对齐会把落地误判成 absent。"""
+
+    def align(self) -> None:
+        self.meminfo.write_text(
+            "MemTotal:       1000003 kB\n", encoding="ascii"
+        )
+
+    def test_bounds_aligned(self) -> None:
+        self.align()
+        found = memcap.bounds(str(self.units), str(self.meminfo))
+        self.assertEqual(len(found), 2)
+        for item in found:
+            self.assertEqual(item.mem % memcap._page(), 0)
+            self.assertEqual(item.total % memcap._page(), 0)
+
+    def test_apply_aligned(self) -> None:
+        self.align()
+        self.v1()
+        found = self.apply()
+        self.assertEqual([item.state for item in found.steps], ["applied"] * 2)
+        for home in ("airymax.slice/airymax-agent.slice", "user.slice"):
+            text = self.value(f"memory/{home}", memcap.V1_MEMSW)
+            self.assertEqual(int(text, 10) % memcap._page(), 0)
+
+
 class V2Case(Tree):
     """统一层级上 systemd 已写好，正常路径只核对。"""
 

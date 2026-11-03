@@ -36,6 +36,7 @@
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -166,19 +167,34 @@ def _scan(path: Path) -> dict[str, str]:
     return found
 
 
+def _page() -> int:
+    """内核按页记账，写进去的上限会被取整到页边界。"""
+    try:
+        return os.sysconf("SC_PAGE_SIZE")
+    except (AttributeError, OSError, ValueError):
+        return 4096
+
+
 def _bytes(text: str | None, total: int) -> int | None:
-    """把百分比或绝对字节换成字节数；无法判读时返回 None。"""
+    """把百分比或绝对字节换成字节数；无法判读时返回 None。
+
+    目标先按页向下对齐：285H 实测写入 29324840140 回读 29324836864，
+    差值不足一页是内核取整而不是写入失败，不对齐会把每次落地都误判成
+    absent，运维看到的就是「写了也不生效」。
+    """
     if not text:
         return None
     if text.endswith("%"):
         try:
-            return total * int(text[:-1], 10) // 100
+            value = total * int(text[:-1], 10) // 100
         except ValueError:
             return None
-    try:
-        return int(text, 10)
-    except ValueError:
-        return None
+    else:
+        try:
+            value = int(text, 10)
+        except ValueError:
+            return None
+    return value - value % _page()
 
 
 def _total(meminfo: str) -> int:
