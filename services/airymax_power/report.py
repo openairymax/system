@@ -2,8 +2,8 @@
 #
 # 电源与温度报告
 #
-# 一次评估的结论由六块证据组成：供电来源、电池电量、热状态、节流增速、
-# 整机负载、控制点落地情况。六者各自有独立结论，不能压缩成单一布尔值——
+# 一次评估的结论由七块证据组成：供电来源、电池电量、热状态、节流增速、
+# 整机负载、散热设备、控制点落地情况。七者各自有独立结论，不能压缩成单一布尔值——
 # 「档位写不进去」和「写进去了但机器已经很热」是两类不同的故障，现场处置
 # 完全不同；电量解释了「为什么在电池上还选了最省电档」；节流增速则补上
 # 温度看不到的功耗墙限速；负载解释了「温度不高为什么还要加档」——285H 的
@@ -19,6 +19,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from . import throttle
+from .cooling import Cooling
 from .duty import Duty
 from .load import Load
 from .supply import Source
@@ -36,6 +37,7 @@ class Report:
     heat: Thermal
     knobs: tuple[Knob, ...]
     load: Load
+    cool: Cooling
     rate: float | None = None
     duty: Duty = Duty.NONE
 
@@ -64,6 +66,7 @@ class Report:
             "core_throttle": self.heat.core,
             "throttle_rate": _round(self.rate),
             "load": self.load.dump(),
+            "cooling": self.cool.dump(),
             "zones": [_zone(zone) for zone in self.heat.zones],
             "knobs": [_knob(knob) for knob in self.knobs],
         }

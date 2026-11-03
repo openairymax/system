@@ -107,6 +107,16 @@ class Tree(unittest.TestCase):
         self._write(path / "energy_performance_available_preferences",
                     "performance balance_performance balance_power power")
 
+    def device(self, index: int, label: str = "Fan", limit: int = 1,
+               state: str | None = "0") -> None:
+        """铺一个散热设备；state=None 表示 cur_state 读不出来（285H 现场）。"""
+        path = self.base / "thermal" / f"cooling_device{index}"
+        path.mkdir(parents=True, exist_ok=True)
+        self._write(path / "type", label)
+        self._write(path / "max_state", str(limit))
+        if state is not None:
+            self._write(path / "cur_state", state)
+
     def throttle(self, package: int = 0, core: int = 0) -> None:
         path = self.base / "throttle"
         path.mkdir(parents=True, exist_ok=True)

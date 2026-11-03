@@ -29,7 +29,7 @@
 
 from __future__ import annotations
 
-from . import idle, load, supply, thermal, throttle, tuning
+from . import cooling, idle, load, supply, thermal, throttle, tuning
 from .duty import Duty, decide, enforce
 from .policy import Policy, Tuning
 from .report import Report
@@ -57,6 +57,7 @@ def assess(policy: Policy, push: bool) -> Report:
     level = supply.charge(policy)
     heat = thermal.collect(policy)
     work = load.sample(policy)
+    cool = cooling.collect(policy)
     speed = throttle.rate(throttle.measure(_total(heat)),
                           throttle.load(policy.state))
     action = decide(source, level)
@@ -71,7 +72,7 @@ def assess(policy: Policy, push: bool) -> Report:
     else:
         knobs = tuning.inspect(policy, wanted) + idle.inspect(policy, cap)
     return Report(tuning.verdict(knobs), source, level, heat, knobs, work,
-                  speed, action)
+                  cool, speed, action)
 
 
 def _cap(source: Source, heat: Severity) -> bool:

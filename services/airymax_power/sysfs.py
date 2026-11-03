@@ -47,6 +47,13 @@ def write_text(path: Path, value: str) -> bool:
 
 
 def order(path: Path) -> tuple[int, str]:
-    """按名字尾部序号排序，thermal_zone2 排在 thermal_zone10 之前。"""
-    tail = path.name.rpartition("_")[2]
-    return (int(tail) if tail.isdigit() else 0, path.name)
+    """按名字尾部序号排序，thermal_zone2 排在 thermal_zone10 之前。
+
+    序号一律取名字末尾的连续数字，而不是最后一个下划线之后的部分：
+    thermal_zone2、cooling_device2、state2 的序号都在「_」之后还带着词干，
+    按词干取会把它们全部折成 0，最终退化成字典序，出现 zone10 在 zone2
+    之前、证据顺序与硬件编号对不上的现场报告。
+    """
+    stem = path.name.rstrip("0123456789")
+    tail = path.name[len(stem):]
+    return (int(tail) if tail else 0, path.name)
