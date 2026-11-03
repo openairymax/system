@@ -365,8 +365,13 @@ class SliceCase(UnitsCase):
         self.edit(AGENT_SLICE, "MemoryMax=90%", "MemoryMax=99%")
         self.assert_bad("MemoryMax")
 
+    def test_slice_swap(self) -> None:
+        """换页上限放宽到内存上限之外，超额页又会转进 swap。"""
+        self.edit(AGENT_SLICE, "MemorySwapMax=10%", "MemorySwapMax=90%")
+        self.assert_bad("MemorySwapMax")
+
     def test_slice_v2_only(self) -> None:
-        """MemoryHigh/MemorySwapMax 在 v1 hybrid 上不落地，不得回流。"""
+        """MemoryHigh 在 v1 hybrid 上不落地，不得回流。"""
         self.edit(AGENT_SLICE, "TasksMax=80%\n",
                   "TasksMax=80%\nMemoryHigh=75%\n")
         self.assert_bad("unexpected directive")
@@ -404,6 +409,11 @@ class DropinCase(UnitsCase):
         """会话池抬到整机规模等于没有边界。"""
         self.edit(SESSION, "MemoryMax=85%", "MemoryMax=99%")
         self.assert_bad("MemoryMax")
+
+    def test_dropin_swap(self) -> None:
+        """会话池的换页上限同样只能收紧，不能放宽。"""
+        self.edit(SESSION, "MemorySwapMax=15%", "MemorySwapMax=85%")
+        self.assert_bad("MemorySwapMax")
 
     def test_dropin_v2_only(self) -> None:
         """MemoryHigh 在 v1 hybrid 上不落地，不得混进会话池。"""

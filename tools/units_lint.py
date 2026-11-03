@@ -540,16 +540,19 @@ AGENT_SLICE = "airymax-agent.slice"
 # 推理单元的峰值内存取决于权重尺寸，绝对值上限会在换机型时把能跑的模型
 # 杀掉；比例上限则与机型无关，且正是 285H 需要的约束——现场三个实例把
 # RSS 推到 29.5G / 30G 后，整机进入 direct reclaim，桌面与 SSH 一起失去
-# 响应。只声明 v1 hybrid 上真正会落地的 MemoryMax：MemoryHigh 是 v2 专有
-# 属性，在 v1 上根本不写 memory.soft_limit_in_bytes，声明了只会制造
-# 「看起来有软限」的假象。层级由 Slice= 指定，上限只在 slice 上声明一处，
-# 推理单元自身不再重复 MemoryMax。
+# 响应。只声明 v1 hybrid 上真正会落地的属性：MemoryHigh 是 v2 专有属性，
+# 在 v1 上根本不写 memory.soft_limit_in_bytes，声明了只会制造「看起来有
+# 软限」的假象；MemorySwapMax 则落成 memory.memsw.limit_in_bytes，实测
+# 该文件可写、组内 swap 记账非零，因此换页上限必须与内存上限一起声明，
+# 否则超额页只是被换出，整机仍在换出与缺页之间打转。上限只在 slice 上
+# 声明一处，推理单元自身不再重复 MemoryMax。
 AGENT_SLICE_PAIRS: dict[tuple[str, str], str] = {
     ("Unit", "Description"): "AirymaxOS model and agent workload slice",
     ("Unit", "Before"): "slices.target",
     ("Slice", "CPUWeight"): "100",
     ("Slice", "IOWeight"): "100",
     ("Slice", "MemoryMax"): "90%",
+    ("Slice", "MemorySwapMax"): "10%",
     ("Slice", "TasksMax"): "80%",
 }
 
@@ -607,9 +610,12 @@ SESSION_DROPIN = "user.slice.d/50-airymax-memory.conf"
 # 会话池是所有用户会话 scope 的共同父节点：AirymaxRT 直接 exec 出来的推理
 # 进程不在任何单元里，只有这一层能兜住。85% 留一成半给内核、system.slice
 # 与回写；硬上限只声明 MemoryMax，理由同 airymax-agent.slice（v1 hybrid 不
-# 落地 MemoryHigh）。上层就是不设上限的 root cgroup，改这里等于改整机。
+# 落地 MemoryHigh）。换页上限按同样的比例补齐到物理内存一整个：只限内存时
+# 超额页会转进 swap（285H 实测组内 13.8G），整机仍在换页路径上失速。
+# 上层就是不设上限的 root cgroup，改这里等于改整机。
 SESSION_PAIRS: dict[tuple[str, str], str] = {
     ("Slice", "MemoryMax"): "85%",
+    ("Slice", "MemorySwapMax"): "15%",
 }
 
 DROPINS: dict[str, dict[tuple[str, str], str]] = {

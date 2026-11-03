@@ -15,8 +15,14 @@
 # MemoryHigh/MemoryLow 是 v2 专有属性，在 v1 上 systemd 不会写
 # memory.soft_limit_in_bytes，写了也不生效。只声明真正会落地的硬上限，
 # 越过时由 OOM killer 在本组内选 victim，而不是让整机陪着一起卡死。
-# 同理不声明 MemorySwapMax：v1 的 memsw 记账需要 swapaccount=1，285H
-# 的 cmdline 没有开，该属性同样只会停在默认值。
+#
+# 只限内存会留下一个洞：越过上限的页并不会被拒绝，而是被换出去。285H 实测
+# 会话 scope 的 swap 记账 13.8G，整机 swap 16G 几乎见底，回收路径于是长期
+# 在「换出—再缺页」之间往返，这正是整机 stall 而不是单进程失败的由来。
+# 6.6 内核的 memsw 记账默认可用：memory.memsw.limit_in_bytes 可写，
+# memory.stat 的 swap 字段按组非零，因此 MemorySwapMax 在 hybrid 层级上会
+# 落成 memsw 上限。取 10%，内存与换页合计不超过物理内存一整个，常驻不超过
+# 九成：模型跑不进这个预算时，代价是本组内一个实例被 OOM，而不是整机失联。
 #
 # CPU 权重与桌面 slice 的基线一致（100 对 50）：模型跑满核是正常工作，
 # 不该被压；需要让路时由 airy-rt-coexist 按 CPU 争用把桌面抬到保护档。
@@ -31,4 +37,5 @@ Before=slices.target
 CPUWeight=100
 IOWeight=100
 MemoryMax=90%
+MemorySwapMax=10%
 TasksMax=80%
