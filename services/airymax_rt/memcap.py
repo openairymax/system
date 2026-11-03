@@ -25,10 +25,16 @@
 # 把内存上限压到单元声明的 MemoryMax（已一致就跳过），第二步才是合计
 # 上限。systemd 之后接管这个 slice 时写的是同一个值，不会与这里打架。
 #
-# 写入前先比对当前用量：目标低于已用量时拒绝写入并报 tight。memsw 上限
-# 一旦低于在用量，内核会当场回收或 OOM，把一条配置动作变成一次事故——这
-# 是「装完包就杀掉正在跑的模型」的那条路径，必须由守卫拦住，交给人决定
-# 是重启还是先减实例。
+# 写入前先比对当前用量：目标低于已用量时不得把上限压到用量以下，memsw 上限
+# 一旦低于在用量，内核会当场回收或 OOM，把一条配置动作变成一次事故——这是
+# 「装完包就杀掉正在跑的模型」的那条路径。
+#
+# 但也不能因此什么都不做。285H 现场：声明目标 31 GiB，memsw 在用量 40.6 GiB，
+# 守卫于是永久拒写，换页从此没有任何上界，整机在全局回收里停住两三分钟。
+# 折中做法是「只用余量封顶」：上限取 max(目标, 在用量 + 余量)，且绝不高于
+# 现值——每轮只允许收紧、不允许放松，用量回落后自然收敛到目标。写入值永远
+# 不低于在用量，因此不会触发当场回收；越过封顶的增长被挡在组内，代价是一个
+# 实例被杀，而不是整机停顿。只读判定仍报 tight，因为限额确实不在目标上。
 #
 # 设计依据：docs-linux/170-performance/07-rt-matrix.md §5.1~§5.3。
 
@@ -47,6 +53,8 @@ __all__ = [
     "DEFAULT_MEMINFO",
     "DEFAULT_ROOT",
     "DEFAULT_UNITDIR",
+    "HEADROOM_PCT",
+    "HELD",
     "OK",
     "TIGHT",
     "Bound",
@@ -95,7 +103,13 @@ DIFFERS = "differs"
 
 TIGHT = "tight"
 
+HELD = "held"
+
 ABSENT = "absent"
+
+# 封顶余量：声明上限的百分比。取太小会把正常增长也挡在组内，取太大会让
+# 封顶失去意义；按整机内存的百分之几留出一次推理请求的峰值即可。
+HEADROOM_PCT = 5
 
 
 @dataclass(frozen=True, slots=True)
@@ -273,12 +287,22 @@ def _put(path: Path, value: int) -> bool:
     return _read(path) == value
 
 
+def _hold(want: int, usage: int, head: int, have: int | None) -> int:
+    """封顶值：不低于在用量、不高于现值，只在目标之上保留一份余量。"""
+    target = want if want > usage + head else usage + head
+    if have is not None and have < target:
+        target = have
+    target -= target % _page()
+    return usage if target < usage else target
+
+
 def _ceil(
     home: Path,
     name: str,
     want: int,
     usage: int | None,
     plan: bool,
+    head: int = 0,
 ) -> Step:
     """把单个上限调到 want；已一致、超用、未落地各有一种结论。"""
     path = home / name
@@ -288,7 +312,15 @@ def _ceil(
     if have == want:
         return Step(name, want, have, usage, OK)
     if usage is not None and usage > want:
-        return Step(name, want, have, usage, TIGHT, "在用量已超目标")
+        if not plan or head <= 0:
+            return Step(name, want, have, usage, TIGHT, "在用量已超目标")
+        want = _hold(want, usage, head, have)
+        if have == want:
+            return Step(name, want, have, usage, HELD, "现值已在封顶之内")
+        if not _put(path, want):
+            return Step(name, want, _read(path), usage, ABSENT, "写入未生效")
+        note = "在用量已超目标，按现值加余量封顶"
+        return Step(name, want, _read(path), usage, HELD, note)
     if not plan:
         return Step(name, want, have, usage, DIFFERS)
     if not _put(path, want):
@@ -303,14 +335,14 @@ def _merge(mem: Step | None, swap: Step) -> str:
     states = {swap.state}
     if mem is not None:
         states.add(mem.state)
-    for state in (DIFFERS, APPLIED):
+    for state in (HELD, DIFFERS, APPLIED):
         if state in states:
             return state
     return OK
 
 
 def _step(root: Path, file: str, item: Bound, plan: bool) -> Step:
-    """处理一个 slice：先压低内存上限，再设合计上限，超用时停手。"""
+    """处理一个 slice：先压低内存上限，再设合计上限，超用时封顶。"""
     home = root / item.path
     if not home.is_dir():
         try:
@@ -319,22 +351,25 @@ def _step(root: Path, file: str, item: Bound, plan: bool) -> Step:
             return Step(
                 item.path, item.total, None, None, ABSENT, "目录不可创建"
             )
+    head = item.total * HEADROOM_PCT // 100
     if file == V1_MEMSW:
         mem = _ceil(
-            home, V1_MEM, item.mem, _read(home / V1_MEM_USAGE), plan
+            home, V1_MEM, item.mem, _read(home / V1_MEM_USAGE), plan, head
         )
         if mem.state in (ABSENT, TIGHT):
             note = f"{mem.note}（{V1_MEM}）"
             return Step(
-                item.path, item.mem, mem.have, mem.usage, mem.state, note
+                item.path, mem.want, mem.have, mem.usage, mem.state, note
             )
-        want, usage = item.total, _read(home / V1_USAGE)
+        landed = mem.have if mem.have is not None else mem.want
+        want, usage = landed + item.swap, _read(home / V1_USAGE)
     else:
         mem = None
         want, usage = item.swap, None
-    swap = _ceil(home, file, want, usage, plan)
+    swap = _ceil(home, file, want, usage, plan, head)
     note = swap.note or (mem.note if mem is not None else "")
-    return Step(item.path, want, swap.have, usage, _merge(mem, swap), note)
+    return Step(item.path, swap.want, swap.have, swap.usage,
+                _merge(mem, swap), note)
 
 
 def _report(
@@ -373,5 +408,5 @@ def apply(
     unitdir: str = DEFAULT_UNITDIR,
     meminfo: str = DEFAULT_MEMINFO,
 ) -> Report:
-    """落地上限并回读；在用量已超目标时保持原值并报 tight。"""
+    """落地上限并回读；在用量已超目标时按现值加余量封顶。"""
     return _report(root, unitdir, meminfo, True)

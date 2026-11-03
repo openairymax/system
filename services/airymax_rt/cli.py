@@ -340,7 +340,12 @@ def _memcode(found: memcap.Report) -> int:
     """记账树缺失按未通过，任何一条没落地按部分落地。"""
     if not found.layout:
         return EXIT_FAIL
-    failed = (memcap.ABSENT, memcap.DIFFERS, memcap.TIGHT)
+    failed = (
+        memcap.ABSENT,
+        memcap.DIFFERS,
+        memcap.TIGHT,
+        memcap.HELD,
+    )
     if not found.steps or any(found.count(state) for state in failed):
         return EXIT_PARTIAL
     return 0
