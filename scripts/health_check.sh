@@ -220,7 +220,7 @@ report() {
 
 main() {
     local rc=0
-    ui_step 9 9 自检与取证
+    ui_begin 自检与取证
     check_kernel
     check_target
     check_daemons

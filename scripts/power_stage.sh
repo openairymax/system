@@ -69,7 +69,7 @@ emit() {
     shift
 
     ui_gate "${STAGE}" || return 0
-    ui_step 6 9 "${STAGE}"
+    ui_begin "${STAGE}"
     case "${rc}" in
     0) ui_ok "${STAGE}" "$@" ;;
     3) ui_note "${STAGE}" "$@" ;;
