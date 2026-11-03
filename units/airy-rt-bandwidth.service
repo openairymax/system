@@ -1,3 +1,14 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# ===========================================================================
+# airy-rt-bandwidth.service — 实时带宽预算
+#
+# 退出码 3 表示部分落地：airymax-desktop.slice 在登录后才存在，开机时
+# 必然只落 3/4 个 slice，这是剖面事实而不是启动失败。门禁直接读退出码
+# 判定，单元侧声明为成功，否则每次启动都会留下 failed 与一条 incident。
+# 换页上限不在本单元：它只依赖 slice 目录，开机就该完整落地，挂在
+# ExecStartPost 上会被这里的部分落地连带跳过（airy-rt-memcap.service）。
+# ===========================================================================
+
 [Unit]
 Description=Apply AirymaxOS Real-Time Bandwidth Budget
 Documentation=https://docs.agentrt.local/100-operations/02-configuration
@@ -8,7 +19,7 @@ OnFailure=airy-incident@%n.service
 [Service]
 Type=oneshot
 ExecStart=/usr/bin/airy-rt-cap apply
-ExecStartPost=/usr/bin/airy-rt-cap memcap --apply
+SuccessExitStatus=3
 RemainAfterExit=yes
 TimeoutStartSec=60
 
