@@ -69,6 +69,14 @@ class JudgeTest(unittest.TestCase):
         self.assertIsNone(found.step)
         self.assertIn("blkid", found.advice)
 
+    def test_unset(self) -> None:
+        """没有选盘记录的系统是旧布局，缺 /data 记录属未启用而非失败。"""
+        found = mount.judge(NO_ENTRY, mounted=False, declared=False)
+        self.assertEqual(found.state, mount.State.UNSET)
+        self.assertIsNone(found.step)
+        self.assertFalse(found.ok)
+        self.assertIn("未启用", found.advice)
+
     def test_noauto(self) -> None:
         found = mount.judge(NOAUTO, mounted=False)
         self.assertEqual(found.state, mount.State.NOAUTO)
@@ -88,7 +96,8 @@ class EnsureTest(unittest.TestCase):
     """执行只在待挂载时发生，失败必须带回退出码与下一步。"""
 
     def ensure(self, text: str, mounted: bool,
-               func=passed) -> tuple[mount.Mount, list[ops.Step]]:
+               func=passed, declared: bool = True
+               ) -> tuple[mount.Mount, list[ops.Step]]:
         calls: list[ops.Step] = []
 
         def spy(step: ops.Step, timeout: float) -> runner.Result:
@@ -96,7 +105,7 @@ class EnsureTest(unittest.TestCase):
             return func(step, timeout)
 
         with mock.patch("airydisk.mount.ismount", return_value=mounted):
-            return mount.ensure(text, spy), calls
+            return mount.ensure(text, spy, declared=declared), calls
 
     def test_mounted_skips(self) -> None:
         found, calls = self.ensure(FSTAB, mounted=True)
@@ -118,6 +127,11 @@ class EnsureTest(unittest.TestCase):
     def test_refused_skips(self) -> None:
         found, calls = self.ensure(NOAUTO, mounted=False)
         self.assertEqual(found.state, mount.State.NOAUTO)
+        self.assertEqual(calls, [])
+
+    def test_unset_skips(self) -> None:
+        found, calls = self.ensure(NO_ENTRY, mounted=False, declared=False)
+        self.assertEqual(found.state, mount.State.UNSET)
         self.assertEqual(calls, [])
 
 

@@ -24,7 +24,7 @@ from unittest import mock
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "services"))
 
-from airydisk import cli, model, ops, runner  # noqa: E402
+from airydisk import cli, model, ops, record, runner  # noqa: E402
 
 
 def part(name: str, mount: str | None = None,
@@ -568,10 +568,21 @@ class MountTest(Case):
 
     def test_no_entry(self) -> None:
         path = self.fstab_file("UUID=a / ext4 defaults 0 1\n")
-        with mock.patch("airydisk.mount.ismount", return_value=False):
+        known = record.Install(state="ok", disk="nvme0n1")
+        with mock.patch("airydisk.mount.ismount", return_value=False), \
+                mock.patch("airydisk.cli.record.load", return_value=known):
             code, out, _ = self.call("mount", "--file", path)
         self.assertEqual(code, cli.EXIT_REFUSED)
         self.assertIn("no-entry", out)
+
+    def test_unset(self) -> None:
+        path = self.fstab_file("UUID=a / ext4 defaults 0 1\n")
+        absent = record.Install(state="absent")
+        with mock.patch("airydisk.mount.ismount", return_value=False), \
+                mock.patch("airydisk.cli.record.load", return_value=absent):
+            code, out, _ = self.call("mount", "--file", path)
+        self.assertEqual(code, cli.EXIT_NA)
+        self.assertIn("unset", out)
 
     def test_unstable(self) -> None:
         path = self.fstab_file("UUID=a / ext4 defaults 0 1\n"
