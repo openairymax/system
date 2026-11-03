@@ -14,6 +14,10 @@ Type=simple
 ExecStart=/usr/bin/airy-model serve
 Restart=on-failure
 RestartSec=5s
+# 75 = 准入拒绝，78 = 资产或引擎缺失。两者都是「此刻起不来」的确定结论，
+# 重试只会在内存更紧的时候再撞一次，或在资产缺失时反复读同一份清单。
+# 交给 OnFailure 记一次事件，等用户停实例、减 slot 或重装资产。
+RestartPreventExitStatus=75 78
 TimeoutStopSec=30
 KillMode=mixed
 Slice=airymax-agent.slice
