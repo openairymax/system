@@ -2,10 +2,11 @@
 #
 # AirymaxOS 启动卡点自证回归测试
 #
-# 以桩 systemctl 提供默认目标、作业表、单元属性与失败记账，验证三件事：
+# 以桩 systemctl 提供默认目标、作业表、单元属性与失败记账，验证四件事：
 # 健康路径一个字都不输出；目标未达成且作业表逐字不变时一次性带出可归因
-# 的事实；作业表在变（还在推进）时不误报。桩只复刻 systemctl 的对外输出，
-# 不复制任何判定逻辑。
+# 的事实；作业表在变（反复重启）同样带出事实并以 churn=1 区分；诊断行
+# 不落 journal 的 err 桶。桩只复刻 systemctl 的对外输出，不复制任何判定
+# 逻辑。
 
 from __future__ import annotations
 
@@ -141,11 +142,13 @@ class BootWatchCase(unittest.TestCase):
         self.assertIn("AIRYMAX-BOOT-CMDLINE argv=\"", res.stdout)
         self.assertIn("AIRYMAX-BOOT-HINT cmd=\"systemctl list-jobs;", res.stdout)
 
-    def test_progress_silent(self) -> None:
+    def test_progress_reported(self) -> None:
+        """作业表在变同样要报：反复重启的单元让作业表每轮都不同。"""
         self.jobs(JOB, JOB + "3 multi-user.target start waiting\n")
         res = self.run_watch(FAKE_ACTIVE="1")
         self.assertEqual(res.returncode, 0, res.stderr)
-        self.assertEqual(res.stdout, "")
+        self.assertIn("AIRYMAX-BOOT-STUCK target=graphical.target", res.stdout)
+        self.assertIn("churn=1", res.stdout)
 
     def test_self_filtered(self) -> None:
         self.jobs(JOB)
