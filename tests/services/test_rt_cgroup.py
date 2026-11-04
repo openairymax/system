@@ -142,5 +142,59 @@ class WriteTest(TempTree):
         self.assertIsNone(cgroup.read(self.v1(), "absent.slice"))
 
 
+class RawTest(TempTree):
+    """原始值与子组枚举：判定侧要靠它们区分 0、-1 与 max。"""
+
+    def test_v1_raw(self) -> None:
+        found = self.v1()
+        self.assertEqual(cgroup.read_raw(found, ""), "950000")
+        self.assertEqual(cgroup.read(found, ""), 950000)
+
+    def test_v1_unlimited(self) -> None:
+        found = self.v1()
+        path = cgroup.target(found, "user.slice")
+        path.mkdir()
+        (path / cgroup.V1_FILE).write_text("-1\n", encoding="ascii")
+        self.assertEqual(
+            cgroup.read_raw(found, "user.slice"), cgroup.UNLIMITED
+        )
+        self.assertIsNone(cgroup.read(found, "user.slice"))
+
+    def test_v2_raw(self) -> None:
+        found = self.v2()
+        self.assertEqual(cgroup.read_raw(found, ""), cgroup.MAX)
+        self.assertIsNone(cgroup.read(found, ""))
+
+    def test_raw_missing(self) -> None:
+        self.assertIsNone(cgroup.read_raw(self.v1(), "absent.slice"))
+
+    def test_subgroups_depth(self) -> None:
+        found = self.v1()
+        parent = cgroup.target(found, "user.slice")
+        for name in ("user-1000.slice", "user-1001.slice"):
+            (parent / name).mkdir(parents=True)
+        self.assertEqual(
+            cgroup.subgroups(found, "user.slice", 1),
+            ("user.slice/user-1000.slice", "user.slice/user-1001.slice"),
+        )
+        self.assertEqual(cgroup.subgroups(found, "", 1), ("user.slice",))
+
+    def test_subgroups_nested(self) -> None:
+        found = self.v1()
+        leaf = cgroup.target(found, "user.slice/user-1000.slice/a.scope")
+        leaf.mkdir(parents=True)
+        self.assertEqual(
+            cgroup.subgroups(found, "", 3),
+            (
+                "user.slice",
+                "user.slice/user-1000.slice",
+                "user.slice/user-1000.slice/a.scope",
+            ),
+        )
+
+    def test_subgroups_zero_depth(self) -> None:
+        self.assertEqual(cgroup.subgroups(self.v1(), "", 0), ())
+
+
 if __name__ == "__main__":
     unittest.main()

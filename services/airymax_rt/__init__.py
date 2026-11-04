@@ -21,6 +21,7 @@ from . import memcap
 from .allocation import Entry, allocate
 from .bandwidth import apply, inspect
 from .cgroup import Kind, Layout, detect
+from .defaults import Defaults, Seed, seed, seed_subtree
 from .matrix import Cap, Flag, Grade, Matrix, Roots, collect
 from .policy import (
     DEFAULT_CGROUP,
@@ -43,6 +44,7 @@ __all__ = [
     "MARK",
     "Budget",
     "Cap",
+    "Defaults",
     "Entry",
     "Flag",
     "Grade",
@@ -53,6 +55,7 @@ __all__ = [
     "Policy",
     "Report",
     "Roots",
+    "Seed",
     "State",
     "allocate",
     "apply",
@@ -61,4 +64,6 @@ __all__ = [
     "detect",
     "inspect",
     "read_value",
+    "seed",
+    "seed_subtree",
 ]

@@ -7,13 +7,18 @@
 # 判定，单元侧声明为成功，否则每次启动都会留下 failed 与一条 incident。
 # 换页上限不在本单元：它只依赖 slice 目录，开机就该完整落地，挂在
 # ExecStartPost 上会被这里的部分落地连带跳过（airy-rt-memcap.service）。
+#
+# Before=user@.service 是 RT-01 的补丁：登录会话的 slice 在 user@
+# 启动时才创建，晚于它再写预算，本次会话已经建好的组补不上——内核新建
+# 组固定 0 且不继承父组。抢在会话之前落地，至少让能继承的那部分生效；
+# 已存在的组由 `airy-rt-cap seed` 逐组补写。
 # ===========================================================================
 
 [Unit]
 Description=Apply AirymaxOS Real-Time Bandwidth Budget
 Documentation=https://docs.agentrt.local/100-operations/02-configuration
 After=slices.target
-Before=agentrt.target rtkit-daemon.service display-manager.service
+Before=agentrt.target rtkit-daemon.service user@.service display-manager.service
 OnFailure=airy-incident@%n.service
 
 [Service]
