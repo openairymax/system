@@ -178,6 +178,17 @@ class Case(unittest.TestCase):
         self.assertEqual(out.returncode, 5, out.stderr)
         self.assertIn("不在契约表", out.stderr)
 
+    def test_contract_error_reaches_console(self):
+        """报错时屏幕上没有阶段行，诊断必须自己落到同一条通道。"""
+        console = self.dir / "console"
+        console.write_text("", encoding="utf-8")
+        out = self.run_ui("ui_ok 桌面美容 x=1", UI_CONSOLE=str(console))
+        self.assertEqual(out.returncode, 5, out.stderr)
+        self.assertIn(
+            "airymax-boot: 阶段名不在契约表: 桌面美容",
+            console.read_text(encoding="utf-8"),
+        )
+
     def test_sourcing_twice_is_harmless(self):
         out = self.run_ui(f". {UI}\n. {UI}\nui_ok 基础挂载 x=1")
         self.assertEqual(out.returncode, 0, out.stderr)

@@ -69,9 +69,17 @@ readonly UI_STAGES=(
 readonly UI_COL=16
 
 _ui_err() {
-    local code="$1"
+    local code="$1" target
     shift
+
     printf 'ui.sh: %s\n' "$*" >&2
+    # 契约错误的现场只有装机屏幕：stderr 默认只进 journal，而报错时屏幕上
+    # 本来就没有任何阶段行，运维只剩 systemd 的一行 FAILED（run 41802417971
+    # 的装机首启）。诊断必须与它所解释的内容落在同一条通道上。
+    target="$(readlink /proc/self/fd/2 2>/dev/null)" || target=''
+    if [ "${target}" != "${UI_CONSOLE}" ] && [ -w "${UI_CONSOLE}" ]; then
+        printf 'airymax-boot: %s\n' "$*" >"${UI_CONSOLE}" 2>/dev/null || :
+    fi
     return "${code}"
 }
 
