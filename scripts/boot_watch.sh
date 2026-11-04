@@ -14,13 +14,20 @@
 # 目标达不成也照样执行。判定只认观测：取默认目标，在观测窗口内反复采样
 # 作业表，窗口结束时目标仍未激活就一次性打印卡点证据——目标与首个未完成
 # 作业的单元事实、未完成作业、失败单元数、控制台归属、内核命令行——最后
-# 给出下一步命令。目标已达成则静默，健康路径不留一行。
+# 给出下一步命令。目标已达成且登录管理器在跑则静默，健康路径不留一行。
 #
 # 作业表在变不再判为健康：登录管理器反复重启、会话刚拉起就崩溃时，作业
 # 表每轮都在变，目标是永远达不到的，而按「在变即推进」处理会一句话都不留
 # （run 41839320731 的冷启动就停在这种形态上）。推进与停滞的区分改由
 # churn 字段承载：0 表示窗口内作业表逐字未变、1 表示反复变化，两者都是
 # 「开机后 100 秒仍未到默认目标」这一事实，都值得报出来。
+#
+# 目标达成同样不等于有会话：graphical.target 只要求登录管理器的启动作业
+# 结束，管理器退出、被禁用、fail 掉之后目标照样激活，tty1 留着 getty 的
+# 登录提示。此时作业表是空的、目标是绿的，前两种判据都无从触发，串口只剩
+# 一行 login: ——正是「装完盘、能登录、但桌面从没起来」的形态。故目标激活
+# 后再验一次登录管理器：graphical 目标下没有任何 display-manager 在跑，
+# 就以 reason=nodm 报出同一条卡点事实。
 #
 # 退出码恒为 0：本单元是观测者，卡住的是别的单元。以非零退出会在
 # systemctl --failed 里多出一条由观测者造成的失败，掩盖真正的失败者，
@@ -134,13 +141,14 @@ watch() {
 }
 
 rep_tgt() {
-    local tgt="$1" act sub up
+    local tgt="$1" reason="$2" act sub up
 
     act="$(show "${tgt}" ActiveState)"
     sub="$(show "${tgt}" SubState)"
     up="$(cut -d. -f1 /proc/uptime)" || up=0
     put "AIRYMAX-BOOT-STUCK target=${tgt} active=${act}" \
-        "sub=${sub} uptime=${up}s idle=${IDLE}s churn=${CHURN}"
+        "sub=${sub} uptime=${up}s idle=${IDLE}s churn=${CHURN}" \
+        "reason=${reason}"
 }
 
 rep_jobs() {
@@ -189,15 +197,32 @@ rep_cmd() {
     put "AIRYMAX-BOOT-CMDLINE argv=\"${cmd:-unknown}\""
 }
 
+# 登录管理器是否在跑。display-manager.service 是 enable 之后得到的别名，
+# 别名缺失（管理器只是被手工拉起过）时退回具体单元名，两者任一在跑即算。
+dm_live() {
+    local u
+
+    for u in display-manager.service lightdm.service; do
+        if is_done "${u}"; then
+            return 0
+        fi
+    done
+    return 1
+}
+
 main() {
-    local tgt first
+    local tgt first reason
 
     tgt="$(def_tgt)"
-    if ! watch "${tgt}"; then
+    if watch "${tgt}"; then
+        reason=unreached
+    elif [ "${tgt}" = graphical.target ] && ! dm_live; then
+        reason=nodm
+    else
         return 0
     fi
     first="$(pend | awk 'NR == 1 { print $2 }')"
-    rep_tgt "${tgt}"
+    rep_tgt "${tgt}" "${reason}"
     rep_jobs
     if [ -n "${first}" ]; then
         rep_unit "${first}"
