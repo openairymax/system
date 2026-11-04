@@ -1,0 +1,183 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later OR Apache-2.0
+#
+# AirymaxOS 启动卡点自证回归测试
+#
+# 以桩 systemctl 提供默认目标、作业表、单元属性与失败记账，验证三件事：
+# 健康路径一个字都不输出；目标未达成且作业表逐字不变时一次性带出可归因
+# 的事实；作业表在变（还在推进）时不误报。桩只复刻 systemctl 的对外输出，
+# 不复制任何判定逻辑。
+
+from __future__ import annotations
+
+import os
+import subprocess
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "tools"))
+
+import units_lint  # noqa: E402
+
+SCRIPT = ROOT / "scripts" / "boot_watch.sh"
+
+SYSTEMCTL = """#!/usr/bin/env bash
+set -uo pipefail
+cmd="$1"
+shift
+case "${cmd}" in
+get-default)
+    printf '%s\\n' "${FAKE_TARGET:-graphical.target}"
+    ;;
+is-active)
+    exit "${FAKE_ACTIVE:-0}"
+    ;;
+list-jobs)
+    n=0
+    [ -r "${FAKE_SEQ}/n" ] && n="$(cat "${FAKE_SEQ}/n")"
+    n=$((n + 1))
+    printf '%s\\n' "${n}" >"${FAKE_SEQ}/n"
+    f="${FAKE_SEQ}/job.${n}"
+    [ -r "${f}" ] || f="${FAKE_SEQ}/job.last"
+    cat "${f}"
+    ;;
+list-units)
+    printf '%s\\n' "${FAKE_FAILED:-}"
+    ;;
+show)
+    prop=''
+    while [ "$#" -gt 0 ]; do
+        case "$1" in
+        -p) prop="$2"; shift 2 ;;
+        *) shift ;;
+        esac
+    done
+    case "${prop}" in
+    ActiveState) printf 'inactive\\n' ;;
+    SubState) printf 'dead\\n' ;;
+    MainPID) printf '812\\n' ;;
+    Result) printf 'success\\n' ;;
+    *) printf 'unknown\\n' ;;
+    esac
+    ;;
+esac
+"""
+
+JOB = "1 lightdm.service start running\n2 airy-boot-watch.service start running\n"
+
+
+class BootWatchCase(unittest.TestCase):
+    """构造桩 systemctl 与隔离的输出通道。"""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        base = Path(self.tmp.name)
+        self.bin = base / "bin"
+        self.bin.mkdir()
+        tool = self.bin / "systemctl"
+        tool.write_text(SYSTEMCTL, encoding="utf-8")
+        tool.chmod(0o755)
+        self.seq = base / "seq"
+        self.seq.mkdir()
+        self.console = base / "console"
+        self.console.write_text("", encoding="utf-8")
+        self.serial = base / "ttyS0"
+
+    def jobs(self, *texts: str) -> None:
+        for idx, text in enumerate(texts, start=1):
+            (self.seq / f"job.{idx}").write_text(text, encoding="utf-8")
+        (self.seq / "job.last").write_text(texts[-1], encoding="utf-8")
+
+    def run_watch(self, **env2: str):
+        env = dict(os.environ)
+        env["PATH"] = f"{self.bin}{os.pathsep}{env['PATH']}"
+        env.update(
+            {
+                "UI_CONSOLE": str(self.console),
+                "AIRY_WATCH_SERIAL": str(self.serial),
+                "FAKE_SEQ": str(self.seq),
+                "AIRY_WATCH_POLL": "1",
+                "AIRY_WATCH_WIN": "2",
+                "LANG": "C.UTF-8",
+            }
+        )
+        env.update(env2)
+        return subprocess.run(
+            ["bash", str(SCRIPT)],
+            capture_output=True,
+            text=True,
+            env=env,
+            check=False,
+        )
+
+    def test_healthy_silent(self) -> None:
+        self.jobs(JOB)
+        res = self.run_watch(FAKE_ACTIVE="0")
+        self.assertEqual(res.returncode, 0, res.stderr)
+        self.assertEqual(res.stdout, "")
+
+    def test_stuck_report(self) -> None:
+        self.jobs(JOB)
+        res = self.run_watch(FAKE_ACTIVE="1", FAKE_FAILED="")
+        self.assertEqual(res.returncode, 0, res.stderr)
+        self.assertIn(
+            "AIRYMAX-BOOT-STUCK target=graphical.target active=inactive",
+            res.stdout,
+        )
+        self.assertIn("AIRYMAX-BOOT-JOBS n=1", res.stdout)
+        self.assertIn(
+            "AIRYMAX-BOOT-JOB unit=lightdm.service type=start state=running",
+            res.stdout,
+        )
+        self.assertIn(
+            "AIRYMAX-BOOT-UNIT unit=lightdm.service active=inactive",
+            res.stdout,
+        )
+        self.assertIn("AIRYMAX-BOOT-FAILED n=0", res.stdout)
+        self.assertIn("AIRYMAX-BOOT-CONSOLE active=", res.stdout)
+        self.assertIn("AIRYMAX-BOOT-CMDLINE argv=\"", res.stdout)
+        self.assertIn("AIRYMAX-BOOT-HINT cmd=\"systemctl list-jobs;", res.stdout)
+
+    def test_progress_silent(self) -> None:
+        self.jobs(JOB, JOB + "3 multi-user.target start waiting\n")
+        res = self.run_watch(FAKE_ACTIVE="1")
+        self.assertEqual(res.returncode, 0, res.stderr)
+        self.assertEqual(res.stdout, "")
+
+    def test_self_filtered(self) -> None:
+        self.jobs(JOB)
+        res = self.run_watch(FAKE_ACTIVE="1")
+        self.assertNotIn("unit=airy-boot-watch", res.stdout)
+
+    def test_no_stderr(self) -> None:
+        """诊断行不得进入 journal 的 err 桶（V-15 判据之一）。"""
+        self.jobs(JOB)
+        res = self.run_watch(FAKE_ACTIVE="1")
+        self.assertEqual(res.stderr, "")
+
+    def test_console_mirror(self) -> None:
+        self.jobs(JOB)
+        self.run_watch(FAKE_ACTIVE="1")
+        text = self.console.read_text(encoding="utf-8")
+        self.assertIn("AIRYMAX-BOOT-STUCK", text)
+
+    def test_failed_count(self) -> None:
+        self.jobs(JOB)
+        res = self.run_watch(
+            FAKE_ACTIVE="1", FAKE_FAILED="lightdm.service loaded failed\n"
+        )
+        self.assertIn("AIRYMAX-BOOT-FAILED n=1", res.stdout)
+
+
+class LintCase(unittest.TestCase):
+    """脚本静态契约校验器。"""
+
+    def test_lint_ok(self) -> None:
+        self.assertEqual(units_lint.check_script(SCRIPT), [])
+
+
+if __name__ == "__main__":
+    unittest.main()

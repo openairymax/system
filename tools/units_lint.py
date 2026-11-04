@@ -451,6 +451,26 @@ BOOT_MOUNT_PAIRS: dict[tuple[str, str], str] = {
 
 BOOT_MOUNT_SCRIPT = ROOT / "scripts" / "boot_mount.sh"
 
+BOOT_WATCH = "airy-boot-watch.service"
+
+# 启动卡点自证：唯一一个刻意不挂 target 的单元。挂在目标之后就要等目标
+# 达成，而它存在的理由正是目标达不成；由 timer 的 OnBootSec 触发，与
+# 启动排序完全解耦。stdout 只进 journal，console 与串口由脚本按设备实际
+# 归属自己写，交给 systemd 复制一遍会在 /dev/console 归串口的机器上重复。
+BOOT_WATCH_PAIRS: dict[tuple[str, str], str] = {
+    ("Unit", "After"): "sysinit.target",
+    ("Service", "Type"): "oneshot",
+    (
+        "Service",
+        "ExecStart",
+    ): "/usr/lib/airymaxos/scripts/boot_watch.sh",
+    ("Service", "TimeoutStartSec"): "120",
+    ("Service", "StandardOutput"): "journal",
+    ("Service", "StandardError"): "journal",
+}
+
+BOOT_WATCH_SCRIPT = ROOT / "scripts" / "boot_watch.sh"
+
 DISK_MOUNT = "airy-disk-mount.service"
 
 # 挂载单元必须运行在宿主挂载命名空间里：ProtectSystem/PrivateTmp 之类
@@ -769,11 +789,21 @@ TIMERS: dict[str, dict[tuple[str, str], str]] = {
         ("Timer", "Unit"): MEMCAP,
         ("Install", "WantedBy"): "timers.target",
     },
+    "airy-boot-watch.timer": {
+        ("Unit", "Description"): (
+            "Report a boot that stops making progress"
+        ),
+        ("Timer", "OnBootSec"): "60s",
+        ("Timer", "AccuracySec"): "5s",
+        ("Timer", "Unit"): BOOT_WATCH,
+        ("Install", "WantedBy"): "timers.target",
+    },
 }
 
 UNITS = frozenset(SERVICES) | frozenset(TARGETS) | frozenset(TEMPLATES) | {
     AGENT_SLICE,
     BOOT_MOUNT,
+    BOOT_WATCH,
     COEXIST,
     DISK_HEALTH,
     DISK_MOUNT,
@@ -1214,6 +1244,8 @@ def _body_bad(name: str, cfg: ConfigParser) -> list[str]:
         return _health_bad(name, cfg)
     if name == BOOT_MOUNT:
         return _pairs_bad(name, cfg, dict(BOOT_MOUNT_PAIRS))
+    if name == BOOT_WATCH:
+        return _pairs_bad(name, cfg, dict(BOOT_WATCH_PAIRS))
     if name == DISK_MOUNT:
         return _pairs_bad(name, cfg, dict(DISK_MOUNT_PAIRS))
     if name == DISK_HEALTH:
@@ -1389,6 +1421,7 @@ def check_dir(path: Path) -> list[str]:
     errs.extend(check_script())
     errs.extend(check_script(FIRSTBOOT_SCRIPT))
     errs.extend(check_script(BOOT_MOUNT_SCRIPT))
+    errs.extend(check_script(BOOT_WATCH_SCRIPT))
     return errs
 
 

@@ -1,0 +1,24 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later OR Apache-2.0
+# ===========================================================================
+# airy-boot-watch — 启动卡点自证
+#
+# 由 airy-boot-watch.timer 在开机 60 秒触发一次。整机是否继续推进由
+# 默认目标与作业表的变化判定，因此本单元不挂任何 target，也不参与启动
+# 排序：它要观察的恰恰是「目标永远达不到」这一情形，挂在目标之后等于
+# 与被观察者同归于尽。
+#
+# TimeoutStartSec 覆盖观测窗口（默认 40 秒）加取样开销。StandardOutput
+# 只取 journal：console 与串口由脚本自己按设备实际归属写，交给 systemd
+# 再复制一遍会在 /dev/console 归属串口的机器上打出两行。
+# ===========================================================================
+[Unit]
+Description=Report a boot that stops making progress
+Documentation=https://atomgit.com/openairymax/agent-linux
+After=sysinit.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/airymaxos/scripts/boot_watch.sh
+TimeoutStartSec=120
+StandardOutput=journal
+StandardError=journal
