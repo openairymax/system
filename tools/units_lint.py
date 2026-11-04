@@ -53,6 +53,7 @@ SYSTEM_UNITS = frozenset({
     "slices.target",
     "sysinit.target",
     "systemd-journald.service",
+    "user@.service",
 })
 
 CAP_BIND = "CAP_NET_BIND_SERVICE CAP_NET_RAW"
@@ -500,10 +501,14 @@ RT_BANDWIDTH = "airy-rt-bandwidth.service"
 #
 # 预算在开机时必然只落 3/4 个 slice（airymax-desktop.slice 登录后才存在），
 # 因此退出码 3 是剖面事实而不是故障，声明为成功；门禁仍按退出码区分。
+#
+# Before=user@.service：登录会话的 slice 由 user@ 启动时才创建，晚于本单元
+# 就只能等 seed 补写。排在它之前，新建组至少在本次开机内还来得及被补上。
 RT_PAIRS: dict[tuple[str, str], str] = {
     ("Unit", "After"): "slices.target",
     ("Unit", "Before"): (
-        "agentrt.target rtkit-daemon.service display-manager.service"
+        "agentrt.target rtkit-daemon.service user@.service"
+        " display-manager.service"
     ),
     ("Unit", "OnFailure"): "airy-incident@%n.service",
     ("Service", "Type"): "oneshot",

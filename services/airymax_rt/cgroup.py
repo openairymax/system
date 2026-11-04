@@ -25,13 +25,17 @@ from pathlib import Path
 
 __all__ = [
     "CONTROLLER",
+    "MAX",
     "SUBTREE",
+    "UNLIMITED",
     "V1_FILE",
     "V2_FILE",
     "Kind",
     "Layout",
     "detect",
     "read",
+    "read_raw",
+    "subgroups",
     "target",
     "write",
 ]
@@ -43,6 +47,13 @@ V2_FILE = "cpu.rt.max"
 CONTROLLER = "cgroup.controllers"
 
 SUBTREE = "cgroup.subtree_control"
+
+# 两种「不限」的写法：v1 用哨兵 -1，v2 用字符串 max。判定侧必须把二者
+# 与「预算为 0（禁止）」分开：0 会让 SCHED_FIFO 直接 EPERM，不限则完全
+# 不记账，把三者压成同一个值就会把能用的实时关掉。
+UNLIMITED = "-1"
+
+MAX = "max"
 
 CPU = "cpu"
 
@@ -103,8 +114,13 @@ def target(layout: Layout, name: str) -> Path:
     return Path(layout.root) / name
 
 
-def read(layout: Layout, name: str) -> int | None:
-    """读取已落地的预算；v2 的 ``max`` 表示不限，按不可比处理。"""
+def read_raw(layout: Layout, name: str) -> str | None:
+    """读取原始 token，不做语义折叠。
+
+    判定「新建组能不能跑实时」必须区分 ``0``、``-1`` 与 ``max``：
+    ``0`` 是禁止，后两者是不记账。只要把原始值留给调用方，判定层就能
+    给出「被谁挡住」而不是笼统的「不可用」。
+    """
     path = target(layout, name) / layout.file
     try:
         text = path.read_text(encoding="ascii").strip()
@@ -112,13 +128,48 @@ def read(layout: Layout, name: str) -> int | None:
         return None
     if not text:
         return None
-    head = text.split()[0]
-    if head == "max":
+    return text.split()[0]
+
+
+def read(layout: Layout, name: str) -> int | None:
+    """读取已落地的预算；不限（``max`` 或 ``-1``）按不可比处理。"""
+    head = read_raw(layout, name)
+    if head is None or head == MAX:
         return None
     try:
-        return int(head, 10)
+        value = int(head, 10)
     except ValueError:
         return None
+    return value if value >= 0 else None
+
+
+def subgroups(layout: Layout, name: str, depth: int = 1) -> tuple[str, ...]:
+    """列出某个 slice 下已存在的子组，名称为相对记账根的路径。
+
+    ``depth`` 控制展开层数：1 只取直接子组。systemd 会按 ``-`` 把 slice
+    展开成父子两级（``user.slice/user-1000.slice``），补写预算时既要能
+    定位到某一层，也要能一次覆盖整棵子树。
+    """
+    if depth < 1:
+        return ()
+    base = Path(layout.root)
+    frontier = [(base / name if name else base, name)]
+    found: list[str] = []
+    for _ in range(depth):
+        following: list[tuple[Path, str]] = []
+        for parent, prefix in frontier:
+            try:
+                children = sorted(
+                    item for item in parent.iterdir() if item.is_dir()
+                )
+            except OSError:
+                continue
+            for child in children:
+                rel = f"{prefix}/{child.name}" if prefix else child.name
+                found.append(rel)
+                following.append((child, rel))
+        frontier = following
+    return tuple(found)
 
 
 def write(layout: Layout, name: str, budget: int, period: int) -> bool:

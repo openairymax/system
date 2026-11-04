@@ -28,7 +28,7 @@ import json
 import sys
 from collections.abc import Sequence
 
-from . import admit, bandwidth, coexist, config, matrix, memcap
+from . import admit, bandwidth, coexist, config, defaults, matrix, memcap
 from .policy import (
     DEFAULT_CGROUP,
     DEFAULT_PERIOD,
@@ -60,6 +60,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _memcap(args)
     if args.cmd == "admit":
         return _admit(args)
+    if args.cmd == "defaults":
+        return _defaults(args)
+    if args.cmd == "seed":
+        return _seed(args)
     policy = _policy(args)
     if args.cmd == "config":
         sys.stdout.write(config.reference())
@@ -170,6 +174,32 @@ def _opt() -> argparse.ArgumentParser:
         default=argparse.SUPPRESS,
         help="meminfo 路径（准入判定的内存来源）",
     )
+    opt.add_argument(
+        "--group",
+        action="append",
+        metavar="NAME",
+        default=argparse.SUPPRESS,
+        help="被测或待补写的 cgroup 组名（可重复）",
+    )
+    opt.add_argument(
+        "--subtree",
+        metavar="NAME",
+        default=argparse.SUPPRESS,
+        help="补写该组下已存在的子树",
+    )
+    opt.add_argument(
+        "--depth",
+        type=int,
+        metavar="N",
+        default=argparse.SUPPRESS,
+        help="子树展开层数，默认 1",
+    )
+    opt.add_argument(
+        "--limits",
+        metavar="FILE",
+        default=argparse.SUPPRESS,
+        help="RLIMIT_RTPRIO 来源（默认 /proc/self/limits）",
+    )
     return opt
 
 
@@ -194,6 +224,10 @@ def _args(argv: Sequence[str] | None) -> argparse.Namespace:
         unitdir=memcap.DEFAULT_UNITDIR,
         need="",
         meminfo=admit.DEFAULT_MEMINFO,
+        group=[],
+        subtree="",
+        depth=1,
+        limits=defaults.DEFAULT_LIMITS,
         apply=False,
     )
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -217,6 +251,12 @@ def _args(argv: Sequence[str] | None) -> argparse.Namespace:
     )
     sub.add_parser(
         "admit", parents=[_opt()], help="判定新实例能否装入"
+    )
+    sub.add_parser(
+        "defaults", parents=[_opt()], help="判读新建组的带宽默认值"
+    )
+    sub.add_parser(
+        "seed", parents=[_opt()], help="为新组补写有限预算"
     )
     return parser.parse_args(argv)
 
@@ -261,6 +301,33 @@ def _admit(args: argparse.Namespace) -> int:
     found = admit.check(need, args.meminfo, args.unitdir)
     _show_admit(found, args.json)
     return 0 if found.state == admit.FIT else EXIT_PARTIAL
+
+
+def _defaults(args: argparse.Namespace) -> int:
+    """判读新建组的三道门禁；blocked 可按 seed 补齐，故为部分落地。"""
+    group = args.group[0] if args.group else ""
+    found = defaults.inspect(_policy(args), group, args.limits)
+    _show_defaults(found, args.json)
+    if found.usable:
+        return 0
+    return EXIT_FAIL if found.verdict == defaults.UNKNOWN else EXIT_PARTIAL
+
+
+def _seed(args: argparse.Namespace) -> int:
+    """补写新组预算；一次覆盖 --subtree 与 --group 两处来源。"""
+    if not args.group and not args.subtree:
+        sys.stderr.write(
+            "airy-rt-cap: 需要 --group NAME 或 --subtree NAME\n"
+        )
+        return EXIT_USAGE
+    policy = _policy(args)
+    steps = ()
+    if args.subtree:
+        steps = defaults.seed_subtree(policy, args.subtree, args.depth)
+    if args.group:
+        steps += defaults.seed(policy, tuple(args.group))
+    _show_seed(steps, args.json)
+    return _seedcode(steps)
 
 
 def _roots(args: argparse.Namespace) -> matrix.Roots:
@@ -399,3 +466,64 @@ def _memcode(found: memcap.Report) -> int:
     if not found.steps or any(found.count(state) for state in failed):
         return EXIT_PARTIAL
     return 0
+
+
+def _show_defaults(found: defaults.Defaults, as_json: bool) -> None:
+    if as_json:
+        print(json.dumps(found.dump(), ensure_ascii=False))
+        return
+    kind = found.kind.value if found.kind else "-"
+    print(
+        f"{MARK} verdict={found.verdict} kind={kind}"
+        f" enabled={found.enabled}"
+    )
+    print(
+        f"total  {_us(found.total)}  period {_us(found.period)}"
+        f"  share root {found.root or '-'}"
+    )
+    print(
+        f"group  {found.group or '-'}  fresh {found.fresh or '-'}"
+        f"  rtprio {_us(found.rtprio)}"
+    )
+    if found.blocked:
+        print("blocked " + " ".join(found.blocked))
+    print(f"advice {defaults.advice(found.verdict)}")
+
+
+def _us(value: int | None) -> str:
+    """预算与 rlimit 的呈现：-1 是不限，读不到是未知。"""
+    if value is None:
+        return "unknown"
+    if value < 0:
+        return "unlimited"
+    return f"{value} us"
+
+
+def _seedcode(steps: tuple[defaults.Seed, ...]) -> int:
+    """空步长为无事可做；只要有一组落地即部分落地。"""
+    if not steps:
+        return 0
+    done = (defaults.SEEDED, defaults.KEPT)
+    states = [item.state for item in steps]
+    if all(state in done for state in states):
+        return 0
+    if any(state in done for state in states):
+        return EXIT_PARTIAL
+    return EXIT_FAIL
+
+
+def _show_seed(steps: tuple[defaults.Seed, ...], as_json: bool) -> None:
+    if as_json:
+        print(
+            json.dumps(
+                {"steps": [item.dump() for item in steps]},
+                ensure_ascii=False,
+            )
+        )
+        return
+    print(f"{MARK} steps={len(steps)}")
+    for item in steps:
+        have = "-" if item.have is None else item.have
+        print(f"  {item.group:<38}{item.want:>10}  {have:>10}  {item.state}")
+        if item.note:
+            print(f"note   {item.group} {item.note}")
