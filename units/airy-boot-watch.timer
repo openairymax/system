@@ -1,0 +1,19 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later OR Apache-2.0
+# ===========================================================================
+# airy-boot-watch.timer — 开机 60 秒拉起一次启动卡点自证
+#
+# 单次触发，不重排：判定窗口在服务内部，健康时完全静默，报出卡点后也
+# 不需要第二轮——卡点证据是快照，不是周期指标。OnBootSec 以系统启动
+# 完成为原点，因此不依赖任何 target 是否达成。
+# ===========================================================================
+[Unit]
+Description=Report a boot that stops making progress
+Documentation=https://atomgit.com/openairymax/agent-linux
+
+[Timer]
+OnBootSec=60s
+AccuracySec=5s
+Unit=airy-boot-watch.service
+
+[Install]
+WantedBy=timers.target
