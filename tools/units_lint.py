@@ -15,7 +15,9 @@ daemon 间启动顺序以该文档 §7.2 依赖矩阵为唯一事实来源。
 from __future__ import annotations
 
 import logging
+import re
 import sys
+import unicodedata
 from configparser import ConfigParser
 from configparser import Error as IniError
 from dataclasses import dataclass
@@ -601,7 +603,7 @@ COEXIST_PAIRS: dict[tuple[str, str], str] = {
     ("Unit", "ConditionPathExists"): "/usr/bin/airy-rt-cap",
     ("Service", "Type"): "oneshot",
     ("Service", "ExecStart"): (
-        "/usr/lib/airymaxos/scripts/stage_run.sh 桌面与 RT 共存 -"
+        "/usr/lib/airymaxos/scripts/stage_run.sh 桌面RT共存 -"
         " mode,weight,current,applied /usr/bin/airy-rt-cap coexist --apply"
     ),
     ("Service", "TimeoutStartSec"): "60",
@@ -1034,6 +1036,110 @@ def _pairs_bad(
 STAGE_RUN = "stage_run.sh"
 STAGE_BEAT = 30
 STAGE_LIMIT = 60
+UI_SH = ROOT / "scripts" / "ui.sh"
+UI_ROW = re.compile(r"^\s*'(\d+)\|([^|']+)\|(\d+)'\s*$", re.M)
+
+
+def ui_path(units: Path) -> Path:
+    """与单元目录同仓的 ui.sh 路径。
+
+    Args:
+        units: 单元目录。
+
+    Returns:
+        ui.sh 的路径。
+    """
+    return units.parent / "scripts" / "ui.sh"
+
+
+def ui_rows(path: Path = UI_SH) -> dict[str, tuple[int, int]]:
+    """读取 ui.sh 的阶段契约表。
+
+    Args:
+        path: ui.sh 路径。
+
+    Returns:
+        阶段名 → (序号, 显示宽度)；表不可读时为空字典。
+    """
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return {}
+    return {
+        match.group(2): (int(match.group(1)), int(match.group(3)))
+        for match in UI_ROW.finditer(text)
+    }
+
+
+def _columns(name: str) -> int:
+    """阶段名的显示宽度：东亚宽字符记两列，其余记一列。"""
+    return sum(
+        2 if unicodedata.east_asian_width(char) in "WF" else 1
+        for char in name
+    )
+
+
+def _ui_table_bad(path: Path = UI_SH) -> list[str]:
+    """阶段契约表必须连续编号、名称不含空白、宽度与字符一致。
+
+    单元以 ExecStart 传阶段名，systemd 按空白切分 ExecStart：名字里带空白
+    会被拆成多个参数，运行期查不到序号而以非零退出，现场只剩一行 FAILED
+    （run 41802417971 的装机首启）。宽度写错则九行打印不再对齐，「卡在哪
+    一步」要靠肉眼从错位的列里猜。
+
+    Args:
+        path: ui.sh 路径。
+
+    Returns:
+        违约描述列表，空列表表示通过。
+    """
+    rows = ui_rows(path)
+    if not rows:
+        return [f"{path.name}: 阶段契约表缺失或为空"]
+    errs = []
+    if sorted(index for index, _ in rows.values()) != list(
+        range(1, len(rows) + 1)
+    ):
+        errs.append(f"{path.name}: 阶段序号必须从 1 连续编号")
+    errs.extend(
+        f"{path.name}: 阶段名含空白，ExecStart 会把它拆成多个参数: {name!r}"
+        for name in rows
+        if any(char.isspace() for char in name)
+    )
+    errs.extend(
+        f"{path.name}: 阶段 {name} 宽度 {width} != 实际 {_columns(name)}"
+        for name, (_, width) in rows.items()
+        if width != _columns(name)
+    )
+    return errs
+
+
+def _stage_arg_bad(
+    name: str, cfg: ConfigParser, rows: dict[str, tuple[int, int]]
+) -> list[str]:
+    """ExecStart 的阶段名必须是单个参数且登记在契约表内。
+
+    Args:
+        name: 单元文件名。
+        cfg: 已解析的单元配置。
+        rows: 阶段契约表。
+
+    Returns:
+        违约描述列表，空列表表示通过。
+    """
+    tokens = (_get(cfg, "Service", "ExecStart") or "").split()
+    index = next(
+        (pos for pos, tok in enumerate(tokens) if tok.endswith(STAGE_RUN)),
+        None,
+    )
+    if index is None:
+        return []
+    if index + 1 >= len(tokens):
+        return [f"{name}: ExecStart 缺阶段名"]
+    stage = tokens[index + 1]
+    if stage not in rows:
+        return [f"{name}: 阶段名 {stage!r} 不在 ui.sh 契约表"]
+    return []
 
 
 def _stage_bad(name: str, cfg: ConfigParser) -> list[str]:
@@ -1201,6 +1307,9 @@ def check_file(path: Path) -> list[str]:
         + _doc_bad(path.name, cfg)
         + _body_bad(path.name, cfg)
         + _stage_bad(path.name, cfg)
+        + _stage_arg_bad(
+            path.name, cfg, ui_rows(ui_path(path.parent))
+        )
     )
 
 
@@ -1266,6 +1375,9 @@ def check_dir(path: Path) -> list[str]:
         if cfg is not None:
             parsed[item.name] = cfg
     errs.extend(_cycle_bad(_graph(parsed)))
+    script = ui_path(path)
+    rows = ui_rows(script)
+    errs.extend(_ui_table_bad(script))
     for item in units:
         errs.extend(_file_bad(item))
         cfg = parsed.get(item.name)
@@ -1273,6 +1385,7 @@ def check_dir(path: Path) -> list[str]:
             errs.extend(_doc_bad(item.name, cfg))
             errs.extend(_body_bad(item.name, cfg))
             errs.extend(_stage_bad(item.name, cfg))
+            errs.extend(_stage_arg_bad(item.name, cfg, rows))
     errs.extend(check_script())
     errs.extend(check_script(FIRSTBOOT_SCRIPT))
     errs.extend(check_script(BOOT_MOUNT_SCRIPT))
