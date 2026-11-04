@@ -2,16 +2,18 @@
 #
 # 观测命令行入口
 #
-# 两个清点类别共用同一份出口约定。hardware 回答三个问题：这一台机器上都
+# 三个清点类别共用同一份出口约定。hardware 回答三个问题：这一台机器上都
 # 有什么、哪些缺失、哪些被关着；firmware 回答驱动期望的固件文件名与本次
-# 开机的实际载入情况。--json 与人类可读输出是同一份数据的两种呈现，门禁
-# 读 --json、人读文本。
+# 开机的实际载入情况；system 回答系统自身是否自洽：有没有失败单元、本次
+# 开机有没有 err 日志、实际装的包与镜像交付的清单差在哪。--json 与人类
+# 可读输出是同一份数据的两种呈现，门禁读 --json、人读文本。
 #
-# 退出码：0 表示必检项齐全、没有设备被关断且没有固件失败证据；3 表示有
-# 设备被 rfkill 关着，或有固件项缺证据（unknown 不等于通过）；1 表示必检
-# 项缺失（cpu/block/net 至少一类整类不在），或有固件载入失败。2 为用法错误。
+# 退出码：0 表示必检项齐全、没有设备被关断、没有固件失败证据、系统三面
+# 全部干净；3 表示缺证据（unknown 不等于通过）；1 表示出现失败证据——
+# 必检项整类不在、固件载入失败、单元 failed、err 日志非空或包集合漂移。
+# 2 为用法错误。
 
-"""AirymaxOS observe command line (I-24)."""
+"""AirymaxOS observe command line (I-24, J-31)."""
 
 from __future__ import annotations
 
@@ -19,7 +21,7 @@ import argparse
 import json
 from collections.abc import Sequence
 
-from . import fw, hw
+from . import fw, hw, sys as osys
 
 __all__ = ["EXIT_FAIL", "EXIT_PARTIAL", "main"]
 
@@ -36,6 +38,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = _args(argv)
     if args.cmd == "firmware":
         return _fw_main(args)
+    if args.cmd == "system":
+        return _sys_main(args)
     found = hw.collect(args.root)
     if args.json:
         print(json.dumps(found.dump(), ensure_ascii=False))
@@ -46,12 +50,12 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 def _args(argv: Sequence[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        prog=PROG, description="AirymaxOS 整机硬件与固件清点",
+        prog=PROG, description="AirymaxOS 整机硬件、固件与系统完整性清点",
     )
     parser.add_argument(
         "cmd", nargs="?", default="hardware",
-        choices=["hardware", "firmware"],
-        help="清点类别（hardware 或 firmware）",
+        choices=["hardware", "firmware", "system"],
+        help="清点类别（hardware、firmware 或 system）",
     )
     parser.add_argument(
         "--json", action="store_true", help="以 JSON 输出",
@@ -66,6 +70,22 @@ def _args(argv: Sequence[str] | None) -> argparse.Namespace:
     parser.add_argument(
         "--dmesg", metavar="FILE", default=None,
         help="内核日志文件（默认读取 dmesg）",
+    )
+    parser.add_argument(
+        "--manifest", metavar="FILE", default=osys.MANIFEST,
+        help="镜像交付的包清单（默认 /etc/airymaxos-packages）",
+    )
+    parser.add_argument(
+        "--units", metavar="FILE", default=None,
+        help="systemctl --failed 的输出文件（默认现场执行）",
+    )
+    parser.add_argument(
+        "--journal", metavar="FILE", default=None,
+        help="journalctl -p err -b 的输出文件（默认现场执行）",
+    )
+    parser.add_argument(
+        "--rpm", metavar="FILE", default=None,
+        help="rpm -qa 的包名清单文件（默认现场执行）",
     )
     return parser.parse_args(argv)
 
@@ -148,3 +168,52 @@ def _fw_code(found: fw.Survey) -> int:
     if found.count(fw.MISSING) or found.warnings:
         return EXIT_FAIL
     return EXIT_PARTIAL if found.count(fw.UNKNOWN) else 0
+
+
+def _sys_main(args: argparse.Namespace) -> int:
+    found = osys.collect(
+        _source(args.units, osys.units_live),
+        _source(args.journal, osys.journal_live),
+        _source(args.rpm, osys.rpm_live),
+        osys.read_text(args.manifest),
+    )
+    if args.json:
+        print(json.dumps(found.dump(), ensure_ascii=False))
+    else:
+        _emit_sys(found)
+    return _sys_code(found)
+
+
+def _source(path: str | None, live) -> str | None:
+    """给定了文件就只读文件（读不到即 unknown），否则现场执行。"""
+    return live() if path is None else osys.read_text(path)
+
+
+def _emit_sys(found: osys.Survey) -> None:
+    print(
+        f"{PROG} system state={found.state} units={len(found.units)}"
+        f" errors={len(found.errors)} missing={len(found.missing)}"
+        f" extra={len(found.extra)}"
+    )
+    print(f"  {'units':<9}{found.units_state:<8}{len(found.units):>5}"
+          f" failed")
+    print(f"  {'logs':<9}{found.logs_state:<8}{len(found.errors):>5}"
+          f" errors")
+    print(f"  {'packages':<9}{found.packs_state:<8}{found.have_n:>5}"
+          f" installed  declared={found.want_n}")
+    for name in found.units[:SHOWN]:
+        print(f"failed {name}")
+    for line in found.errors[:SHOWN]:
+        print(f"error {line}")
+    for name in found.missing[:SHOWN]:
+        print(f"missing {name}")
+    for name in found.extra[:SHOWN]:
+        print(f"extra {name}")
+
+
+def _sys_code(found: osys.Survey) -> int:
+    if found.packs_state == osys.STATE_UNKNOWN:
+        return EXIT_PARTIAL
+    if found.state in (osys.STATE_OK, osys.STATE_UNKNOWN):
+        return EXIT_PARTIAL if found.state == osys.STATE_UNKNOWN else 0
+    return EXIT_FAIL
