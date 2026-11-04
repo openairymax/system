@@ -192,6 +192,10 @@ class PrintContractCase(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.units = Path(self.tmp.name) / "units"
         shutil.copytree(ROOT / "units", self.units)
+        # 阶段契约表按 units/../scripts/ui.sh 读取，夹具要还原真实布局。
+        script = Path(self.tmp.name) / "scripts"
+        script.mkdir()
+        shutil.copy2(ROOT / "scripts" / "ui.sh", script / "ui.sh")
 
     def drop(self, name: str, line: str) -> None:
         path = self.units / name

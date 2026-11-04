@@ -9,6 +9,10 @@
 #
 # 由定时器周期触发；桌面 slice 只在登录后存在，未登录时单元报告
 # absent 并以 0 退出，不产生 failed 与 incident。
+#
+# 阶段名不得含空白：systemd 按空白切分 ExecStart，带空格的阶段名会被拆成
+# 多个参数，运行期查不到序号而以失败退出（run 41802417971 在装机首启时
+# 报 failed），现场的屏幕上却只有一行 FAILED。units_lint 对此设了闸门。
 # ===========================================================================
 
 [Unit]
@@ -20,7 +24,7 @@ ConditionPathExists=/usr/bin/airy-rt-cap
 
 [Service]
 Type=oneshot
-ExecStart=/usr/lib/airymaxos/scripts/stage_run.sh 桌面与 RT 共存 - mode,weight,current,applied /usr/bin/airy-rt-cap coexist --apply
+ExecStart=/usr/lib/airymaxos/scripts/stage_run.sh 桌面RT共存 - mode,weight,current,applied /usr/bin/airy-rt-cap coexist --apply
 TimeoutStartSec=60
 ProtectSystem=strict
 ProtectHome=yes

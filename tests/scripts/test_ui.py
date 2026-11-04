@@ -122,7 +122,7 @@ class Case(unittest.TestCase):
         self.assertEqual(out.stdout, "[ 8/9 ] 桌面就绪        FAIL\n")
 
     def test_columns_align_across_names(self):
-        out = self.run_ui("ui_ok 基础挂载 x=1\nui_ok '桌面与 RT 共存' x=1")
+        out = self.run_ui("ui_ok 基础挂载 x=1\nui_ok 桌面RT共存 x=1")
         self.assertEqual(out.returncode, 0, out.stderr)
         rows = out.stdout.splitlines()
         cols = [width(row[: row.index("ok")]) for row in rows]

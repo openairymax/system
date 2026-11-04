@@ -34,6 +34,8 @@ DISK_MOUNT = "airy-disk-mount.service"
 DISK_HEALTH = "airy-disk-health.service"
 DISK_TIMER = "airy-disk-health.timer"
 SESSION = "user.slice.d/50-airymax-memory.conf"
+COEXIST = "airy-rt-coexist.service"
+STAGE_ROW = "'7|桌面RT共存|10'"
 
 
 class UnitsCase(unittest.TestCase):
@@ -43,6 +45,12 @@ class UnitsCase(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.root = Path(self.tmp.name) / "units"
         shutil.copytree(ROOT / "units", self.root)
+        # 阶段契约表与单元同仓：校验器按 units/../scripts/ui.sh 读取，
+        # 夹具必须还原同一布局，否则测的是一棵与交付形态不同的树。
+        script = Path(self.tmp.name) / "scripts"
+        script.mkdir()
+        self.ui = script / "ui.sh"
+        shutil.copy2(ROOT / "scripts" / "ui.sh", self.ui)
 
     def tearDown(self) -> None:
         self.tmp.cleanup()
@@ -55,6 +63,11 @@ class UnitsCase(unittest.TestCase):
 
     def errors(self) -> list[str]:
         return units_lint.check_dir(self.root)
+
+    def edit_ui(self, old: str, new: str) -> None:
+        text = self.ui.read_text(encoding="utf-8")
+        self.assertIn(old, text)
+        self.ui.write_text(text.replace(old, new, 1), encoding="utf-8")
 
     def assert_bad(self, needle: str) -> None:
         errs = self.errors()
@@ -115,6 +128,22 @@ class FileCase(UnitsCase):
             "WatchdogSec=30s\nWatchdogSec=30s\n",
         )
         self.assert_bad("already exists")
+
+
+class StageNameCase(UnitsCase):
+    """阶段名是单个参数，且必须与契约表逐字一致。"""
+
+    def test_name_with_space(self) -> None:
+        self.edit_ui(STAGE_ROW, "'7|桌面 RT 共存|10'")
+        self.assert_bad("阶段名含空白")
+
+    def test_name_unknown(self) -> None:
+        self.edit(COEXIST, "桌面RT共存", "桌面RT")
+        self.assert_bad("不在 ui.sh 契约表")
+
+    def test_width_wrong(self) -> None:
+        self.edit_ui(STAGE_ROW, "'7|桌面RT共存|12'")
+        self.assert_bad("宽度 12 != 实际 10")
 
 
 class ServiceCase(UnitsCase):
