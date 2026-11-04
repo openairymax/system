@@ -33,7 +33,11 @@ get-default)
     printf '%s\\n' "${FAKE_TARGET:-graphical.target}"
     ;;
 is-active)
-    exit "${FAKE_ACTIVE:-0}"
+    unit="${!#}"
+    case "${unit}" in
+    *display-manager*|*lightdm*) exit "${FAKE_DM:-0}" ;;
+    *) exit "${FAKE_ACTIVE:-0}" ;;
+    esac
     ;;
 list-jobs)
     n=0
@@ -56,7 +60,10 @@ show)
         esac
     done
     case "${prop}" in
-    ActiveState) printf 'inactive\\n' ;;
+    ActiveState)
+        if [ "${FAKE_ACTIVE:-0}" -eq 0 ]; then printf 'active\\n'
+        else printf 'inactive\\n'; fi
+        ;;
     SubState) printf 'dead\\n' ;;
     MainPID) printf '812\\n' ;;
     Result) printf 'success\\n' ;;
@@ -154,6 +161,26 @@ class BootWatchCase(unittest.TestCase):
         self.jobs(JOB)
         res = self.run_watch(FAKE_ACTIVE="1")
         self.assertNotIn("unit=airy-boot-watch", res.stdout)
+
+    def test_no_dm_reported(self) -> None:
+        """目标已激活但登录管理器没在跑：桌面从没起来，同样要报。"""
+        self.jobs(JOB)
+        res = self.run_watch(FAKE_ACTIVE="0", FAKE_DM="1")
+        self.assertEqual(res.returncode, 0, res.stderr)
+        self.assertIn(
+            "AIRYMAX-BOOT-STUCK target=graphical.target active=active",
+            res.stdout,
+        )
+        self.assertIn("reason=nodm", res.stdout)
+
+    def test_headless_silent(self) -> None:
+        """无图形剖面没有登录管理器属正常，不得据此判卡点。"""
+        self.jobs(JOB)
+        res = self.run_watch(
+            FAKE_TARGET="multi-user.target", FAKE_ACTIVE="0", FAKE_DM="1"
+        )
+        self.assertEqual(res.returncode, 0, res.stderr)
+        self.assertEqual(res.stdout, "")
 
     def test_no_stderr(self) -> None:
         """诊断行不得进入 journal 的 err 桶（V-15 判据之一）。"""
