@@ -10,8 +10,12 @@
 #
 # 退出码：0 表示必检项齐全、没有设备被关断、没有固件失败证据、系统三面
 # 全部干净；3 表示缺证据（unknown 不等于通过）；1 表示出现失败证据——
-# 必检项整类不在、固件载入失败、单元 failed、err 日志非空或包集合漂移。
+# 必检项整类不在、固件载入失败、单元 failed、err 日志越界或包集合漂移。
 # 2 为用法错误。
+#
+# system 的 err 日志按单元归属分两层：产品自有单元（airymax-、airy- 前缀）
+# 的任何一条即失败；外来条目只与 --budget 给出的棘轮预算比较，超出即失败。
+# 预算由调用方按版本给出，缺省 0 即「外来 err 也必须为零」的最严口径。
 
 """AirymaxOS observe command line (I-24, J-31)."""
 
@@ -86,6 +90,10 @@ def _args(argv: Sequence[str] | None) -> argparse.Namespace:
     parser.add_argument(
         "--rpm", metavar="FILE", default=None,
         help="rpm -qa 的包名清单文件（默认现场执行）",
+    )
+    parser.add_argument(
+        "--budget", metavar="N", type=int, default=0,
+        help="外来 err 的棘轮预算（去重条数，默认 0 即最严）",
     )
     return parser.parse_args(argv)
 
@@ -176,6 +184,7 @@ def _sys_main(args: argparse.Namespace) -> int:
         _source(args.journal, osys.journal_live),
         _source(args.rpm, osys.rpm_live),
         osys.read_text(args.manifest),
+        args.budget,
     )
     if args.json:
         print(json.dumps(found.dump(), ensure_ascii=False))
@@ -190,21 +199,27 @@ def _source(path: str | None, live) -> str | None:
 
 
 def _emit_sys(found: osys.Survey) -> None:
+    # 首行是 TAP 证据行：判据的每个分量都在这一行里，现场比对不需要再翻
+    # 明细。unknown 单列，因为它既不是「干净」也不是「自有缺陷」。
     print(
         f"{PROG} system state={found.state} units={len(found.units)}"
-        f" errors={len(found.errors)} missing={len(found.missing)}"
-        f" extra={len(found.extra)}"
+        f" errors={len(found.errors)} owned={found.owned_n}"
+        f" foreign={found.foreign_n} unknown={found.unknown_n}"
+        f" budget={found.budget} packages={found.packs_state}"
+        f" missing={len(found.missing)} extra={len(found.extra)}"
     )
     print(f"  {'units':<9}{found.units_state:<8}{len(found.units):>5}"
           f" failed")
     print(f"  {'logs':<9}{found.logs_state:<8}{len(found.errors):>5}"
-          f" errors")
+          f" errors  owned={found.owned_n} foreign={found.foreign_n}"
+          f" unknown={found.unknown_n} budget={found.budget}")
     print(f"  {'packages':<9}{found.packs_state:<8}{found.have_n:>5}"
           f" installed  declared={found.want_n}")
     for name in found.units[:SHOWN]:
         print(f"failed {name}")
-    for line in found.errors[:SHOWN]:
-        print(f"error {line}")
+    for err in found.errors[:SHOWN]:
+        mark = " [owned]" if err.owned else ""
+        print(f"error {err.text}{mark}")
     for name in found.missing[:SHOWN]:
         print(f"missing {name}")
     for name in found.extra[:SHOWN]:
