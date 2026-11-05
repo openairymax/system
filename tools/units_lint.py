@@ -566,6 +566,8 @@ MEMCAP_PAIRS: dict[tuple[str, str], str] = {
     ),
     ("Service", "SuccessExitStatus"): "3",
     ("Service", "TimeoutStartSec"): "60",
+    ("Service", "RuntimeDirectory"): "airymax-ui",
+    ("Service", "RuntimeDirectoryPreserve"): "yes",
     ("Service", "ProtectSystem"): "strict",
     ("Service", "ProtectHome"): "yes",
     ("Service", "PrivateTmp"): "yes",
@@ -600,7 +602,7 @@ POWER_PAIRS: dict[tuple[str, str], str] = {
     ),
     ("Service", "SuccessExitStatus"): "3",
     ("Service", "TimeoutStartSec"): "60",
-    ("Service", "RuntimeDirectory"): "airy-power",
+    ("Service", "RuntimeDirectory"): "airy-power airymax-ui",
     ("Service", "RuntimeDirectoryPreserve"): "yes",
     ("Service", "ProtectSystem"): "strict",
     ("Service", "ProtectHome"): "yes",
@@ -627,6 +629,8 @@ COEXIST_PAIRS: dict[tuple[str, str], str] = {
         " mode,weight,current,applied /usr/bin/airy-rt-cap coexist --apply"
     ),
     ("Service", "TimeoutStartSec"): "60",
+    ("Service", "RuntimeDirectory"): "airymax-ui",
+    ("Service", "RuntimeDirectoryPreserve"): "yes",
     ("Service", "ProtectSystem"): "strict",
     ("Service", "ProtectHome"): "yes",
     ("Service", "PrivateTmp"): "yes",
@@ -1210,7 +1214,31 @@ def _stage_bad(name: str, cfg: ConfigParser) -> list[str]:
             f"{name}: AIRY_STAGE_BEAT {beat}s leaves no heartbeat before"
             f" TimeoutStartSec {timeout}s"
         )
+    errs.extend(_ui_dir_bad(name, cfg))
     return errs
+
+
+def _ui_dir_bad(name: str, cfg: ConfigParser) -> list[str]:
+    """阶段单元的沙箱必须放行去重标记目录。
+
+    ui.sh 的闸门把「本阶段本次开机是否已出结论」记在全局共享的
+    /run/airymax-ui 下，靠它让 timer 重跑的同阶段只出一行。ProtectSystem=
+    strict 会把 /run 一并挂成只读，此时目录若已由别的单元建好，mkdir -p
+    返回 0、写标记才以 EROFS 失败，闸门被静默跳过，阶段行每 60 秒重印一条
+    （run 42007477579 的 `/run/airymax-ui/5: Read-only file system`）。
+    声明 RuntimeDirectory=airymax-ui 让 systemd 保证该路径可写，是唯一
+    不依赖调用顺序的放行方式。
+    """
+    protect = _get(cfg, "Service", "ProtectSystem")
+    if protect not in ("strict", "full"):
+        return []
+    dirs = (_get(cfg, "Service", "RuntimeDirectory") or "").split()
+    if "airymax-ui" in dirs:
+        return []
+    return [
+        f"{name}: ProtectSystem={protect} hides /run/airymax-ui;"
+        " declare RuntimeDirectory=airymax-ui for the stage gate"
+    ]
 
 
 def _health_bad(name: str, cfg: ConfigParser) -> list[str]:
