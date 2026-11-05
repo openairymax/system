@@ -39,18 +39,37 @@ def _collect(policy: Policy, push: bool) -> Report:
         return Report(State.NO_CPU, 0, 0, 0, None, ())
     layout = cgroup.detect(policy.cgroup_root)
     share = policy.share(found.total)
-    landings = []
-    for entry in allocate(policy, found.total):
-        if push and layout is not None and layout.supported:
-            cgroup.write(layout, entry.slice, entry.budget, found.period)
-        landings.append(
-            Landing(entry.slice, entry.budget, _landed(layout, entry))
-        )
+    landings = _plan(policy, found.total, found.period, layout, push)
     state = _verdict(found.total, share, layout, landings)
     kind = layout.kind if layout is not None else None
     return Report(
-        state, found.total, share, found.period, kind, tuple(landings)
+        state, found.total, share, found.period, kind, landings
     )
+
+
+def _plan(
+    policy: Policy,
+    total: int,
+    period: int,
+    layout: Layout | None,
+    push: bool,
+) -> tuple[Landing, ...]:
+    """逐 slice 的落地计划。
+
+    内核不按组记账时（关闭了 RT 组调度）实时任务统一受全局预算限流，
+    没有份额可写：计划为空，``applied=0/0``。这里不能照常列出四个 slice
+    再标 missing，否则输出看起来像四个 slice 全都没落地。
+    """
+    if layout is not None and not layout.supported:
+        return ()
+    landings = []
+    for entry in allocate(policy, total):
+        if push and layout is not None:
+            cgroup.write(layout, entry.slice, entry.budget, period)
+        landings.append(
+            Landing(entry.slice, entry.budget, _landed(layout, entry))
+        )
+    return tuple(landings)
 
 
 def _landed(layout: Layout | None, entry: Entry) -> bool:
@@ -60,7 +79,10 @@ def _landed(layout: Layout | None, entry: Entry) -> bool:
 
 
 def _verdict(
-    total: int, share: int, layout: Layout | None, landings: list[Landing]
+    total: int,
+    share: int,
+    layout: Layout | None,
+    landings: tuple[Landing, ...],
 ) -> State:
     if total <= 0:
         return State.DISABLED

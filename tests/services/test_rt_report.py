@@ -74,6 +74,14 @@ class InspectTest(Tree):
         found = bandwidth.inspect(self.policy())
         self.assertIs(found.state, report.State.UNACCOUNTED)
 
+    def test_v1_global_budget(self) -> None:
+        """0.0.4 内核：v1 树只剩 cpu.shares，没有可写的分组预算。"""
+        self.global_mount()
+        found = bandwidth.inspect(self.policy())
+        self.assertIs(found.state, report.State.UNACCOUNTED)
+        self.assertTrue(found.passing)
+        self.assertEqual(found.wanted, 0)
+
     def test_no_cpu_on_unified_tree(self) -> None:
         (self.base / cgroup.CONTROLLER).write_text("io memory\n", "ascii")
         found = bandwidth.inspect(self.policy())
@@ -132,6 +140,14 @@ class ApplyTest(Tree):
         found = bandwidth.apply(self.policy())
         self.assertIs(found.state, report.State.UNACCOUNTED)
         self.assertFalse((self.base / policy.DEFAULT_SLICES[0]).exists())
+
+    def test_global_budget_writes_nothing(self) -> None:
+        mount = self.global_mount()
+        found = bandwidth.apply(self.policy())
+        self.assertIs(found.state, report.State.UNACCOUNTED)
+        self.assertEqual(
+            sorted(item.name for item in mount.iterdir()), [cgroup.V1_FAIR]
+        )
 
 
 if __name__ == "__main__":

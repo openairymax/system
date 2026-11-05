@@ -27,8 +27,12 @@ ADVICE = {
     State.FAILED: "没有任何 slice 落地：检查权限与层级预算上限",
     State.DISABLED: "内核不限制实时带宽（-1），无需切分",
     State.NO_CGROUP_V1: "未找到 cgroup cpu 记账树：确认 cpu 控制器已挂载",
-    State.UNACCOUNTED: "统一树缺少 cpu.rt.max：内核未启用 RT 组调度",
-    State.NO_CPU: "未暴露实时记账接口：确认内核启用 RT 组调度",
+    State.UNACCOUNTED: (
+        "内核按全局预算限流实时任务（未启用 RT 组调度），无需分组记账"
+    ),
+    State.NO_CPU: (
+        "实时预算接口不可用：检查 cpu 控制器挂载与总预算文件"
+    ),
 }
 
 

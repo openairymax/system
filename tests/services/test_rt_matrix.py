@@ -88,7 +88,19 @@ class FlagTest(Base):
         )
         found = matrix.collect(self.machine.roots())
         self.assertIs(found.flag(matrix.GROUP), matrix.Flag.NO)
-        self.assertEqual(found.caps[2].detail, "统一树未暴露 cpu 控制器")
+        self.assertEqual(
+            found.caps[2].detail, "内核未启用 RT 组调度：仅全局预算限流"
+        )
+
+    def test_group_v1_global_budget(self) -> None:
+        self.machine.put(
+            self.machine.cgroup / "cpu,cpuacct" / cgroup.V1_FAIR, "1024"
+        )
+        found = matrix.collect(self.machine.roots())
+        self.assertIs(found.flag(matrix.GROUP), matrix.Flag.NO)
+        self.assertEqual(
+            found.caps[2].detail, "内核未启用 RT 组调度：仅全局预算限流"
+        )
 
     def test_cmdline_unreadable(self) -> None:
         self.machine.cmdline.unlink()

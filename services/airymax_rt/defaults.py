@@ -23,6 +23,11 @@
 #     而全局 -1 会让 start_rt_bandwidth() 与 update_curr_rt() 全部不记账，
 #     X-01 的 per-slice 预算随之失效。所以补齐只能写有限值，取父组同额。
 #
+# 0.0.4 的内核关闭了 CONFIG_RT_GROUP_SCHED，上述按组记账整条路径都不存在：
+# 实时任务只受全局预算限流，任何组都不需要补写。因此「有 cpu 控制器但
+# 没有预算文件」判为可启动（全局预算已覆盖），只有 cpu 控制器缺失才算
+# 阻塞；把前者判成 blocked 会让正常装机在开机阶段降级。
+#
 # 因此本模块做两件事：defaults 只读判读三道门禁并给出阻塞项；seed 对
 # 新建组逐组补写有限预算，绝不写 -1。两者共用 cgroup 布局识别，判定
 # 口径与 status/apply 一致。
@@ -212,9 +217,15 @@ def inspect(
         privileged = os.geteuid() == 0
     total = found.total if found is not None else None
     gates = _gates(found is None, total, layout, group, rtprio, privileged)
-    enabled = layout is not None and layout.supported
+    enabled = layout is not None and layout.routed
     fresh = None
-    if layout is not None and group and found is not None and found.total > 0:
+    if (
+        layout is not None
+        and layout.supported
+        and group
+        and found is not None
+        and found.total > 0
+    ):
         fresh = cgroup.read_raw(layout, group)
         if fresh is None:
             gates.append(GROUP_ABSENT)
@@ -253,9 +264,9 @@ def _gates(
     gates: list[str] = []
     if layout is None:
         gates.append(NO_CGROUP)
-    elif not layout.supported:
+    elif not layout.routed:
         gates.append(NO_ACCOUNT)
-    elif not group:
+    elif layout.supported and not group:
         gates.append(NEW_GROUP_ZERO)
     return gates + _prio(rtprio, privileged)
 
@@ -306,9 +317,12 @@ def seed(
     """
     found = sysctl.budget(policy)
     layout = cgroup.detect(policy.cgroup_root)
-    if found is None or layout is None or not layout.supported:
-        note = _absence(found is None, layout)
+    if found is None or layout is None:
+        note = _absence(found is None)
         return tuple(Seed(name, 0, None, ABSENT, note) for name in groups)
+    if not layout.supported:
+        note = "内核按全局预算统一限流，无需按组补写"
+        return tuple(Seed(name, 0, None, KEPT, note) for name in groups)
     if found.total < 0:
         return tuple(
             Seed(name, 0, cgroup.read(layout, name), KEPT, "内核不限预算")
@@ -366,9 +380,8 @@ def _want(policy: Policy, layout: Layout, total: int, name: str) -> int:
     return parent
 
 
-def _absence(unreadable: bool, layout: Layout | None) -> str:
+def _absence(unreadable: bool) -> str:
+    """记账树缺失的两种原因；可按组记账的布局不会走到这里。"""
     if unreadable:
         return "总预算接口不可读"
-    if layout is None:
-        return "未找到 cgroup cpu 记账树"
-    return "内核未启用 RT 组调度"
+    return "未找到 cgroup cpu 记账树"

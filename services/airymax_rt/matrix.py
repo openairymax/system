@@ -221,9 +221,11 @@ def _group(roots: Roots) -> Cap:
     found = cgroup.detect(roots.cgroup)
     if found is None:
         return _cap(GROUP, Flag.NO, "未找到 cgroup cpu 记账树")
-    if not found.supported:
-        return _cap(GROUP, Flag.NO, "统一树未暴露 cpu 控制器")
-    return _cap(GROUP, Flag.YES, f"{found.kind.value}:{found.file}")
+    if found.supported:
+        return _cap(GROUP, Flag.YES, f"{found.kind.value}:{found.file}")
+    if found.routed:
+        return _cap(GROUP, Flag.NO, "内核未启用 RT 组调度：仅全局预算限流")
+    return _cap(GROUP, Flag.NO, "统一树未暴露 cpu 控制器")
 
 
 def _deadline(roots: Roots) -> Cap:

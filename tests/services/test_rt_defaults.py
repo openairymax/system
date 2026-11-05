@@ -170,6 +170,17 @@ class InspectTest(Base):
         self.assertEqual(found.verdict, defaults.UNKNOWN)
         self.assertIn(defaults.NO_CGROUP, found.blocked)
 
+    def test_global_budget_is_budgeted(self) -> None:
+        """0.0.4 内核不按组记账，全局预算已覆盖全部组，不算阻塞。"""
+        self.global_mount()
+        found = defaults.inspect(
+            self.policy(), limits=self.limits(UNLIMITED), privileged=True
+        )
+        self.assertEqual(found.verdict, defaults.BUDGETED)
+        self.assertEqual(found.blocked, ())
+        self.assertTrue(found.usable)
+        self.assertTrue(found.enabled)
+
     def test_v2_max_is_budgeted(self) -> None:
         self.v2()
         path = self.base / "user.slice"
@@ -253,6 +264,13 @@ class SeedTest(Base):
     def test_no_layout_absent(self) -> None:
         steps = defaults.seed(self.policy(), ("user.slice",))
         self.assertEqual(steps[0].state, defaults.ABSENT)
+
+    def test_global_budget_kept(self) -> None:
+        """不按组记账的内核没有可写的份额，补写按「无需处理」放行。"""
+        self.global_mount()
+        steps = defaults.seed(self.policy(), ("user.slice",))
+        self.assertEqual(steps[0].state, defaults.KEPT)
+        self.assertIn("全局预算", steps[0].note)
 
     def test_subtree(self) -> None:
         mount = self.mount()

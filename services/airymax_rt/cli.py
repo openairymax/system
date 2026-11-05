@@ -8,9 +8,10 @@
 # 份判定实现，避免「启动时写成功、门禁读失败」的两套口径；能力矩阵同理，
 # 探测与报告只此一处。
 #
-# 退出码：0 表示已全部落地、内核不限预算或整机满足完整实时；3 表示部分
-# 落地或仅有软实时；1 表示未通过且没有任何 slice 落地或完全不具备实时；
-# 2 为用法错误。门禁据此直接判读，不必解析人类可读输出。
+# 退出码：0 表示已全部落地、内核不限预算、内核按全局预算统一限流或整机
+# 满足完整实时；3 表示部分落地或仅有软实时；1 表示未通过且没有任何 slice
+# 落地或完全不具备实时；2 为用法错误。门禁据此直接判读，不必解析人类可读
+# 输出。
 
 """AirymaxOS RT command line (X-01, X-03).
 
@@ -46,8 +47,6 @@ EXIT_USAGE = 2
 
 EXIT_PARTIAL = 3
 
-PASSING = (State.OK, State.DISABLED)
-
 
 def main(argv: Sequence[str] | None = None) -> int:
     """解析命令行并分派；返回值即进程退出码。"""
@@ -73,7 +72,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     else:
         found = bandwidth.inspect(policy)
     _emit(found, args.json)
-    return _code(found.state)
+    return _code(found)
 
 
 def _opt() -> argparse.ArgumentParser:
@@ -384,10 +383,10 @@ def _emit(found: Report, as_json: bool) -> None:
     print(f"advice {config.advice(found.state)}")
 
 
-def _code(state: State) -> int:
-    if state in PASSING:
+def _code(found: Report) -> int:
+    if found.passing:
         return 0
-    if state is State.PARTIAL:
+    if found.state is State.PARTIAL:
         return EXIT_PARTIAL
     return EXIT_FAIL
 

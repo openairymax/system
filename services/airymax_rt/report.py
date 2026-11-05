@@ -5,9 +5,15 @@
 # 验收侧要回答的不是「写没写」，而是「现在能不能跑实时」。同一个「失败」
 # 背后有五种完全不同的处置：内核不限预算（disabled，无需处理）、没有
 # cgroup 记账树（no-cgroup-v1，装机缺陷）、统一树没有 cpu 控制器
-# （no-cpu，内核配置缺陷）、有控制器但不记账（unaccounted，内核未编 RT
-# 组调度）、以及该写没写进去（partial/failed，权限或层级约束）。把它们
-# 压成一个布尔值，运维只能看到「实时不可用」，排查要从零开始。
+# （no-cpu，内核配置缺陷）、有控制器但不记账（unaccounted）、以及该写
+# 没写进去（partial/failed，权限或层级约束）。把它们压成一个布尔值，
+# 运维只能看到「实时不可用」，排查要从零开始。
+#
+# unaccounted 不是缺陷：0.0.4 的内核关闭了 CONFIG_RT_GROUP_SCHED，实时
+# 任务统一受全局预算 kernel.sched_rt_runtime_us 限流，没有可写的分组
+# 预算文件。此时「没有落地份额」正是内核契约，验收按放行处理；只有
+# partial/failed 才说明该落的预算没落下去。把它判成失败会让正常装机
+# 在开机阶段降级，2026-11-05 的 0.0.4 装机失败即由此而来。
 #
 # token 与中文建议分开：token 供脚本比对，建议由命令行渲染，二者不混在
 # 数据结构里，避免脚本去解析人类可读文本。
@@ -60,6 +66,11 @@ class Report:
     @property
     def ok(self) -> bool:
         return self.state is State.OK
+
+    @property
+    def passing(self) -> bool:
+        """内核契约已满足：预算落地、内核不限，或按全局预算统一限流。"""
+        return self.state in (State.OK, State.DISABLED, State.UNACCOUNTED)
 
     @property
     def wanted(self) -> int:

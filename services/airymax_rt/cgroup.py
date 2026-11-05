@@ -9,9 +9,15 @@
 # 排查时最耗时。因此先反查真实挂载根，再决定文件名与写入格式。
 #
 # 两种「不可记账」必须区分：v2 的 cgroup.controllers 里没有 cpu，说明
-# 这台机器根本没把 cpu 控制器交给 cgroup；有 cpu 却没有 cpu.rt.max，
-# 说明内核没编 RT 组调度。前者写任何文件都无意义，后者写进去也不会被
-# 记账，验收侧要分别给出结论而不是笼统报失败。
+# 这台机器根本没把 cpu 控制器交给 cgroup；有 cpu 却没有记账文件，说明
+# 内核没编 RT 组调度，实时任务改由全局预算限流。前者写任何文件都无意义，
+# 后者本就无需分组记账，验收侧要分别给出结论而不是笼统报失败。
+#
+# v1 上「没有 cpu.rt_runtime_us」必须与「没有记账树」分开：0.0.4 的内核
+# 关闭了 CONFIG_RT_GROUP_SCHED，整个 cpu,cpuacct 挂载点只剩 cpu.shares
+# 等公平调度文件。早期实现只认 cpu.rt_runtime_us，于是把这种内核判成
+# 「找不到记账树」，开机单元连带失败。cpu 控制器在不在用 cpu.shares 判定，
+# 预算文件存不存在决定是否按组记账。
 #
 # 设计依据：docs-linux/100-operations/02-configuration.md §2.2。
 
@@ -28,6 +34,7 @@ __all__ = [
     "MAX",
     "SUBTREE",
     "UNLIMITED",
+    "V1_FAIR",
     "V1_FILE",
     "V2_FILE",
     "Kind",
@@ -41,6 +48,11 @@ __all__ = [
 ]
 
 V1_FILE = "cpu.rt_runtime_us"
+
+# cpu 控制器挂到独立挂载点就会有的公平调度权重文件。它不是 RT 预算接口，
+# 只用来回答「这块挂载点上有没有 cpu 控制器」，因此在内核不编 RT 组调度
+# 时仍然存在。
+V1_FAIR = "cpu.shares"
 
 V2_FILE = "cpu.rt.max"
 
@@ -70,10 +82,10 @@ class Kind(Enum):
 class Layout:
     """一次识别结果。
 
-    ``supported`` 只对 v2 有意义：统一树存在但缺少 ``cpu.rt.max`` 时，
-    布局可用而预算不可记账，判定为 unaccounted。v1 只要找到挂载根即可写。
-    ``file`` 为空表示统一树没有把 cpu 控制器分发给子组，此时连预算文件
-    都不存在，与「有文件但未记账」是两种不同的故障。
+    ``supported`` 表示实时预算能否按组记账：内核编了 RT 组调度、且当前
+    层级暴露了预算文件时为真。``file`` 为空表示没有可写的预算文件，实时
+    任务由全局预算统一限流，此时 ``supported`` 必为假但与「没有记账树」
+    是两回事。
     """
 
     kind: Kind
@@ -88,7 +100,12 @@ class Layout:
 
 
 def detect(root: str) -> Layout | None:
-    """从挂载根识别布局；整棵记账树都不存在时返回 None。"""
+    """从挂载根识别布局；整棵记账树都不存在时返回 None。
+
+    v1 分两轮：先找带 ``cpu.rt_runtime_us`` 的挂载点（按组记账），找不到
+    再找只带 ``cpu.shares`` 的挂载点（cpu 控制器在、内核不按组记账）。
+    两轮都不中才说明这台机器没有 cpu 记账树。
+    """
     base = Path(root)
     if (base / CONTROLLER).is_file():
         try:
@@ -106,6 +123,9 @@ def detect(root: str) -> Layout | None:
     for entry in entries:
         if (entry / V1_FILE).is_file():
             return Layout(Kind.V1, str(entry), V1_FILE, True)
+    for entry in entries:
+        if (entry / V1_FAIR).is_file():
+            return Layout(Kind.V1, str(entry), "", False)
     return None
 
 
@@ -119,8 +139,11 @@ def read_raw(layout: Layout, name: str) -> str | None:
 
     判定「新建组能不能跑实时」必须区分 ``0``、``-1`` 与 ``max``：
     ``0`` 是禁止，后两者是不记账。只要把原始值留给调用方，判定层就能
-    给出「被谁挡住」而不是笼统的「不可用」。
+    给出「被谁挡住」而不是笼统的「不可用」。没有预算文件时直接返回
+    None：拼出的路径是目录本身，读它会得到 EISDIR 而不是预算值。
     """
+    if not layout.file:
+        return None
     path = target(layout, name) / layout.file
     try:
         text = path.read_text(encoding="ascii").strip()

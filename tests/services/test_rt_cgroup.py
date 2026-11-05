@@ -70,6 +70,19 @@ class DetectTest(TempTree):
         assert found is not None
         self.assertIs(found.kind, cgroup.Kind.V2)
         self.assertFalse(found.supported)
+        self.assertTrue(found.routed)
+
+    def test_v1_without_rt_file(self) -> None:
+        mount = self.base / "cpu,cpuacct"
+        mount.mkdir()
+        (mount / cgroup.V1_FAIR).write_text("1024\n", encoding="ascii")
+        found = cgroup.detect(str(self.base))
+        assert found is not None
+        self.assertIs(found.kind, cgroup.Kind.V1)
+        self.assertEqual(found.file, "")
+        self.assertFalse(found.supported)
+        self.assertTrue(found.routed)
+        self.assertIsNone(cgroup.read_raw(found, "user.slice"))
 
     def test_v2_without_cpu(self) -> None:
         (self.base / cgroup.CONTROLLER).write_text("io memory\n", "ascii")
