@@ -36,9 +36,12 @@
 # stderr 并入 stdout：诊断行落进 journal 的 err 桶会让
 # `journalctl -p err -b` 非空，而它同样是交付判据。
 #
-# 每条事实同时写 stdout（journal）、/dev/console 与串口（若存在）：带串口
-# 的机器上 /dev/console 只归内核命令行里最后一个 console=，本地屏与串口
-# 未必同源，只打一条通道等于在另一侧失明。
+# 每条事实同时写 stdout（journal）与串口设备节点：/dev/console 只归内核
+# 命令行里最后一个 console=，本项目的命令行是
+# console=ttyS0,115200 console=tty0，落点是本地屏，写进去的每一行都停在
+# tty0 上，只有串口的现场读不到（run 41925092075 的冷启动就是这样：探针
+# 判负并打印了，串口里却一条卡点事实都没有）。故串口优先、/dev/console
+# 次之，两者同源时才省掉一份。
 #
 # 部署：airy-boot-watch.service，由 airy-boot-watch.timer 触发。
 # ===========================================================================
@@ -51,35 +54,45 @@ readonly WIN="${AIRY_WATCH_WIN:-40}"
 readonly JTOT="${AIRY_WATCH_JOBS:-8}"
 readonly CONSOLE="${UI_CONSOLE:-/dev/console}"
 readonly SERIAL="${AIRY_WATCH_SERIAL:-/dev/ttyS0}"
+readonly ACTIVE="${AIRY_WATCH_ACTIVE:-/sys/class/tty/console/active}"
 readonly SELF=airy-boot-watch
+# 单次写入的阻塞上限：/dev/console 归内核 console 层，控制台驱动死锁时
+# 写操作不返回。观测者跟着挂死，等于在最需要证据的时候自我灭口。
+readonly WLIM=2
 
 IDLE=0
 CHURN=0
-ALT=''
+CHANS=()
 
-console_has() {
-    tr ' ' '\n' </sys/class/tty/console/active 2>/dev/null | grep -qx "$1"
+# /dev/console 落到哪个控制台由内核命令行里最后一个 console= 决定：
+# console_device() 遍历已注册的控制台并取最后一项。所以「ttyS0 出现在
+# 活动列表里」不意味着 /dev/console 指向 ttyS0，判据必须取列表末位。
+ser_own() {
+    local pref
+
+    pref="$(tr ' ' '\n' <"${ACTIVE}" 2>/dev/null | sed -n '$p')" || pref=''
+    [ "${pref}" != "${SERIAL##*/}" ]
 }
 
-# 串口已被 /dev/console 占用时不再单独写一份，否则同一行在串口出现两次。
-# 判据取内核对活动控制台的登记，不比较设备节点：/dev/console 与 ttyS0
-# 是两个不同的节点，重定向关系只存在于内核里。
-if [ -c "${SERIAL}" ] && ! console_has "${SERIAL##*/}"; then
-    ALT="${SERIAL}"
+# 串口设备节点不经 console 层，是控制台层卡死时唯一还能出的通道，恒为首选；
+# 仅当它正是 /dev/console 的落点时才不重复写第二份。
+if [ -c "${SERIAL}" ]; then
+    CHANS=("${SERIAL}")
+    if ser_own; then
+        CHANS+=("${CONSOLE}")
+    fi
+else
+    CHANS=("${CONSOLE}")
 fi
 
 put() {
     local line="$*" dev
-    local devs=("${CONSOLE}")
 
-    if [ -n "${ALT}" ]; then
-        devs+=("${ALT}")
-    fi
     printf '%s\n' "${line}"
-    for dev in "${devs[@]}"; do
-        if [ -w "${dev}" ]; then
-            printf '%s\n' "${line}" >>"${dev}" 2>/dev/null || :
-        fi
+    for dev in "${CHANS[@]}"; do
+        [ -w "${dev}" ] || continue
+        printf '%s\n' "${line}" |
+            timeout "${WLIM}" tee -a "${dev}" >/dev/null 2>&1 || :
     done
 }
 
@@ -186,7 +199,7 @@ rep_fail() {
 rep_console() {
     local act=''
 
-    act="$(tr ' ' ',' </sys/class/tty/console/active 2>/dev/null)" || act=''
+    act="$(tr ' ' ',' <"${ACTIVE}" 2>/dev/null)" || act=''
     put "AIRYMAX-BOOT-CONSOLE active=${act:-unknown}"
 }
 
