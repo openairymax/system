@@ -86,13 +86,22 @@ class InspectTest(Base):
     """只读评估的四种结论。"""
 
     def test_absent(self) -> None:
-        shim = Shim(self.base / "absent", load="not-found")
+        shim = Shim(self.base / "absent", load="not-found", active="inactive")
         found = coexist.inspect(
             self.config(systemctl=str(shim.exe))
         )
         self.assertIs(found.mode, coexist.Mode.ABSENT)
         self.assertFalse(found.present)
         self.assertEqual(found.weight, 0)
+
+    def test_loaded_but_inactive(self) -> None:
+        """单元装了但没有会话落在里面：开机早期即此状态，必须按 absent 处理。"""
+        shim = Shim(self.base / "idle", load="loaded", active="inactive")
+        self.machine.pressure("40.00")
+        found = coexist.inspect(self.config(systemctl=str(shim.exe)))
+        self.assertIs(found.mode, coexist.Mode.ABSENT)
+        self.assertFalse(found.present)
+        self.assertEqual(found.detail, "ActiveState=inactive")
 
     def test_in_sync(self) -> None:
         found = coexist.inspect(self.config())
@@ -108,11 +117,11 @@ class InspectTest(Base):
         self.assertEqual(found.current, coexist.BASE_WEIGHT)
         self.assertFalse(found.applied)
 
-    def test_load_state_unreadable(self) -> None:
-        self.shim.drop("LoadState")
+    def test_active_state_unreadable(self) -> None:
+        self.shim.drop("ActiveState")
         found = coexist.inspect(self.config())
         self.assertIs(found.mode, coexist.Mode.FAILED)
-        self.assertIn("LoadState", found.detail)
+        self.assertIn("ActiveState", found.detail)
 
     def test_systemctl_missing(self) -> None:
         found = coexist.inspect(
@@ -211,10 +220,20 @@ class ApplyTest(Base):
         self.assertEqual(found.detail, "set-property 未生效")
 
     def test_absent_untouched(self) -> None:
-        shim = Shim(self.base / "absent", load="not-found")
+        shim = Shim(self.base / "absent", load="not-found", active="inactive")
         found = coexist.apply(self.config(systemctl=str(shim.exe)))
         self.assertIs(found.mode, coexist.Mode.ABSENT)
         self.assertFalse(found.applied)
+        self.assertEqual(shim.weight(), str(coexist.BASE_WEIGHT))
+
+    def test_inactive_slice_unwritten(self) -> None:
+        """没有会话可保护时不得写运行时属性：高负载也不能成为写属性的理由。"""
+        shim = Shim(self.base / "idle", load="loaded", active="inactive")
+        self.machine.pressure("40.00")
+        found = coexist.apply(self.config(systemctl=str(shim.exe)))
+        self.assertIs(found.mode, coexist.Mode.ABSENT)
+        self.assertFalse(found.applied)
+        self.assertEqual(shim.weight(), str(coexist.BASE_WEIGHT))
 
 
 class CliTest(Base):
@@ -258,7 +277,7 @@ class CliTest(Base):
         self.assertEqual(self.shim.weight(), str(coexist.PROTECT_WEIGHT))
 
     def test_failed_exit_fail(self) -> None:
-        self.shim.drop("LoadState")
+        self.shim.drop("ActiveState")
         code, _ = self.call(self.args("coexist"))
         self.assertEqual(code, cli.EXIT_FAIL)
 
