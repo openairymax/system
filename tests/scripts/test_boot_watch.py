@@ -93,6 +93,11 @@ class BootWatchCase(unittest.TestCase):
         self.console = base / "console"
         self.console.write_text("", encoding="utf-8")
         self.serial = base / "ttyS0"
+        # 串口通道必须是字符设备才会被脚本选中；以链接指向 /dev/null 得到
+        # 一个可写、且内核 tty 名与实际一致（ttyS0）的替身。
+        self.serial.symlink_to("/dev/null")
+        self.active = base / "active"
+        self.active.write_text("tty1\n", encoding="utf-8")
 
     def jobs(self, *texts: str) -> None:
         for idx, text in enumerate(texts, start=1):
@@ -106,6 +111,7 @@ class BootWatchCase(unittest.TestCase):
             {
                 "UI_CONSOLE": str(self.console),
                 "AIRY_WATCH_SERIAL": str(self.serial),
+                "AIRY_WATCH_ACTIVE": str(self.active),
                 "FAKE_SEQ": str(self.seq),
                 "AIRY_WATCH_POLL": "1",
                 "AIRY_WATCH_WIN": "2",
@@ -193,6 +199,30 @@ class BootWatchCase(unittest.TestCase):
         self.run_watch(FAKE_ACTIVE="1")
         text = self.console.read_text(encoding="utf-8")
         self.assertIn("AIRYMAX-BOOT-STUCK", text)
+
+    def test_serial_reached_when_console_is_vt(self) -> None:
+        """/dev/console 落到 tty0 时，报告仍须抵达 /dev/console 与串口两侧。
+
+        产品命令行是 console=ttyS0,115200 console=tty0：ttyS0 在活动列表里，
+        但 /dev/console 指向 tty0。按「在列表里即同源」去重会让串口现场失明。
+        """
+        self.jobs(JOB)
+        self.active.write_text("ttyS0 tty0\n", encoding="utf-8")
+        res = self.run_watch(FAKE_ACTIVE="1")
+        self.assertEqual(res.returncode, 0, res.stderr)
+        self.assertIn("AIRYMAX-BOOT-STUCK", res.stdout)
+        self.assertIn(
+            "AIRYMAX-BOOT-STUCK", self.console.read_text(encoding="utf-8")
+        )
+
+    def test_serial_dedup_when_it_is_console(self) -> None:
+        """串口正是 /dev/console 的落点时只写一份，不在串口重复出行。"""
+        self.jobs(JOB)
+        self.active.write_text("tty0 ttyS0\n", encoding="utf-8")
+        res = self.run_watch(FAKE_ACTIVE="1")
+        self.assertEqual(res.returncode, 0, res.stderr)
+        self.assertIn("AIRYMAX-BOOT-STUCK", res.stdout)
+        self.assertEqual(self.console.read_text(encoding="utf-8"), "")
 
     def test_failed_count(self) -> None:
         self.jobs(JOB)
