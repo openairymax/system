@@ -27,6 +27,12 @@
 # airymax-desktop.slice 单元钉住，机器重启后不会残留一个没有守护进程解释
 # 的权重。写入后回读 CPUWeight，只有回读值与目标一致才算落地。
 #
+# 「有没有桌面可保护」只看 ActiveState。slice 单元只要文件装了就是
+# LoadState=loaded，即使没有任何会话落在里面；开机早期先于 display-manager
+# 执行时正是这种状态，此时负载均值反映的是装机与首启作业，不是桌面失响应的
+# 信号，按它抬权重等于给一个还不存在的会话改参数，并把结果留在运行时属性里
+# 带进本次启动的整个生命周期。因此未激活一律按 absent 处理、不写属性。
+#
 # 设计依据：docs-linux/170-performance/07-rt-matrix.md、0.0.4 方案 §6.7
 # X-05。
 
@@ -195,11 +201,11 @@ def apply(cfg: Coexist) -> Plan:
 
 def _assess(cfg: Coexist, push: bool) -> Plan:
     found = matrix.collect(cfg.roots)
-    state = _query(cfg, "LoadState")
+    state = _query(cfg, "ActiveState")
     if state is None:
-        return _plan(cfg, found, Mode.FAILED, detail="LoadState 不可读")
-    if state != "loaded":
-        return _plan(cfg, found, Mode.ABSENT, detail=f"LoadState={state}")
+        return _plan(cfg, found, Mode.FAILED, detail="ActiveState 不可读")
+    if state != "active":
+        return _plan(cfg, found, Mode.ABSENT, detail=f"ActiveState={state}")
     seen = _sample(cfg)
     mode, weight = decide(seen.value, _limit(cfg, seen.source))
     current = _number(_query(cfg, "CPUWeight"))

@@ -107,10 +107,11 @@ class Shim:
     """以文件为状态的假 systemctl：只实现共存策略用到的三个动作。"""
 
     def __init__(self, base: Path, load: str = "loaded",
-                 weight: str = "50") -> None:
+                 weight: str = "50", active: str = "active") -> None:
         self.state = base / "unit"
         self.state.mkdir(parents=True)
         (self.state / "LoadState").write_text(load + "\n", encoding="ascii")
+        (self.state / "ActiveState").write_text(active + "\n", encoding="ascii")
         (self.state / "CPUWeight").write_text(weight + "\n", encoding="ascii")
         self.exe = base / "systemctl"
         self.exe.write_text(
