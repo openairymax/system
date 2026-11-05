@@ -13,6 +13,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -32,7 +33,7 @@ STAGE = "电源与热治理"
 TOOL = """#!/usr/bin/env bash
 set -euo pipefail
 printf '%s\\n' "${FAKE_FIRST:-}"
-printf 'zone cpu=1\\n'
+printf 'zone cpu=%s\\n' "${FAKE_TAIL:-1}"
 sleep "${FAKE_SLEEP:-0}"
 exit "${FAKE_RC:-0}"
 """
@@ -129,6 +130,39 @@ class StageCase(unittest.TestCase):
         res = self.stage()
         self.assertIn("zone cpu=1", res.stdout)
         self.assertTrue(self.journal.exists())
+
+    def test_repeat_quiet(self) -> None:
+        """同一结论在 REPEAT 之内不再转发快照：285H 的 9886 行噪声根因。"""
+        self.assertEqual(self.stage().returncode, 0)
+        res = self.stage()
+        self.assertEqual(res.returncode, 0, res.stderr)
+        self.assertNotIn("zone cpu", res.stdout)
+        self.assertNotIn("[ 6/9 ]", res.stdout)
+
+    def test_change_prints(self) -> None:
+        """结论变化必须立即转发，抑制只针对逐字相同的重复。"""
+        self.stage()
+        res = self.stage(
+            first=FIRST.replace("severity=ok", "severity=hot"), rc=3
+        )
+        self.assertEqual(res.returncode, 3, res.stderr)
+        self.assertIn("zone cpu=1", res.stdout)
+        self.assertNotIn("[ 6/9 ]", res.stdout)
+
+    def test_detail_ignored(self) -> None:
+        """逐轮都变的明细（温度、节流计数）不进指纹，否则抑制永不命中。"""
+        self.stage()
+        res = self.stage(FAKE_TAIL="99")
+        self.assertNotIn("zone cpu", res.stdout)
+
+    def test_interval_beat(self) -> None:
+        """指纹不变但已过 REPEAT 时转发一次，证明仍在同一档位运行。"""
+        self.stage()
+        snap = self.state / "6.snap"
+        age = time.time() - 10
+        os.utime(snap, (age, age))
+        res = self.stage(AIRY_STAGE_REPEAT="1")
+        self.assertIn("zone cpu=1", res.stdout)
 
     def test_begin_precedes_result(self) -> None:
         """起始行先落，卡住的阶段才有一行可指认的「我在第几步」。"""

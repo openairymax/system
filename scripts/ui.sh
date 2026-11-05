@@ -11,6 +11,8 @@
 #   ui_beat <阶段名> <已用秒> <上限秒>
 #   ui_due  <阶段名>
 #   ui_gate <阶段名>
+#   ui_id   <阶段名>
+#   ui_state
 #   ui_total
 #
 # 输出形态（console 与 journal 逐字相同）：
@@ -199,6 +201,22 @@ ui_beat() {
 # 落到临时目录，产品路径恒为 /run/airymax-ui。
 _ui_dir() {
     printf '%s' "${UI_STATE:-/run/airymax-ui}"
+}
+
+# 阶段序号的公开读取口（与闸门标记同名）。需要在同一目录里记本阶段状态的
+# 调用方用它，避免自己按契约表推算一遍序号。
+ui_id() {
+    local row
+
+    row="$(_ui_row "$1")" ||
+        { _ui_err "${UI_EINVAL}" "阶段名不在契约表: $1"; return "${UI_EINVAL}"; }
+    printf '%s' "${row%%|*}"
+}
+
+# 标记目录的公开读取口：阶段运行器要在同一目录里记「上一轮结论」，路径必须
+# 与闸门同源，否则抑制与去重会落在两处、互不可见。
+ui_state() {
+    _ui_dir
 }
 
 # 本次开机该阶段是否还没输出过（只读，不占标记）。需要在执行命令之前就知道
