@@ -95,9 +95,9 @@ _ui_err() {
 # console；两条通道都要，缺一条就会在「只能看屏幕」或「只能抓日志」的一侧
 # 失明。logger 缺席（chroot、最小 rootfs）时不影响调用方。
 #
-# 已经声明 StandardOutput=journal+console 的单元，stdout 本身就是 console，
-# 再写一遍会让每行在屏幕上出现两次；去重与串口优先的判据都在 con_sink 里，
-# 两个调用方共用同一份实现。
+# 调用方把 stdout 直接接到 console 时（装机现场手工执行、脚本里
+# exec >/dev/console），再写一遍会让每行在屏幕上出现两次；去重与串口优先
+# 的判据都在 con_sink 里，两个调用方共用同一份实现。
 _ui_emit() {
     local line="$1"
 
