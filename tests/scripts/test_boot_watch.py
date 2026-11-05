@@ -75,6 +75,15 @@ esac
 
 JOB = "1 lightdm.service start running\n2 airy-boot-watch.service start running\n"
 
+PLYMOUTH = """#!/usr/bin/env bash
+set -uo pipefail
+printf '%s\\n' "$*" >>"${FAKE_PLY_LOG:?}"
+case "$1" in
+--ping) exit "${FAKE_PLY_PING:-0}" ;;
+esac
+exit 0
+"""
+
 
 class BootWatchCase(unittest.TestCase):
     """构造桩 systemctl 与隔离的输出通道。"""
@@ -88,6 +97,11 @@ class BootWatchCase(unittest.TestCase):
         tool = self.bin / "systemctl"
         tool.write_text(SYSTEMCTL, encoding="utf-8")
         tool.chmod(0o755)
+        ply = self.bin / "plymouth"
+        ply.write_text(PLYMOUTH, encoding="utf-8")
+        ply.chmod(0o755)
+        self.ply = base / "plymouth.log"
+        self.ply.write_text("", encoding="utf-8")
         self.seq = base / "seq"
         self.seq.mkdir()
         self.console = base / "console"
@@ -115,6 +129,7 @@ class BootWatchCase(unittest.TestCase):
                 "FAKE_SEQ": str(self.seq),
                 "AIRY_WATCH_POLL": "1",
                 "AIRY_WATCH_WIN": "2",
+                "FAKE_PLY_LOG": str(self.ply),
                 "LANG": "C.UTF-8",
             }
         )
@@ -230,6 +245,23 @@ class BootWatchCase(unittest.TestCase):
             FAKE_ACTIVE="1", FAKE_FAILED="lightdm.service loaded failed\n"
         )
         self.assertIn("AIRYMAX-BOOT-FAILED n=1", res.stdout)
+
+    def test_splash_hidden_on_stuck(self) -> None:
+        """rhgb 下屏幕被 plymouth 接管，卡点结论必须先把画面收起来。"""
+        self.jobs(JOB)
+        self.run_watch(FAKE_ACTIVE="1")
+        self.assertIn("--hide-splash", self.ply.read_text(encoding="utf-8"))
+
+    def test_splash_kept_when_healthy(self) -> None:
+        self.jobs(JOB)
+        self.run_watch(FAKE_ACTIVE="0")
+        self.assertEqual(self.ply.read_text(encoding="utf-8"), "")
+
+    def test_splash_kept_when_daemon_absent(self) -> None:
+        """命令行没有 rhgb 时 plymouth 只是装着的，不得去碰它。"""
+        self.jobs(JOB)
+        self.run_watch(FAKE_ACTIVE="1", FAKE_PLY_PING="1")
+        self.assertEqual(self.ply.read_text(encoding="utf-8"), "--ping\n")
 
 
 class LintCase(unittest.TestCase):

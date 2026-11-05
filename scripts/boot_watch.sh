@@ -197,6 +197,18 @@ dm_live() {
     return 1
 }
 
+# 桌面剖面开机时由 plymouth 接管本地屏幕（rhgb），阶段行与卡点报告虽然写进
+# 了 /dev/console，却被启动画面盖住：现场面对的是一块静止的图形，而不是
+# 「哪一步、等了多久、哪条作业还挂着」。判定卡点后先收起画面，让 VT 上位，
+# 已经写下的事实才看得见。plymouth 缺席（无图形剖面、最小安装）或未运行
+# （命令行去掉了 rhgb）时无事可做。
+unveil() {
+    command -v plymouth >/dev/null 2>&1 || return 0
+    plymouth --ping 2>/dev/null || return 0
+    plymouth --hide-splash >/dev/null 2>&1 || :
+    return 0
+}
+
 main() {
     local tgt first reason
 
@@ -208,6 +220,7 @@ main() {
     else
         return 0
     fi
+    unveil
     first="$(pend | awk 'NR == 1 { print $2 }')"
     rep_tgt "${tgt}" "${reason}"
     rep_jobs
