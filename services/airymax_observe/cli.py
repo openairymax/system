@@ -35,7 +35,19 @@ EXIT_FAIL = 1
 
 EXIT_PARTIAL = 3
 
-SHOWN = 4
+# 明细行的上限。曾固定为 4，结果 T23 报 errors=42 却只列 4 条，现场看不出
+# 另外 38 条是什么——计数与明细必须能对上，否则这一行就失去了诊断价值。
+# 取值按外来预算（err-budget 当前 26）的三倍留余量：正常失败现场一次列全，
+# 真出现雪崩时仍然截断并显式告知剩余条数，不让日志淹没有效信息。
+SHOWN = 80
+
+
+def _rows(label: str, items: Sequence[str]) -> None:
+    """逐条打印明细；超出上限时补一行剩余条数，不静默丢弃。"""
+    for item in items[:SHOWN]:
+        print(f"{label} {item}")
+    if len(items) > SHOWN:
+        print(f"{label} ... {len(items) - SHOWN} more")
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -215,15 +227,11 @@ def _emit_sys(found: osys.Survey) -> None:
           f" unknown={found.unknown_n} budget={found.budget}")
     print(f"  {'packages':<9}{found.packs_state:<8}{found.have_n:>5}"
           f" installed  declared={found.want_n}")
-    for name in found.units[:SHOWN]:
-        print(f"failed {name}")
-    for err in found.errors[:SHOWN]:
-        mark = " [owned]" if err.owned else ""
-        print(f"error {err.text}{mark}")
-    for name in found.missing[:SHOWN]:
-        print(f"missing {name}")
-    for name in found.extra[:SHOWN]:
-        print(f"extra {name}")
+    _rows("failed", found.units)
+    _rows("error", [f"{err.text}{' [owned]' if err.owned else ''}"
+                    for err in found.errors])
+    _rows("missing", found.missing)
+    _rows("extra", found.extra)
 
 
 def _sys_code(found: osys.Survey) -> int:
