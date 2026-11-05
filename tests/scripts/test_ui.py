@@ -145,18 +145,36 @@ class Case(unittest.TestCase):
     def test_console_gets_the_line_when_stdout_is_a_pipe(self):
         console = self.dir / "console"
         console.write_text("", encoding="utf-8")
-        out = self.run_ui("ui_ok 基础挂载 x=1", UI_CONSOLE=str(console))
+        out = self.run_ui("ui_ok 基础挂载 x=1", UI_CONSOLE=str(console),
+                          **self.local_only())
         self.assertEqual(out.returncode, 0, out.stderr)
         self.assertEqual(console.read_text(encoding="utf-8"), out.stdout)
 
     def test_console_line_is_not_doubled_when_stdout_is_console(self):
         console = self.dir / "console"
-        rc = self.run_ui_to_file("ui_ok 桌面就绪 unit=lightdm", console)
+        rc = self.run_ui_to_file("ui_ok 桌面就绪 unit=lightdm", console,
+                                 **self.local_only())
         self.assertEqual(rc, 0)
         self.assertEqual(
             console.read_text(encoding="utf-8"),
             "[ 8/9 ] 桌面就绪        ok   unit=lightdm\n",
         )
+
+    def local_only(self) -> dict[str, str]:
+        """把通道判定钉在本目录：无串口、活动控制台是本地屏。
+
+        通道表默认读宿主机的 /sys/class/tty/console/active。宿主的命令行末位
+        恰好是串口时（CI 的 runner 就是这样），con_init 认定 /dev/console 已
+        落在串口上而把本地屏从通道里去掉，于是「重定向出去的落点拿到整行」
+        这条判据随宿主硬件变色。它要判的其实只有「stdout 不是终端时补写
+        一份」，串口侧由 _chans 的用例分别覆盖，所以这里把两个输入都钉死。
+        """
+        active = self.dir / "active"
+        active.write_text("tty0\n", encoding="utf-8")
+        return {
+            "AIRY_CON_SERIAL": str(self.dir / "absent-ttyS0"),
+            "AIRY_CON_ACTIVE": str(active),
+        }
 
     def test_total_comes_from_the_table(self):
         out = self.run_ui("ui_total")
