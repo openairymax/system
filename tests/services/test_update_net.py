@@ -114,11 +114,20 @@ class FailureTest(unittest.TestCase):
             with self.assertRaises(net.Fetch):
                 net.fetch_manifest()
 
-    def test_http_error(self) -> None:
-        err = urllib.error.HTTPError(net.FEED_URL, 404, "gone", {}, None)
+    def test_missing_feed(self) -> None:
+        """404 是「远端尚未发版」，要能与真正的故障区分开。"""
+        err = urllib.error.HTTPError(net.FEED_URL, 404, "Not Found", {}, None)
         with mock.patch.object(net.urllib.request, "urlopen", side_effect=err):
-            with self.assertRaises(net.Fetch):
+            with self.assertRaises(net.NoFeed):
                 net.fetch_manifest()
+
+    def test_server_error_is_not_missing_feed(self) -> None:
+        """连上了却取不到东西才算故障：5xx 不能被当成「尚未发版」。"""
+        err = urllib.error.HTTPError(net.FEED_URL, 503, "busy", {}, None)
+        with mock.patch.object(net.urllib.request, "urlopen", side_effect=err):
+            with self.assertRaises(net.Fetch) as caught:
+                net.fetch_manifest()
+        self.assertNotIsInstance(caught.exception, net.NoFeed)
 
     def test_oversized(self) -> None:
         with mock.patch.object(net.urllib.request, "urlopen",

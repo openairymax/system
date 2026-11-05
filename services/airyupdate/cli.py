@@ -3,17 +3,19 @@
 # AirymaxOS 升级检查命令行入口
 #
 # check 取通道、比对三元组并原子写状态，退出码 0 最新 / 10 有新版 /
-# 1 失败；status 只读状态与本地身份，退出码 0 有状态 / 1 无状态；
-# notify 只读状态并在会话内提醒一次，永远返回 0；apply 只承担基底勘误，
-# 退出码 0 成功 / 1 失败 / 20 需重装介质。网络与状态属系统，提醒属会话，
-# 故提醒单独成子命令，不为取件失败承担告警职责。
+# 1 失败；远端尚未发布清单（HTTP 404）同样退出 0，因为它等同于「暂无
+# 可装更新」而非故障。status 只读状态与本地身份，退出码 0 有状态 /
+# 1 无状态；notify 只读状态并在会话内提醒一次，永远返回 0；apply 只承担
+# 基底勘误，退出码 0 成功 / 1 失败 / 20 需重装介质。网络与状态属系统，
+# 提醒属会话，故提醒单独成子命令，不为取件失败承担告警职责。
 
 """AirymaxOS update command line (V-14-07, V-14-08, V-14-09).
 
 设计依据：docs-linux/190-distribution/04-update-mechanism.md §2.4、§2.5。
 ``check`` 无网络时判失败而非通过：把「没连上」记成「已是最新」是唯一
-无法靠人工复核发现的假绿。``notify`` 不取网络、不解读失败原因，只因
-状态里已有更新结论而提醒，故它与 ``apply`` 都不改 ``last_ok``。
+无法靠人工复核发现的假绿。反之，远端明确回 404（尚未发布清单）是连上了
+却没有可比对象，属于正常起点，判通过。``notify`` 不取网络、不解读失败原因，
+只因状态里已有更新结论而提醒，故它与 ``apply`` 都不改 ``last_ok``。
 ``apply`` 以 ``--assumeno`` 求解事务，再以 ``--cacheonly`` 对同一份元数据
 执行：重新取元数据会让「看过的那份计划」和「执行的那份计划」不是一回事。
 
@@ -94,14 +96,25 @@ def _report(here: Identity, remote: Identity, verdict: Verdict) -> None:
         print(f"up to date: {here.version} build {here.build}")
 
 
+def _flat(exc: BaseException) -> str:
+    """把异常压成单行：状态文件与日志都不接受换行。"""
+    return " ".join(str(exc).split())
+
+
 def _check(args: argparse.Namespace) -> int:
     path = state.state_path(Path(args.state_dir))
     prior = _prior(path)
     try:
         here = local.local_identity(Path(args.os_release))
         remote = net.fetch_manifest()
+    except net.NoFeed as exc:
+        # 渠道还没有清单 = 还没有可安装的更新。状态只记录真实结论：一次
+        # 「上游尚未发版」不写 last_error（系统没有病），也不写 last_ok
+        # （没有比对过任何版本）。
+        print(f"airy-update: {_flat(exc)}")
+        return EXIT_OK
     except (local.Probe, net.Fetch) as exc:
-        reason = " ".join(str(exc).split())
+        reason = _flat(exc)
         _store(path, state.record_error(prior, state.Failure(reason, _now())))
         print(f"airy-update: {reason}", file=sys.stderr)
         return EXIT_FAIL

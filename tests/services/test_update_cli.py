@@ -107,6 +107,17 @@ class CheckTest(Base):
         self.assertEqual(saved.last_ok.version, "0.0.3")
         self.assertEqual(saved.last_error.reason, "offline")
 
+    def test_missing_feed_is_not_failure(self) -> None:
+        """远端尚未发版是正常起点：判通过，且不把状态写成病态。"""
+        state.save(self.path, state.State(last_ok=state.Finding(
+            "0.0.3", 19, STAMP)))
+        code = self.invoke(error=net.NoFeed("feed: not published yet"))
+        self.assertEqual(code, model.EXIT_OK)
+        self.assertIn("not published yet", self.out.getvalue())
+        saved = state.load(self.path)
+        self.assertIsNone(saved.last_error)
+        self.assertEqual(saved.last_ok.version, "0.0.3")
+
     def test_failure_reason_is_one_line(self) -> None:
         self.invoke(error=net.Fetch("a\nb\tc"))
         self.assertEqual(state.load(self.path).last_error.reason, "a b c")
