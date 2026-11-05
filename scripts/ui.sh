@@ -38,8 +38,19 @@
 # 以 `ui_gate <阶段名> || return` 跳过整组输出；ui_due 是同一判定的只读版本，
 # 供「先判断再执行」的调用方使用。标记落 tmpfs，重启即清空；
 # 目录不可写时返回 0 照常输出——宁可重复一行，也不能在受限环境里把结论
-# 吞掉。默认目录取单元的 RuntimeDirectory（systemd 保证其可写，不受
-# ProtectSystem 影响），无该变量时才用 /run/airymax-ui。
+# 吞掉。
+#
+# 标记目录是全局共享的固定路径，不取 RUNTIME_DIRECTORY：该变量是各单元
+# 自己的运行时目录，取它会让六个阶段单元各写一份标记，闸门退化成「每单元
+# 每开机一次」，与契约的「每阶段每开机一次」不符；更糟的是 airy-power 的
+# 运行时目录名是 airy-power，与其余单元不同，同一阶段在两条路径上互不可见。
+#
+# 固定路径的副作用是收窄了沙箱：ProtectSystem=strict 会把 /run 一并挂成
+# 只读，此时目录已存在则 mkdir -p 返回 0、随后的写标记才以 EROFS 失败，
+# 闸门被静默跳过，timer 每 60 秒重印一次阶段行（run 42007477579 的
+# `/run/airymax-ui/5: Read-only file system`）。因此凡跑 stage_run.sh 且
+# 带 ProtectSystem=strict 的单元必须声明 RuntimeDirectory=airymax-ui，
+# 由 systemd 保证该路径可写；这一条由 units_lint 断言，不靠记忆。
 #
 # 退出码：0 允许输出；1 本次开机已输出过；5 契约不符（序号/总数/阶段名
 # 不在表内）；64 用法错误。
@@ -184,10 +195,10 @@ ui_beat() {
     _ui_put "$1" 'wait' "used=${2:-0}s limit=${3:-60}s"
 }
 
-# 去重标记目录：默认取单元的 RuntimeDirectory（systemd 保证可写，不受
-# ProtectSystem 影响），无该变量时才用 /run/airymax-ui。
+# 去重标记目录：全局共享的固定路径，理由见文件头。UI_STATE 只供回归把标记
+# 落到临时目录，产品路径恒为 /run/airymax-ui。
 _ui_dir() {
-    printf '%s' "${UI_STATE:-${RUNTIME_DIRECTORY:-/run/airymax-ui}}"
+    printf '%s' "${UI_STATE:-/run/airymax-ui}"
 }
 
 # 本次开机该阶段是否还没输出过（只读，不占标记）。需要在执行命令之前就知道

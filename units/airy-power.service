@@ -13,7 +13,7 @@ TimeoutStartSec=60
 ProtectSystem=strict
 ProtectHome=yes
 PrivateTmp=yes
-RuntimeDirectory=airy-power
+RuntimeDirectory=airy-power airymax-ui
 RuntimeDirectoryPreserve=yes
 NoNewPrivileges=yes
 

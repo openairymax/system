@@ -271,13 +271,22 @@ class GateCase(Case):
         self.assertEqual(self.gate(state=state).returncode, 0)
         self.assertEqual(self.gate(state=state).returncode, 0)
 
-    def test_runtime_dir(self) -> None:
+    def test_marker_dir_ignores_runtime_dir(self) -> None:
+        """标记目录是全局共享的，不受单元私有运行时目录牵引。
+
+        取 RUNTIME_DIRECTORY 会让六个阶段单元各写一份标记，闸门退化成
+        「每单元每开机一次」；且 airy-power 的运行时目录名与其余单元不同，
+        同一阶段在两条路径上互不可见。
+        """
+        run = self.dir / "run"
         res = self.run_ui(
             'ui_gate "电源与热治理"',
-            RUNTIME_DIRECTORY=str(self.dir / "run"),
+            UI_STATE=str(self.dir / "ui"),
+            RUNTIME_DIRECTORY=str(run),
         )
         self.assertEqual(res.returncode, 0, res.stderr)
-        self.assertTrue((self.dir / "run" / "6").exists())
+        self.assertTrue((self.dir / "ui" / "6").exists())
+        self.assertFalse((run / "6").exists())
 
 
 class DueCase(Case):
