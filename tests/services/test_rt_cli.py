@@ -73,8 +73,17 @@ class StatusTest(Tree):
     def test_unaccounted(self) -> None:
         (self.base / cgroup.CONTROLLER).write_text("cpu memory\n", "ascii")
         code, out = run(self.args("status"))
-        self.assertEqual(code, cli.EXIT_FAIL)
+        self.assertEqual(code, 0)
         self.assertIn("state=unaccounted", out)
+        self.assertIn("applied=0/0", out)
+
+    def test_v1_global_budget(self) -> None:
+        """0.0.4 内核：v1 树上只剩 cpu.shares，实时由全局预算限流。"""
+        self.global_mount()
+        code, out = run(self.args("status"))
+        self.assertEqual(code, 0)
+        self.assertIn("state=unaccounted", out)
+        self.assertIn("layout v1", out)
 
     def test_json(self) -> None:
         self.all_slices()

@@ -163,6 +163,13 @@ class Tree(unittest.TestCase):
         (mount / cgroup.V1_FILE).write_text("950000\n", encoding="ascii")
         return mount
 
+    def global_mount(self) -> Path:
+        """只有公平调度文件的挂载点：内核未编 RT 组调度，改由全局预算限流。"""
+        mount = self.base / MOUNT
+        mount.mkdir()
+        (mount / cgroup.V1_FAIR).write_text("1024\n", encoding="ascii")
+        return mount
+
     def slice(self, mount: Path, name: str, value: int) -> None:
         path = mount / name
         path.mkdir()

@@ -5,13 +5,20 @@
 # 退出码 3 表示部分落地：airymax-desktop.slice 在登录后才存在，开机时
 # 必然只落 3/4 个 slice，这是剖面事实而不是启动失败。门禁直接读退出码
 # 判定，单元侧声明为成功，否则每次启动都会留下 failed 与一条 incident。
+#
+# 0.0.4 的内核关闭了 CONFIG_RT_GROUP_SCHED，实时任务统一受全局
+# kernel.sched_rt_runtime_us 限流，cgroup 树里没有可写的预算文件。此时
+# airy-rt-cap 输出 state=unaccounted 并以 0 退出，本单元不因此失败：
+# unaccounted 是内核契约，只有 partial/failed 才需要排查。
+#
 # 换页上限不在本单元：它只依赖 slice 目录，开机就该完整落地，挂在
 # ExecStartPost 上会被这里的部分落地连带跳过（airy-rt-memcap.service）。
 #
 # Before=user@.service 是 RT-01 的补丁：登录会话的 slice 在 user@
 # 启动时才创建，晚于它再写预算，本次会话已经建好的组补不上——内核新建
 # 组固定 0 且不继承父组。抢在会话之前落地，至少让能继承的那部分生效；
-# 已存在的组由 `airy-rt-cap seed` 逐组补写。
+# 已存在的组由 `airy-rt-cap seed` 逐组补写（仅在启用 RT 组调度的内核上
+# 需要；全局预算模型下 seed 逐组返回 kept）。
 # ===========================================================================
 
 [Unit]
