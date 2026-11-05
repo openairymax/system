@@ -16,21 +16,38 @@
 # 三个面各自三态：ok / 有问题 / unknown。unknown 只表示「读不到证据」，
 # 绝不等于通过——与固件清点同一口径。缺证据时退出码必须能与「干净」区分。
 #
-# 判定只认观测：unit 失败、err 日志、包差集任一非空都判失败；任一证据源
-# 不可读判 unknown。退出码 0 干净、1 有失败证据、3 证据不全。
+# 归属分层：err 日志不能一律判失败。基底与上游组件本身就会打印 err（rtkit
+# 拿不到实时优先级、ACPI 表重复、LDAP 插件找不到 schema），这些在真机上
+# 消除不掉；一律判失败只会让判据长期为红，失去信号价值。因此 err 按单元
+# 归属分两层：
+#
+#   自有   _SYSTEMD_UNIT / _SYSTEMD_USER_UNIT / SYSLOG_IDENTIFIER 带
+#          airymax- 或 airy- 前缀，即本产品自己的单元。任何一条都是缺陷，
+#          必须为 0。
+#   外来   其余全部。按内容去重后与预算（budget）比较；预算随发行版本单调
+#          下降至 0，构成棘轮。预算由调用方给出（发行版在 CI 侧以文件形式
+#          版本化），本模块不内置任何魔数，缺省 0 即最严。
+#
+# 同一进程反复崩溃时每行只差 pid，故先做 pid 归一化再按「内容 + 单元」去重，
+# 否则基线无法跨启动比较。
+#
+# 判定只认观测：unit 失败、自有 err、外来 err 超预算、包差集任一成立都判
+# 失败；任一证据源不可读判 unknown。退出码 0 干净、1 有失败证据、3 证据不全。
 
 """AirymaxOS system inventory (J-31)."""
 
 from __future__ import annotations
 
+import json
 import re
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
 __all__ = [
-    "MANIFEST", "Survey", "collect", "collect_live", "declared", "diff",
-    "failed_units", "installed", "journal_errs", "read_text",
+    "Err", "MANIFEST", "OWNED_PREFIXES", "Survey", "collect", "collect_live",
+    "declared", "diff", "failed_units", "installed", "journal_errs",
+    "read_text",
 ]
 
 MANIFEST = "/etc/airymaxos-packages"
@@ -53,11 +70,29 @@ _UNIT = re.compile(
 
 _STAMP = re.compile(r"^\[\s*[0-9.]+\]\s*")
 
+# 产品自有单元的前缀。这些名字由本仓库的 unit 文件产生，出现 err 即本产品
+# 缺陷；基底与上游组件的单元不在其中，按预算做棘轮。
+OWNED_PREFIXES = ("airymax-", "airy-")
+
+_PID_DUMP = re.compile(r"\bProcess \d+ \(")
+
+_PID_WORD = re.compile(r"\bpid[=: ]+\d+\b", re.ASCII)
+
+
+@dataclass(frozen=True, slots=True)
+class Err:
+    """一条 err 日志：归一化后的正文、产生它的单元、归属与来源是否可判。"""
+
+    text: str
+    unit: str = ""
+    owned: bool = False
+    known: bool = True
+
 
 @dataclass(frozen=True, slots=True)
 class Survey:
     units: tuple[str, ...] = ()
-    errors: tuple[str, ...] = ()
+    errors: tuple[Err, ...] = ()
     missing: tuple[str, ...] = ()
     extra: tuple[str, ...] = ()
     units_read: bool = True
@@ -65,6 +100,7 @@ class Survey:
     packs_read: bool = True
     want_n: int = 0
     have_n: int = 0
+    budget: int = 0
 
     @property
     def units_state(self) -> str:
@@ -73,10 +109,24 @@ class Survey:
         return STATE_FAILED if self.units else STATE_OK
 
     @property
+    def owned_n(self) -> int:
+        return sum(1 for err in self.errors if err.owned)
+
+    @property
+    def unknown_n(self) -> int:
+        return sum(1 for err in self.errors if not err.known)
+
+    @property
+    def foreign_n(self) -> int:
+        return len(self.errors) - self.owned_n - self.unknown_n
+
+    @property
     def logs_state(self) -> str:
         if not self.logs_read:
             return STATE_UNKNOWN
-        return STATE_ERRORS if self.errors else STATE_OK
+        if self.owned_n or self.unknown_n or self.foreign_n > self.budget:
+            return STATE_ERRORS
+        return STATE_OK
 
     @property
     def packs_state(self) -> str:
@@ -99,7 +149,14 @@ class Survey:
     def dump(self) -> dict[str, object]:
         return {
             "units": {"state": self.units_state, "failed": list(self.units)},
-            "logs": {"state": self.logs_state, "errors": list(self.errors)},
+            "logs": {
+                "state": self.logs_state,
+                "errors": [err.text for err in self.errors],
+                "owned": self.owned_n,
+                "foreign": self.foreign_n,
+                "unknown": self.unknown_n,
+                "budget": self.budget,
+            },
             "packages": {
                 "state": self.packs_state,
                 "declared": self.want_n,
@@ -112,7 +169,8 @@ class Survey:
 
 
 def collect(units_text: str | None, journal_text: str | None,
-            rpm_text: str | None, manifest_text: str | None) -> Survey:
+            rpm_text: str | None, manifest_text: str | None,
+            budget: int = 0) -> Survey:
     """四份来源文本合成一份清点；None 表示该来源读不到。"""
     have = () if rpm_text is None else installed(rpm_text)
     want = () if manifest_text is None else declared(manifest_text)
@@ -127,6 +185,7 @@ def collect(units_text: str | None, journal_text: str | None,
         packs_read=manifest_text is not None and rpm_text is not None,
         want_n=len(want),
         have_n=len(have),
+        budget=budget,
     )
 
 
@@ -136,16 +195,66 @@ def failed_units(text: str) -> tuple[str, ...]:
     return tuple(dict.fromkeys(name for name in names if _UNIT.match(name)))
 
 
-def journal_errs(text: str) -> tuple[str, ...]:
-    """err 及以上日志行；去掉时间戳前缀后按内容去重，顺序即发生顺序。"""
-    seen: set[str] = set()
-    out: list[str] = []
+def journal_errs(text: str) -> tuple[Err, ...]:
+    """err 及以上日志行，按归属分层并归一化去重，顺序即发生顺序。
+
+    输入按 `journalctl -o json` 的行解析，从而拿到产生日志的单元。纯文本行
+    （`-o cat` 的既有产物）也接受，但拿不到归属，计入「未知」层并直接判
+    失败——unknown 不等于通过，这是本模块对三类证据源的统一口径。
+    """
+    seen: set[tuple[str, str]] = set()
+    out: list[Err] = []
     for line in text.splitlines():
-        body = _STAMP.sub("", line.strip())
-        if body and body not in seen:
-            seen.add(body)
-            out.append(body)
+        rec = _err(line)
+        if rec is None:
+            continue
+        key = (rec.text, rec.unit)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(rec)
     return tuple(out)
+
+
+def _err(line: str) -> Err | None:
+    body = line.strip()
+    if not body:
+        return None
+    if body.startswith("{"):
+        rec = _json(body)
+        if rec is not None:
+            return rec
+    text = _norm(_STAMP.sub("", body))
+    return Err(text, known=False) if text else None
+
+
+def _json(body: str) -> Err | None:
+    try:
+        rec = json.loads(body)
+    except ValueError:
+        return None
+    if not isinstance(rec, dict):
+        return None
+    msg = rec.get("MESSAGE", "")
+    if isinstance(msg, list):
+        msg = bytes(msg).decode("utf-8", "replace")
+    text = _norm(str(msg))
+    if not text:
+        return None
+    ident = str(rec.get("SYSLOG_IDENTIFIER") or "")
+    unit = str(rec.get("_SYSTEMD_UNIT")
+               or rec.get("_SYSTEMD_USER_UNIT") or ident)
+    return Err(text, unit, _own(unit, ident))
+
+
+def _own(*names: str) -> bool:
+    return any(name.startswith(OWNED_PREFIXES) for name in names if name)
+
+
+def _norm(text: str) -> str:
+    """pid 归一化：同一进程反复崩溃时每行只差 pid，不归一化基线无法比较。"""
+    text = _PID_DUMP.sub("Process <pid> (", text)
+    return _PID_WORD.sub("pid <pid>", text)
 
 
 def installed(text: str) -> tuple[str, ...]:
@@ -196,14 +305,15 @@ def units_live() -> str | None:
 
 
 def journal_live() -> str | None:
-    return run(("journalctl", "-p", "err", "-b", "--no-pager", "-o", "cat"))
+    return run(("journalctl", "-p", "err", "-b", "--no-pager", "-o", "json"))
 
 
 def rpm_live() -> str | None:
     return run(("rpm", "-qa", "--qf", "%{NAME}\n"))
 
 
-def collect_live(manifest: str | Path = MANIFEST) -> Survey:
+def collect_live(manifest: str | Path = MANIFEST,
+                 budget: int = 0) -> Survey:
     """现场取数；任何一路取不到都保留为 unknown，不做补位。"""
     return collect(units_live(), journal_live(), rpm_live(),
-                   read_text(manifest))
+                   read_text(manifest), budget)
