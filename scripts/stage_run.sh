@@ -24,7 +24,19 @@
 #
 # 阶段行一次开机只有一条：电源、换页上限、桌面共存的单元由 timer 每 60
 # 秒重跑，不设闸时同一阶段每分钟刷一行。闸由 ui_gate 统一实现，标记落
-# tmpfs，重启即清空；周期复核的完整快照照旧逐轮进 journal。
+# tmpfs，重启即清空。
+#
+# 闸只压住阶段行，压不住工具自己的快照：工具每轮把 MARK 行与整块明细写到
+# stdout，运行器原样转发，同一条结论于是每分钟重进一次 journal。285H 实机
+# 2.6 天的 journal 里 AIRYMAX-POWER 与 AIRYMAX-RT-CAP 合计 9886 行，开机
+# 头几秒的证据被自己的周期复核埋掉。快照的价值在结论变化，结论不变只说明
+# 「还在同一档位运行」，低频心跳即可。
+#
+# 因此本脚本用「分档 + 关键值」组成结论指纹，记在闸门同一目录；下一轮指纹
+# 相同且未过 REPEAT（默认 30 分钟）就不转发快照，指纹变化立即转发，指纹
+# 不变但已过 REPEAT 也转发一次当心跳。温度、节流计数、负载这些逐轮都变的
+# 明细不进指纹——放进去抑制永远不命中。目录不可写时按「读不到指纹」处理，
+# 逐轮照常转发：宁可重复，也不能在受限环境里把证据吞掉。
 #
 # 打印要能回答「卡在哪一步、卡了多久」：工具的输出要等它退出才取得到（首行
 # 就是判据），卡在系统调用里时屏幕上不会再有新行。因此阶段开始先落一行 ...，
@@ -39,7 +51,8 @@
 # 退出码：透传工具；打印契约库缺失按 6（与其它阶段脚本同一约定）；闸
 # 自身出错按闸的退出码（阶段名不在表内为 5）。
 # 环境变量：AIRY_STAGE_UI 覆盖契约库路径（回归用）；AIRY_STAGE_BEAT /
-# AIRY_STAGE_LIMIT 覆盖心跳周期与预期上限（默认 30s / 60s）。
+# AIRY_STAGE_LIMIT 覆盖心跳周期与预期上限（默认 30s / 60s）；AIRY_STAGE_REPEAT
+# 覆盖同一结论的转发间隔（默认 1800s，0 表示每轮都转发）。
 # ===========================================================================
 
 set -euo pipefail
@@ -55,6 +68,7 @@ fi
 readonly USAGE='用法: stage_run.sh <阶段名> <宽限码> <取值键> <命令> [参数...]'
 readonly BEAT="${AIRY_STAGE_BEAT:-30}"
 readonly LIMIT="${AIRY_STAGE_LIMIT:-60}"
+readonly REPEAT="${AIRY_STAGE_REPEAT:-1800}"
 
 # 首行是工具对外的结论行，键值以空格分隔。只认识参数里登记的键，其它
 # 字段一律丢弃：工具的调试字段变化不该改变阶段行的形状。
@@ -105,6 +119,37 @@ emit() {
     fi
 }
 
+# 结论指纹的分档部分，与 ok/note/FAIL 三档同源。
+band() {
+    if [ "$1" -eq 0 ]; then
+        printf 'ok'
+    elif is_note "$1"; then
+        printf 'note'
+    else
+        printf 'fail'
+    fi
+}
+
+# 0 转发本轮快照（首轮、结论变化、心跳到期）；1 重复且在 REPEAT 之内。
+# 读不到指纹或时间戳时一律转发：受限环境里宁可重复，不能吞掉证据。
+keep() {
+    local f="$1" was age
+
+    [ -r "${f}" ] || return 0
+    was="$(cat "${f}" 2>/dev/null)" || return 0
+    [ "${was}" = "$2" ] || return 0
+    age=$(($(date +%s) - $(stat -c %Y "${f}" 2>/dev/null || printf 0)))
+    [ "${age}" -lt "${REPEAT}" ] || return 0
+    return 1
+}
+
+mark() {
+    local f="$1"
+
+    mkdir -p "${f%/*}" 2>/dev/null || return 0
+    printf '%s\n' "$2" >"${f}" 2>/dev/null || :
+}
+
 # 心跳：每 BEAT 秒一行 used/limit。sleep 的 stdout 必须丢掉——它比子壳活得
 # 久，若继承调用方的管道，管道的 EOF 要等到 BEAT 秒之后，把测试与采集器
 # 一起挂住。正常阶段的耗时远小于 BEAT，开机日志里通常一行心跳都没有。
@@ -118,7 +163,7 @@ beat() {
 }
 
 main() {
-    local out= rc=0 due=0 line ticker=''
+    local out= rc=0 due=0 line ticker='' vrf='' id='' snap=''
 
     ui_due "${STAGE}" || due=$?
     case "${due}" in
@@ -131,14 +176,21 @@ main() {
     *) return "${due}" ;;
     esac
 
+    id="$(ui_id "${STAGE}")" || return $?
+    snap="$(ui_state)/${id}.snap"
+
     out=$("$@") || rc=$?
 
     if [ -n "${ticker}" ]; then
         kill "${ticker}" 2>/dev/null || :
         wait "${ticker}" 2>/dev/null || :
     fi
-    if [ -n "${out}" ]; then
+
+    line=$(facts "${out%%$'\n'*}" "${KEYS}")
+    vrf="$(band "${rc}")|${line}"
+    if [ -n "${out}" ] && keep "${snap}" "${vrf}"; then
         printf '%s\n' "${out}"
+        mark "${snap}" "${vrf}"
     fi
 
     # 闸在命令之后：先占标记再执行，命令中途崩掉时标记已被消耗，这条
@@ -146,7 +198,6 @@ main() {
     # 已出过结论」一种拒绝。
     ui_gate "${STAGE}" || return "${rc}"
 
-    line=$(facts "${out%%$'\n'*}" "${KEYS}")
     if [ "${rc}" -eq 0 ]; then
         if [ -n "${line}" ]; then
             ui_ok "${STAGE}" "${line}"
