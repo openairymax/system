@@ -162,6 +162,31 @@ class Case(unittest.TestCase):
         out = self.run_ui("ui_total")
         self.assertEqual(out.stdout, "9\n")
 
+    def _chans(self, active_text: str) -> str:
+        """活动控制台末位决定 /dev/console 的落点，通道表据此成形。"""
+        serial = self.dir / "ttyS0"
+        serial.symlink_to("/dev/null")
+        active = self.dir / "active"
+        active.write_text(active_text, encoding="utf-8")
+        out = self.run_ui(
+            'printf "%s\\n" "${CON_CH[*]}"',
+            AIRY_CON_SERIAL=str(serial),
+            AIRY_CON_ACTIVE=str(active),
+            UI_CONSOLE=str(self.dir / "console"),
+        )
+        self.assertEqual(out.returncode, 0, out.stderr)
+        return out.stdout.strip()
+
+    def test_serial_leads_when_console_is_the_vt(self):
+        """命令行末位是 tty0 时 /dev/console 指本地屏，串口必须另写一份。"""
+        self.assertEqual(
+            self._chans("ttyS0 tty0\n"),
+            f"{self.dir}/ttyS0 {self.dir}/console",
+        )
+
+    def test_serial_dedup_when_it_is_the_console(self):
+        self.assertEqual(self._chans("tty0 ttyS0\n"), f"{self.dir}/ttyS0")
+
     def test_begin_rejects_usage(self):
         out = self.run_ui("ui_begin")
         self.assertEqual(out.returncode, 64, out.stderr)

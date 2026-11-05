@@ -40,8 +40,8 @@
 # 命令行里最后一个 console=，本项目的命令行是
 # console=ttyS0,115200 console=tty0，落点是本地屏，写进去的每一行都停在
 # tty0 上，只有串口的现场读不到（run 41925092075 的冷启动就是这样：探针
-# 判负并打印了，串口里却一条卡点事实都没有）。故串口优先、/dev/console
-# 次之，两者同源时才省掉一份。
+# 判负并打印了，串口里却一条卡点事实都没有）。通道判据与九阶段打印共用
+# con.sh：串口优先、/dev/console 次之，两者同源时只写一份。
 #
 # 部署：airy-boot-watch.service，由 airy-boot-watch.timer 触发。
 # ===========================================================================
@@ -56,44 +56,18 @@ readonly CONSOLE="${UI_CONSOLE:-/dev/console}"
 readonly SERIAL="${AIRY_WATCH_SERIAL:-/dev/ttyS0}"
 readonly ACTIVE="${AIRY_WATCH_ACTIVE:-/sys/class/tty/console/active}"
 readonly SELF=airy-boot-watch
-# 单次写入的阻塞上限：/dev/console 归内核 console 层，控制台驱动死锁时
-# 写操作不返回。观测者跟着挂死，等于在最需要证据的时候自我灭口。
-readonly WLIM=2
 
 IDLE=0
 CHURN=0
-CHANS=()
 
-# /dev/console 落到哪个控制台由内核命令行里最后一个 console= 决定：
-# console_device() 遍历已注册的控制台并取最后一项。所以「ttyS0 出现在
-# 活动列表里」不意味着 /dev/console 指向 ttyS0，判据必须取列表末位。
-ser_own() {
-    local pref
-
-    pref="$(tr ' ' '\n' <"${ACTIVE}" 2>/dev/null | sed -n '$p')" || pref=''
-    [ "${pref}" != "${SERIAL##*/}" ]
-}
-
-# 串口设备节点不经 console 层，是控制台层卡死时唯一还能出的通道，恒为首选；
-# 仅当它正是 /dev/console 的落点时才不重复写第二份。
-if [ -c "${SERIAL}" ]; then
-    CHANS=("${SERIAL}")
-    if ser_own; then
-        CHANS+=("${CONSOLE}")
-    fi
-else
-    CHANS=("${CONSOLE}")
-fi
+# 通道判据的唯一实现见 con.sh；历史变量名在此转名，回归与现场口径不变。
+# shellcheck source-path=SCRIPTDIR source=con.sh
+AIRY_CON_SERIAL="${SERIAL}" AIRY_CON_ACTIVE="${ACTIVE}" AIRY_CON_UI="${CONSOLE}" \
+    . "${BASH_SOURCE[0]%/*}/con.sh"
+con_init
 
 put() {
-    local line="$*" dev
-
-    printf '%s\n' "${line}"
-    for dev in "${CHANS[@]}"; do
-        [ -w "${dev}" ] || continue
-        printf '%s\n' "${line}" |
-            timeout "${WLIM}" tee -a "${dev}" >/dev/null 2>&1 || :
-    done
+    con_put "$@"
 }
 
 show() {

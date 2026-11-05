@@ -53,6 +53,12 @@ readonly UI_EUSAGE=64
 # console 目标可覆盖，供回归在临时文件上验证去重；产品路径恒为 /dev/console。
 readonly UI_CONSOLE="${UI_CONSOLE:-/dev/console}"
 
+# 通道选择是共享判据：命令行末位是 tty0 时 /dev/console 不指向串口，只写
+# /dev/console 会让串口现场一条阶段行都读不到。判据实现在 con.sh。
+# shellcheck source-path=SCRIPTDIR source=con.sh
+AIRY_CON_UI="${UI_CONSOLE}" . "${BASH_SOURCE[0]%/*}/con.sh"
+con_init
+
 # 序号|名称|显示宽度（CJK 每字 2 列）。顺序即执行顺序，新增阶段必须同时
 # 改本表与 spec 的 %%check 总数断言，否则判据与实现分叉。
 readonly UI_STAGES=(
@@ -69,15 +75,17 @@ readonly UI_STAGES=(
 readonly UI_COL=16
 
 _ui_err() {
-    local code="$1" target
+    local code="$1"
     shift
 
     printf 'ui.sh: %s\n' "$*" >&2
     # 契约错误的现场只有装机屏幕：stderr 默认只进 journal，而报错时屏幕上
     # 本来就没有任何阶段行，运维只剩 systemd 的一行 FAILED（run 41802417971
     # 的装机首启）。诊断必须与它所解释的内容落在同一条通道上。
-    target="$(readlink /proc/self/fd/2 2>/dev/null)" || target=''
-    if [ "${target}" != "${UI_CONSOLE}" ] && [ -w "${UI_CONSOLE}" ]; then
+    #
+    # 去重比的是 stderr 的落点，用 -ef 而不是读 /proc/self/fd/2：命令替换
+    # 的子 shell 自带捕获管道，readlink 读到的是管道，去重永远不会命中。
+    if [ -w "${UI_CONSOLE}" ] && ! [ /dev/stderr -ef "${UI_CONSOLE}" ]; then
         printf 'airymax-boot: %s\n' "$*" >"${UI_CONSOLE}" 2>/dev/null || :
     fi
     return "${code}"
@@ -88,22 +96,13 @@ _ui_err() {
 # 失明。logger 缺席（chroot、最小 rootfs）时不影响调用方。
 #
 # 已经声明 StandardOutput=journal+console 的单元，stdout 本身就是 console，
-# 再写一遍会让每行在屏幕上出现两次。去重按 fd1 的实际指向判定，不看单元
-# 声明——声明可以改，fd 不会说谎。
-_console_is_stdout() {
-    local target
-
-    target="$(readlink /proc/self/fd/1 2>/dev/null)" || return 1
-    [ "${target}" = "${UI_CONSOLE}" ]
-}
-
+# 再写一遍会让每行在屏幕上出现两次；去重与串口优先的判据都在 con_sink 里，
+# 两个调用方共用同一份实现。
 _ui_emit() {
     local line="$1"
 
     printf '%s\n' "${line}"
-    if [ -w "${UI_CONSOLE}" ] && [ ! -t 1 ] && ! _console_is_stdout; then
-        printf '%s\n' "${line}" >"${UI_CONSOLE}" 2>/dev/null || :
-    fi
+    con_sink "${line}"
     if command -v logger >/dev/null 2>&1; then
         logger -t airymax-boot -- "${line}" 2>/dev/null || :
     fi
