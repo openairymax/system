@@ -210,13 +210,23 @@ def _source(path: str | None, live) -> str | None:
     return live() if path is None else osys.read_text(path)
 
 
+def _tag(err: osys.Err) -> str:
+    """err 明细的层标：自有缺陷与固件表缺陷要能一眼分开，其余层不加标。"""
+    if err.owned:
+        return f"{err.text} [owned]"
+    if err.firmware:
+        return f"{err.text} [firmware]"
+    return err.text
+
+
 def _emit_sys(found: osys.Survey) -> None:
     # 首行是 TAP 证据行：判据的每个分量都在这一行里，现场比对不需要再翻
     # 明细。unknown 单列，因为它既不是「干净」也不是「自有缺陷」。
     print(
         f"{PROG} system state={found.state} units={len(found.units)}"
         f" errors={len(found.errors)} owned={found.owned_n}"
-        f" foreign={found.foreign_n} unknown={found.unknown_n}"
+        f" foreign={found.foreign_n} firmware={found.firmware_n}"
+        f" unknown={found.unknown_n}"
         f" budget={found.budget} packages={found.packs_state}"
         f" missing={len(found.missing)} extra={len(found.extra)}"
     )
@@ -224,12 +234,12 @@ def _emit_sys(found: osys.Survey) -> None:
           f" failed")
     print(f"  {'logs':<9}{found.logs_state:<8}{len(found.errors):>5}"
           f" errors  owned={found.owned_n} foreign={found.foreign_n}"
-          f" unknown={found.unknown_n} budget={found.budget}")
+          f" firmware={found.firmware_n} unknown={found.unknown_n}"
+          f" budget={found.budget}")
     print(f"  {'packages':<9}{found.packs_state:<8}{found.have_n:>5}"
           f" installed  declared={found.want_n}")
     _rows("failed", found.units)
-    _rows("error", [f"{err.text}{' [owned]' if err.owned else ''}"
-                    for err in found.errors])
+    _rows("error", [_tag(err) for err in found.errors])
     _rows("missing", found.missing)
     _rows("extra", found.extra)
 
