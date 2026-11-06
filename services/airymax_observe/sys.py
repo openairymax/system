@@ -17,16 +17,24 @@
 # 绝不等于通过——与固件清点同一口径。缺证据时退出码必须能与「干净」区分。
 #
 # 归属分层：err 日志不能一律判失败。基底与上游组件本身就会打印 err（rtkit
-# 拿不到实时优先级、ACPI 表重复、LDAP 插件找不到 schema），这些在真机上
-# 消除不掉；一律判失败只会让判据长期为红，失去信号价值。因此 err 按单元
-# 归属分两层：
+# 拿不到实时优先级、LDAP 插件找不到 schema），这些在真机上消除不掉；一律
+# 判失败只会让判据长期为红，失去信号价值。因此 err 按单元归属分三层：
 #
-#   自有   _SYSTEMD_UNIT / _SYSTEMD_USER_UNIT / SYSLOG_IDENTIFIER 带
+#   自有   UNIT / _SYSTEMD_UNIT / _SYSTEMD_USER_UNIT / SYSLOG_IDENTIFIER 带
 #          airymax- 或 airy- 前缀，即本产品自己的单元。任何一条都是缺陷，
 #          必须为 0。
+#   固件   内核转发的 ACPICA 诊断（「ACPI BIOS Error (bug)」「ACPI Error」）。
+#          它们说的是主板 DSDT 的表缺陷，发行版不改固件就消除不掉，且每次
+#          开机逐字重现。本层仍原样列进明细供现场定位，但不计入预算、不判
+#          失败；固件面由 `airy-observe fw` 与 T19–T21 单独判定。
 #   外来   其余全部。按内容去重后与预算（budget）比较；预算随发行版本单调
 #          下降至 0，构成棘轮。预算由调用方给出（发行版在 CI 侧以文件形式
 #          版本化），本模块不内置任何魔数，缺省 0 即最严。
+#
+# 归属取 UNIT 优先：systemd 自己发的「Failed to start X.」由 PID 1 落盘，
+# _SYSTEMD_UNIT 是发起者 init.scope，被谈论的单元在 UNIT 字段。只读
+# _SYSTEMD_UNIT 会把本产品单元失败记成外来噪声，用 285H 的 journald JSON
+# 取证过（_SYSTEMD_UNIT=init.scope、UNIT=airymax-smoke-report.service）。
 #
 # 同一进程反复崩溃时每行只差 pid，故先做 pid 归一化再按「内容 + 单元」去重，
 # 否则基线无法跨启动比较。
@@ -78,6 +86,10 @@ _PID_DUMP = re.compile(r"\bProcess \d+ \(")
 
 _PID_WORD = re.compile(r"\bpid[=: ]+\d+\b", re.ASCII)
 
+# ACPICA 的表缺陷诊断。只认这两条前缀：内核里其他 err（I/O 错误、驱动加载
+# 失败）仍按外来层计数，不能借固件层把真故障吞掉。
+_FW = re.compile(r"^ACPI (?:BIOS Error \(bug\)|Error):")
+
 
 @dataclass(frozen=True, slots=True)
 class Err:
@@ -87,6 +99,7 @@ class Err:
     unit: str = ""
     owned: bool = False
     known: bool = True
+    firmware: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -117,8 +130,13 @@ class Survey:
         return sum(1 for err in self.errors if not err.known)
 
     @property
+    def firmware_n(self) -> int:
+        return sum(1 for err in self.errors if err.firmware)
+
+    @property
     def foreign_n(self) -> int:
-        return len(self.errors) - self.owned_n - self.unknown_n
+        return (len(self.errors) - self.owned_n - self.unknown_n
+                - self.firmware_n)
 
     @property
     def logs_state(self) -> str:
@@ -154,6 +172,7 @@ class Survey:
                 "errors": [err.text for err in self.errors],
                 "owned": self.owned_n,
                 "foreign": self.foreign_n,
+                "firmware": self.firmware_n,
                 "unknown": self.unknown_n,
                 "budget": self.budget,
             },
@@ -242,9 +261,11 @@ def _json(body: str) -> Err | None:
     if not text:
         return None
     ident = str(rec.get("SYSLOG_IDENTIFIER") or "")
-    unit = str(rec.get("_SYSTEMD_UNIT")
+    unit = str(rec.get("UNIT") or rec.get("_SYSTEMD_UNIT")
                or rec.get("_SYSTEMD_USER_UNIT") or ident)
-    return Err(text, unit, _own(unit, ident))
+    kern = rec.get("_TRANSPORT") == "kernel" or ident == "kernel"
+    return Err(text, unit, _own(unit, ident),
+               firmware=bool(kern and _FW.match(text)))
 
 
 def _own(*names: str) -> bool:
