@@ -35,7 +35,7 @@ DISK_HEALTH = "airy-disk-health.service"
 DISK_TIMER = "airy-disk-health.timer"
 SESSION = "user.slice.d/50-airymax-memory.conf"
 COEXIST = "airy-rt-coexist.service"
-STAGE_ROW = "'7|桌面RT共存|10'"
+STAGE_ROW = "'7|桌面RT共存|10|desktoprt'"
 
 
 class UnitsCase(unittest.TestCase):
@@ -134,7 +134,7 @@ class StageNameCase(UnitsCase):
     """阶段名是单个参数，且必须与契约表逐字一致。"""
 
     def test_name_with_space(self) -> None:
-        self.edit_ui(STAGE_ROW, "'7|桌面 RT 共存|10'")
+        self.edit_ui(STAGE_ROW, "'7|桌面 RT 共存|10|desktoprt'")
         self.assert_bad("阶段名含空白")
 
     def test_name_unknown(self) -> None:
@@ -142,8 +142,17 @@ class StageNameCase(UnitsCase):
         self.assert_bad("不在 ui.sh 契约表")
 
     def test_width_wrong(self) -> None:
-        self.edit_ui(STAGE_ROW, "'7|桌面RT共存|12'")
+        self.edit_ui(STAGE_ROW, "'7|桌面RT共存|12|desktoprt'")
         self.assert_bad("宽度 12 != 实际 10")
+
+    def test_code_not_ascii(self) -> None:
+        """console 代号非 ASCII 会让 VT 重新吐出乱码。"""
+        self.edit_ui(STAGE_ROW, "'7|桌面RT共存|10|桌面'")
+        self.assert_bad("不是纯 ASCII")
+
+    def test_code_dup(self) -> None:
+        self.edit_ui("'1|基础挂载|8|mount'", "'1|基础挂载|8|desktoprt'")
+        self.assert_bad("console 代号重复")
 
 
 class ServiceCase(UnitsCase):
