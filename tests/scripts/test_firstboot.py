@@ -137,8 +137,8 @@ class ExitCase(FirstbootCase):
         self.assertIn("start --no-block agentrt.target", self.calls())
         self.assertEqual(
             res.stdout,
-            "[ 2/9 ] 首启判定        ...\n"
-            "[ 2/9 ] 首启判定        ok   "
+            "[ 2/9 ] firstboot       ...\n"
+            "[ 2/9 ] firstboot       ok   "
             "mid=present sysctl=ok lsm=present target=queued\n",
         )
 
@@ -148,7 +148,7 @@ class ExitCase(FirstbootCase):
         self.assertEqual(res.returncode, 0, res.stderr)
         self.assertEqual(self.calls(), "")
         self.assertEqual(
-            res.stdout, "[ 2/9 ] 首启判定        note done=1\n"
+            res.stdout, "[ 2/9 ] firstboot       note done=1\n"
         )
 
     def test_ui_lib_missing(self) -> None:
