@@ -41,6 +41,10 @@
 #
 # 判定只认观测：unit 失败、自有 err、外来 err 超预算、包差集任一成立都判
 # 失败；任一证据源不可读判 unknown。退出码 0 干净、1 有失败证据、3 证据不全。
+#
+# 判定者不把自己的结论当证据：排除名单（--exclude）里的单元两侧都不计。验收
+# 上报单元承载的是同一轮 TAP 的结论，把它算进证据就形成自指——它红过一次，
+# 同一次开机的后续每一轮都会再读到这条旧结论，真实根因因此被盖住。
 
 """AirymaxOS system inventory (J-31)."""
 
@@ -189,14 +193,23 @@ class Survey:
 
 def collect(units_text: str | None, journal_text: str | None,
             rpm_text: str | None, manifest_text: str | None,
-            budget: int = 0) -> Survey:
-    """四份来源文本合成一份清点；None 表示该来源读不到。"""
+            budget: int = 0, exclude: tuple[str, ...] = ()) -> Survey:
+    """四份来源文本合成一份清点；None 表示该来源读不到。
+
+    exclude 里的单元两侧都不计：判定者不把自己的结论当证据。验收上报单元
+    的失败由它所承载的那轮 TAP 判定驱动，把它算进证据就形成自指——它红过
+    一次，同一次开机里后续每一轮都会再读一次这条旧结论，真实根因被盖住
+    （285H 实测）。真实失败单元仍由上报路径独立列出。
+    """
+    skip = frozenset(exclude)
+    units = () if units_text is None else failed_units(units_text)
+    errors = () if journal_text is None else journal_errs(journal_text)
     have = () if rpm_text is None else installed(rpm_text)
     want = () if manifest_text is None else declared(manifest_text)
     missing, extra = diff(want, have)
     return Survey(
-        units=() if units_text is None else failed_units(units_text),
-        errors=() if journal_text is None else journal_errs(journal_text),
+        units=tuple(name for name in units if name not in skip),
+        errors=tuple(err for err in errors if err.unit not in skip),
         missing=missing,
         extra=extra,
         units_read=units_text is not None,
@@ -334,7 +347,8 @@ def rpm_live() -> str | None:
 
 
 def collect_live(manifest: str | Path = MANIFEST,
-                 budget: int = 0) -> Survey:
+                 budget: int = 0,
+                 exclude: tuple[str, ...] = ()) -> Survey:
     """现场取数；任何一路取不到都保留为 unknown，不做补位。"""
     return collect(units_live(), journal_live(), rpm_live(),
-                   read_text(manifest), budget)
+                   read_text(manifest), budget, exclude)
