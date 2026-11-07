@@ -92,7 +92,7 @@ class StageCase(unittest.TestCase):
         res = self.stage()
         self.assertEqual(res.returncode, 0, res.stderr)
         self.assertIn(
-            "[ 6/9 ] 电源与热治理    ok   landed=49/49 cap=100%"
+            "[ 6/9 ] power           ok   landed=49/49 cap=100%"
             " severity=ok charge=97%",
             res.stdout,
         )
@@ -124,7 +124,7 @@ class StageCase(unittest.TestCase):
     def test_no_facts(self) -> None:
         res = self.stage(keys="-")
         self.assertEqual(res.returncode, 0, res.stderr)
-        self.assertIn("[ 6/9 ] 电源与热治理    ok\n", res.stdout)
+        self.assertIn("[ 6/9 ] power           ok\n", res.stdout)
 
     def test_raw(self) -> None:
         res = self.stage()
@@ -169,7 +169,7 @@ class StageCase(unittest.TestCase):
         res = self.stage()
         self.assertEqual(res.returncode, 0, res.stderr)
         self.assertEqual(
-            res.stdout.splitlines()[0], "[ 6/9 ] 电源与热治理    ..."
+            res.stdout.splitlines()[0], "[ 6/9 ] power           ..."
         )
 
     def test_heartbeat_while_slow(self) -> None:
