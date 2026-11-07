@@ -107,6 +107,10 @@ def _args(argv: Sequence[str] | None) -> argparse.Namespace:
         "--budget", metavar="N", type=int, default=0,
         help="外来 err 的棘轮预算（去重条数，默认 0 即最严）",
     )
+    parser.add_argument(
+        "--exclude", metavar="UNIT", action="append", default=[],
+        help="不计入判定两侧的单元（可重复）；供判定者排除自己承载的单元",
+    )
     return parser.parse_args(argv)
 
 
@@ -197,6 +201,7 @@ def _sys_main(args: argparse.Namespace) -> int:
         _source(args.rpm, osys.rpm_live),
         osys.read_text(args.manifest),
         args.budget,
+        tuple(args.exclude),
     )
     if args.json:
         print(json.dumps(found.dump(), ensure_ascii=False))

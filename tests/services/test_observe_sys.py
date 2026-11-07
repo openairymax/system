@@ -183,6 +183,27 @@ class SurveyTest(unittest.TestCase):
         self.assertEqual(found.units_state, osys.STATE_FAILED)
         self.assertEqual(found.logs_state, osys.STATE_ERRORS)
 
+    def test_excluded_unit_is_not_evidence(self) -> None:
+        # 判定者不把自己的结论当证据：上报单元的失败由它所承载的那轮 TAP
+        # 判定驱动，再算进证据就形成自指，同一次开机的后续每一轮都会读回
+        # 这条旧结论，真实根因因此被盖住（285H 实测）。
+        found = osys.collect(
+            "airymax-smoke-report.service\n", JOB_FAIL, RPM, MANIFEST,
+            exclude=("airymax-smoke-report.service",),
+        )
+        self.assertEqual(found.state, osys.STATE_OK)
+        self.assertEqual(found.units, ())
+        self.assertEqual(found.errors, ())
+
+    def test_exclusion_keeps_other_failures(self) -> None:
+        # 排除只对点名单元生效，同一次开机里的其他失败单元照常判负
+        found = osys.collect(
+            "airymax-smoke-report.service\nairymax-data.mount\n", "",
+            RPM, MANIFEST, exclude=("airymax-smoke-report.service",),
+        )
+        self.assertEqual(found.units, ("airymax-data.mount",))
+        self.assertEqual(found.state, osys.STATE_FAILED)
+
     def test_counts_split_three_layers(self) -> None:
         text = "\n".join((FOREIGN, OWNED, "[ 1.0] bare line"))
         found = osys.collect("", text, RPM, MANIFEST)
@@ -280,6 +301,17 @@ class CommandTest(unittest.TestCase):
         )
         self.assertEqual(code, 1)
         self.assertIn("failed airymax-data.mount", out)
+
+    def test_exclude_flag_drops_named_unit(self) -> None:
+        units, journal, rpm, manifest = self.files(
+            "airymax-smoke-report.service\n", JOB_FAIL, RPM, MANIFEST)
+        argv = ("system", "--units", units, "--journal", journal,
+                "--rpm", rpm, "--manifest", manifest)
+        self.assertEqual(self.run_cli(*argv)[0], 1)
+        code, out = self.run_cli(
+            *argv, "--exclude", "airymax-smoke-report.service")
+        self.assertEqual(code, 0, out)
+        self.assertIn("units=0", out)
 
     def test_budget_lifts_foreign_only(self) -> None:
         units, journal, rpm, manifest = self.files("", FOREIGN, RPM, MANIFEST)
