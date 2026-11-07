@@ -48,8 +48,10 @@ SHEBANG = "#!/usr/bin/env bash"
 
 SYSTEM_UNITS = frozenset({
     "display-manager.service",
+    "graphical.target",
     "local-fs.target",
     "multi-user.target",
+    "NetworkManager.service",
     "network-online.target",
     "rtkit-daemon.service",
     "slices.target",
@@ -471,6 +473,39 @@ BOOT_WATCH_PAIRS: dict[tuple[str, str], str] = {
 
 BOOT_WATCH_SCRIPT = ROOT / "scripts" / "boot_watch.sh"
 
+NET_DOCTOR = "airymax-net-doctor.service"
+
+# 首启网络自检：只读、只判一次，结论落 /run/airymaxos/net.state 并进
+# journal。ExecStart 前的 `-` 是刻意的：判出失败态时脚本返回 3，若让
+# systemd 记成 failed，`systemctl --failed` 就多出一条二手失败，掩盖真正
+# 的失败单元；结论本身已经是 /run 里的那一行。Before=graphical.target 让
+# 结论先于桌面出现，After=NetworkManager 保证 nmcli 可用时 NetworkManager
+# 已经在位。ProtectSystem=strict 下 /run 只读，RuntimeDirectory 是唯一
+# 可写落点。
+NET_DOCTOR_PAIRS: dict[tuple[str, str], str] = {
+    ("Unit", "Description"): "Report the first-boot network verdict to the journal",
+    ("Unit", "After"): "NetworkManager.service",
+    ("Unit", "Before"): "graphical.target",
+    ("Service", "Type"): "oneshot",
+    (
+        "Service",
+        "ExecStart",
+    ): "-/usr/lib/airymaxos/scripts/net_doctor.sh",
+    ("Service", "RemainAfterExit"): "yes",
+    ("Service", "RuntimeDirectory"): "airymaxos",
+    ("Service", "RuntimeDirectoryMode"): "0755",
+    ("Service", "TimeoutStartSec"): "30",
+    ("Service", "ProtectSystem"): "strict",
+    ("Service", "ProtectHome"): "yes",
+    ("Service", "PrivateTmp"): "yes",
+    ("Service", "NoNewPrivileges"): "yes",
+    ("Service", "StandardOutput"): "journal",
+    ("Service", "StandardError"): "journal",
+    ("Install", "WantedBy"): "multi-user.target",
+}
+
+NET_DOCTOR_SCRIPT = ROOT / "scripts" / "net_doctor.sh"
+
 DISK_MOUNT = "airy-disk-mount.service"
 
 # 挂载单元必须运行在宿主挂载命名空间里：ProtectSystem/PrivateTmp 之类
@@ -815,6 +850,7 @@ UNITS = frozenset(SERVICES) | frozenset(TARGETS) | frozenset(TEMPLATES) | {
     HEALTH,
     LLM,
     MEMCAP,
+    NET_DOCTOR,
     POWER,
     RT_BANDWIDTH,
     UPDATE_CHECK,
@@ -1274,6 +1310,8 @@ def _body_bad(name: str, cfg: ConfigParser) -> list[str]:
         return _pairs_bad(name, cfg, dict(BOOT_MOUNT_PAIRS))
     if name == BOOT_WATCH:
         return _pairs_bad(name, cfg, dict(BOOT_WATCH_PAIRS))
+    if name == NET_DOCTOR:
+        return _pairs_bad(name, cfg, dict(NET_DOCTOR_PAIRS))
     if name == DISK_MOUNT:
         return _pairs_bad(name, cfg, dict(DISK_MOUNT_PAIRS))
     if name == DISK_HEALTH:
@@ -1450,6 +1488,7 @@ def check_dir(path: Path) -> list[str]:
     errs.extend(check_script(FIRSTBOOT_SCRIPT))
     errs.extend(check_script(BOOT_MOUNT_SCRIPT))
     errs.extend(check_script(BOOT_WATCH_SCRIPT))
+    errs.extend(check_script(NET_DOCTOR_SCRIPT))
     return errs
 
 
