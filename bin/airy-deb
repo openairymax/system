@@ -1,0 +1,22 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: AGPL-3.0-or-later OR Apache-2.0
+#
+# AirymaxOS Debian 包转换与安装入口脚本
+#
+# 安装后从 site-packages 导入 airydeb；源码树内直接运行时把同级 services
+# 目录加入搜索路径，不依赖安装也不隐藏导入错误。
+
+"""AirymaxOS deb helper entry point."""
+
+import sys
+from pathlib import Path
+
+SERVICES = Path(__file__).resolve().parents[1] / "services"
+
+if SERVICES.is_dir():
+    sys.path.insert(0, str(SERVICES))
+
+from airydeb import cli  # noqa: E402
+
+if __name__ == "__main__":
+    sys.exit(cli.main())
