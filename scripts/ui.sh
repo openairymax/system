@@ -15,19 +15,27 @@
 #   ui_state
 #   ui_total
 #
-# 输出形态（console 与 journal 逐字相同）：
-#   [ 3/9 ] 电源与热治理    ok   landed=51/51 cap=100
-#   [ 6/9 ] 运行时带宽      note runtime=950000 group=yes
-#   [ 8/9 ] 桌面就绪        FAIL lightdm 未 active（mode=gui）
+# 输出形态（console 只出 ASCII，journal 出中文）：
+#   console: [ 3/9 ] data            ok   mounted=/data dev=/dev/nvme0n1p4
+#   journal: [ 3/9 ] 数据分区        ok   mounted=/data dev=/dev/nvme0n1p4
+#
+# 为什么两套措辞：本地屏是 Linux VT，镜像里的 FONT 为 latarcyrheb-sun16，
+# 该字体没有 CJK 字形；而 VT 字体上限 512 个字形，装不下一个中文字库。
+# 中文写进 /dev/console 只能得到方块或空白——285H 冷启动的九行阶段行就是
+# 这样，序号与 token 全被挤在乱码之间。因此 console 侧（含串口镜像）只出
+# 阶段代号，中文阶段名只进 journal：journal 由运维在系统起来之后读，终端
+# 编码正确。两行的序号、总数、token 与关键值逐字相同，判读脚本只读这些，
+# 不看人类措辞。
 #
 # 为什么要有这一份：开机打印此前是各脚本各自起措辞，失败时只有一句自然
 # 语言，现场无法回答「卡在哪一步、这一步等多久算卡」。序号与总数把「卡住」
 # 变成可判读的事实，ok/note/FAIL/wait 是稳定 token，CI 与现场脚本用同一
 # 字符串判定，不看措辞。
 #
-# 阶段表是契约本体：序号、名称、显示宽度都登记在这里，调用方只报阶段名，
-# 序号与总数一律从表里取。总数不由各脚本自报——自报的总数一旦与表不符，
-# 「7/8」与「7/9」就会同时出现在同一台机器的日志里。
+# 阶段表是契约本体：序号、名称、显示宽度与 ASCII 代号都登记在这里，调用
+# 方只报阶段名，序号与总数一律从表里取。总数不由各脚本自报——自报的总数
+# 一旦与表不符，「7/8」与「7/9」就会同时出现在同一台机器的日志里。代号是
+# console 侧的唯一措辞，必须纯 ASCII 且不含空白，由 units_lint 校验。
 #
 # 阶段名是一个参数：单元以 ExecStart 传名，而 systemd 按空白切分 ExecStart，
 # 名字里带空格会被拆成多个参数，运行期查不到序号、以失败退出，现场只剩一行
@@ -72,63 +80,72 @@ readonly UI_CONSOLE="${UI_CONSOLE:-/dev/console}"
 AIRY_CON_UI="${UI_CONSOLE}" . "${BASH_SOURCE[0]%/*}/con.sh"
 con_init
 
-# 序号|名称|显示宽度（CJK 每字 2 列）。顺序即执行顺序，新增阶段必须同时
-# 改本表与 spec 的 %%check 总数断言，否则判据与实现分叉。
+# 序号|名称|显示宽度（CJK 每字 2 列）|ASCII 代号。顺序即执行顺序，新增
+# 阶段必须同时改本表与 spec 的 %%check 总数断言，否则判据与实现分叉。
 readonly UI_STAGES=(
-    '1|基础挂载|8'
-    '2|首启判定|8'
-    '3|数据分区|8'
-    '4|运行时带宽|10'
-    '5|换页上限|8'
-    '6|电源与热治理|12'
-    '7|桌面RT共存|10'
-    '8|桌面就绪|8'
-    '9|自检与取证|10'
+    '1|基础挂载|8|mount'
+    '2|首启判定|8|firstboot'
+    '3|数据分区|8|data'
+    '4|运行时带宽|10|bandwidth'
+    '5|换页上限|8|swaplimit'
+    '6|电源与热治理|12|power'
+    '7|桌面RT共存|10|desktoprt'
+    '8|桌面就绪|8|desktop'
+    '9|自检与取证|10|health'
 )
 readonly UI_COL=16
 
 _ui_err() {
-    local code="$1"
-    shift
+    local code="$1" fact="$2"
+    shift 2
 
     printf 'ui.sh: %s\n' "$*" >&2
     # 契约错误的现场只有装机屏幕：stderr 默认只进 journal，而报错时屏幕上
     # 本来就没有任何阶段行，运维只剩 systemd 的一行 FAILED（run 41802417971
     # 的装机首启）。诊断必须与它所解释的内容落在同一条通道上。
     #
+    # console 侧只写 ASCII 事实：触发契约错误的往往正是中文阶段名，原样
+    # 打出去在 VT 上仍是乱码，等于没有诊断。
+    #
     # 去重比的是 stderr 的落点，用 -ef 而不是读 /proc/self/fd/2：命令替换
     # 的子 shell 自带捕获管道，readlink 读到的是管道，去重永远不会命中。
     if [ -w "${UI_CONSOLE}" ] && ! [ /dev/stderr -ef "${UI_CONSOLE}" ]; then
-        printf 'airymax-boot: %s\n' "$*" >"${UI_CONSOLE}" 2>/dev/null || :
+        printf 'airymax-boot: %s\n' "${fact}" >"${UI_CONSOLE}" 2>/dev/null || :
     fi
     return "${code}"
 }
 
-# 行同时落 console 与 journal：服务的 stdout 进 journal，装机现场看的是
+# ASCII 行落 stdout 与 console：服务的 stdout 进 journal，装机现场看的是
 # console；两条通道都要，缺一条就会在「只能看屏幕」或「只能抓日志」的一侧
-# 失明。logger 缺席（chroot、最小 rootfs）时不影响调用方。
+# 失明。
 #
 # 调用方把 stdout 直接接到 console 时（装机现场手工执行、脚本里
 # exec >/dev/console），再写一遍会让每行在屏幕上出现两次；去重与串口优先
-# 的判据都在 con_sink 里，两个调用方共用同一份实现。
+# 的判据都在 con_sink 里，两个调用方共用同一份实现。console 上永远只有
+# ASCII 行，因此 stdout 重定向到 console 也不会把中文带上去。
 _ui_emit() {
     local line="$1"
 
     printf '%s\n' "${line}"
     con_sink "${line}"
-    if command -v logger >/dev/null 2>&1; then
-        logger -t airymax-boot -- "${line}" 2>/dev/null || :
-    fi
-    return 0
 }
 
-# 阶段名 → 序号；不在表内返回 1。宽度取自表，运行期不做字符宽度推断，
+# 中文行只进 journal。logger 缺席（chroot、最小 rootfs）时不影响调用方。
+_ui_log() {
+    local line="$1"
+
+    command -v logger >/dev/null 2>&1 || return 0
+    logger -t airymax-boot -- "${line}" 2>/dev/null || :
+}
+
+# 阶段名 → 契约行；不在表内返回 1。宽度取自表，运行期不做字符宽度推断，
 # 避免在非 UTF-8 locale 下把宽度算成字节数而整列错位。
 _ui_row() {
-    local want="$1" row
+    local want="$1" row id name cols code
 
     for row in "${UI_STAGES[@]}"; do
-        if [ "${row#*|}" = "${want}|${row##*|}" ]; then
+        IFS='|' read -r id name cols code <<<"${row}"
+        if [ "${name}" = "${want}" ]; then
             printf '%s' "${row}"
             return 0
         fi
@@ -139,14 +156,11 @@ _ui_row() {
 # 组装一行。[ n/N ] 名称 + 空格补到 UI_COL + token + 关键值。
 # 只有带关键值时 token 才补到 5 列：没有事实的行不该以空白结尾，
 # 否则 journal 里 grep 'ok$' 会匹配不到。
-_ui_line() {
-    local name="$1" token="$2" row id tok tail=''
-    shift 2
+_ui_fmt() {
+    local name="$1" cols="$2" id="$3" token="$4"
+    shift 4
+    local tok="${token}" tail=''
 
-    row="$(_ui_row "${name}")" ||
-        { _ui_err "${UI_EINVAL}" "阶段名不在契约表: ${name}"; return "${UI_EINVAL}"; }
-    id="${row%%|*}"
-    tok="${token}"
     if [ "$#" -gt 0 ]; then
         tok="$(printf '%-5s' "${token}")"
         tail="$*"
@@ -154,14 +168,39 @@ _ui_line() {
 
     printf '[ %s/%s ] %s%*s%s%s\n' \
         "${id}" "${#UI_STAGES[@]}" "${name}" \
-        "$((UI_COL - ${row##*|}))" '' "${tok}" "${tail}"
+        "$((UI_COL - cols))" '' "${tok}" "${tail}"
 }
 
-_ui_put() {
-    local line rc
+# console 行必须纯 ASCII：调用方本应只传 key=value 事实，但一处中文措辞
+# 就足以让整行在 VT 上退化成乱码。这里兜底把非 ASCII 字符换成 '?'，屏幕
+# 至少仍能读出序号、token 与键；原始措辞在 journal 里完整保留。纯 ASCII
+# 行不启动任何外部命令。
+_ui_ascii() {
+    local text="$1"
 
-    line="$(_ui_line "$@")" || { rc=$?; return "${rc}"; }
-    _ui_emit "${line}"
+    case "${text}" in
+        *[!-~]*) printf '%s' "${text}" | sed 's/[^ -~]/?/g' ;;
+        *) printf '%s' "${text}" ;;
+    esac
+}
+
+# 同一结论出两行：ASCII 行进 console/serial/stdout，中文行进 journal。
+# 序号、token 与关键值两边逐字相同，只有阶段措辞按通道不同。
+_ui_put() {
+    local name="$1" token="$2" row id cols code
+
+    shift 2
+    row="$(_ui_row "${name}")" ||
+        {
+            _ui_err "${UI_EINVAL}" "stage-not-in-contract" \
+                "阶段名不在契约表: ${name}"
+            return "${UI_EINVAL}"
+        }
+    IFS='|' read -r id name cols code <<<"${row}"
+    _ui_emit "$(_ui_ascii "$(
+        _ui_fmt "${code}" "${#code}" "${id}" "${token}" "$@"
+    )")"
+    _ui_log "$(_ui_fmt "${name}" "${cols}" "${id}" "${token}" "$@")"
 }
 
 ui_total() {
@@ -172,7 +211,7 @@ ui_total() {
 # 同一阶段在不同脚本里就会报出不同的序号。
 ui_begin() {
     if [ "$#" -ne 1 ]; then
-        _ui_err "${UI_EUSAGE}" "用法: ui_begin <阶段名>"
+        _ui_err "${UI_EUSAGE}" "usage: ui_begin <stage>" "用法: ui_begin <阶段名>"
         return
     fi
 
@@ -209,7 +248,11 @@ ui_id() {
     local row
 
     row="$(_ui_row "$1")" ||
-        { _ui_err "${UI_EINVAL}" "阶段名不在契约表: $1"; return "${UI_EINVAL}"; }
+        {
+            _ui_err "${UI_EINVAL}" "stage-not-in-contract" \
+                "阶段名不在契约表: $1"
+            return "${UI_EINVAL}"
+        }
     printf '%s' "${row%%|*}"
 }
 
@@ -226,7 +269,11 @@ ui_due() {
     local row
 
     row="$(_ui_row "$1")" ||
-        { _ui_err "${UI_EINVAL}" "阶段名不在契约表: $1"; return "${UI_EINVAL}"; }
+        {
+            _ui_err "${UI_EINVAL}" "stage-not-in-contract" \
+                "阶段名不在契约表: $1"
+            return "${UI_EINVAL}"
+        }
     [ -e "$(_ui_dir)/${row%%|*}" ] && return 1
     return 0
 }

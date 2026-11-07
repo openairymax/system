@@ -3,9 +3,13 @@
 # AirymaxOS 开机九阶段打印契约回归测试
 #
 # 在临时目录里以桩 logger 驱动 ui.sh，逐字比对四种动词的输出形态、
-# 契约表（序号、名称、显示宽度、总数）、三类契约拒绝，以及只读判定
-# （ui_due）不占标记的语义；宽度在这里独立用 unicodedata 复算，避免表里的
-# 宽度与终端实际渲染分叉。
+# 契约表（序号、名称、显示宽度、ASCII 代号、总数）、两类通道（console
+# 只出 ASCII，journal 出中文）、契约拒绝，以及只读判定（ui_due）不占标记
+# 的语义；宽度在这里独立用 unicodedata 复算，避免表里的宽度与终端实际
+# 渲染分叉。
+#
+# console 侧必须是纯 ASCII 是本轮回归的主判据：285H 实机开屏九行全部是
+# 方块，根因是 VT 字体（latarcyrheb-sun16）没有 CJK 字形，而阶段名是中文。
 
 from __future__ import annotations
 
@@ -72,10 +76,15 @@ class Case(unittest.TestCase):
                 check=False,
             ).returncode
 
-    def stage_table(self) -> list[tuple[str, str, str]]:
+    def stage_table(self) -> list[tuple[str, str, str, str]]:
         out = self.run_ui('printf "%s\\n" "${UI_STAGES[@]}"')
         self.assertEqual(out.returncode, 0, out.stderr)
         return [tuple(row.split("|")) for row in out.stdout.splitlines()]
+
+    def row(self, index: int, name: str, token: str, tail: str = "") -> str:
+        """一行阶段结论的精确形态：名称补到 UI_COL，带关键值时 token 补到 5 列。"""
+        text = f"[ {index}/9 ] {name}{' ' * (16 - width(name))}"
+        return text + (f"{token:<5}{tail}" if tail else token)
 
     def test_stage_table_is_the_contract(self):
         rows = self.stage_table()
@@ -83,43 +92,55 @@ class Case(unittest.TestCase):
         self.assertEqual([r[0] for r in rows], [str(n) for n in range(1, 10)])
         names = [r[1] for r in rows]
         self.assertEqual(len(set(names)), len(names), "阶段名必须唯一")
-        for _, name, columns in rows:
+        codes = [r[3] for r in rows]
+        self.assertEqual(len(set(codes)), len(codes), "console 代号必须唯一")
+        for _, name, columns, code in rows:
             self.assertEqual(int(columns), width(name), f"「{name}」宽度登记不符")
+            self.assertTrue(code.isascii(), f"「{code}」必须是 ASCII")
+            self.assertFalse(any(c.isspace() for c in code), code)
 
     def test_begin_line_names_the_stage(self):
         out = self.run_ui("ui_begin 数据分区")
         self.assertEqual(out.returncode, 0, out.stderr)
-        line = out.stdout.rstrip("\n")
-        self.assertTrue(line.startswith("[ 3/9 ] 数据分区"), line)
-        self.assertTrue(line.endswith("..."), line)
+        self.assertEqual(out.stdout, self.row(3, "data", "...") + "\n")
 
     def test_ok_line_carries_key_values(self):
-        out = self.run_ui("ui_begin 数据分区")
-        self.assertEqual(out.returncode, 0, out.stderr)
         out = self.run_ui("ui_ok 数据分区 mounted=/data dev=/dev/nvme0n1p4")
         self.assertEqual(out.returncode, 0, out.stderr)
+        tail = "mounted=/data dev=/dev/nvme0n1p4"
+        self.assertEqual(out.stdout, self.row(3, "data", "ok", tail) + "\n")
         self.assertEqual(
-            out.stdout, "[ 3/9 ] 数据分区        ok   mounted=/data dev=/dev/nvme0n1p4\n"
+            self.journal.read_text(encoding="utf-8"),
+            self.row(3, "数据分区", "ok", tail) + "\n",
         )
 
     def test_note_and_fail_tokens(self):
         out = self.run_ui(
-            'ui_note 运行时带宽 runtime=950000 group=yes\n'
-            'ui_fail 桌面就绪 "lightdm 未 active（mode=gui）"'
+            "ui_note 运行时带宽 runtime=950000 group=yes\n"
+            "ui_fail 桌面就绪 reason=session"
         )
         self.assertEqual(out.returncode, 0, out.stderr)
-        lines = out.stdout.splitlines()
         self.assertEqual(
-            lines[0], "[ 4/9 ] 运行时带宽      note runtime=950000 group=yes"
-        )
-        self.assertEqual(
-            lines[1], "[ 8/9 ] 桌面就绪        FAIL lightdm 未 active（mode=gui）"
+            out.stdout.splitlines(),
+            [
+                self.row(4, "bandwidth", "note", "runtime=950000 group=yes"),
+                self.row(8, "desktop", "FAIL", "reason=session"),
+            ],
         )
 
     def test_fail_without_criteria_is_not_silent(self):
         out = self.run_ui("ui_fail 桌面就绪")
         self.assertEqual(out.returncode, 0, out.stderr)
-        self.assertEqual(out.stdout, "[ 8/9 ] 桌面就绪        FAIL\n")
+        self.assertEqual(out.stdout, self.row(8, "desktop", "FAIL") + "\n")
+
+    def test_console_tail_is_sanitised_and_journal_keeps_it(self):
+        """调用方误传中文时屏幕只损失措辞，序号与 token 仍可判读。"""
+        out = self.run_ui('ui_fail 桌面就绪 "lightdm 未 active"')
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertEqual(
+            out.stdout, self.row(8, "desktop", "FAIL", "lightdm ? active") + "\n"
+        )
+        self.assertIn("lightdm 未 active", self.journal.read_text(encoding="utf-8"))
 
     def test_columns_align_across_names(self):
         out = self.run_ui("ui_ok 基础挂载 x=1\nui_ok 桌面RT共存 x=1")
@@ -132,15 +153,17 @@ class Case(unittest.TestCase):
         out = self.run_ui("ui_beat 换页上限 40 60")
         self.assertEqual(out.returncode, 0, out.stderr)
         self.assertEqual(
-            out.stdout, "[ 5/9 ] 换页上限        wait used=40s limit=60s\n"
+            out.stdout, self.row(5, "swaplimit", "wait", "used=40s limit=60s") + "\n"
         )
 
-    def test_journal_receives_the_same_line(self):
+    def test_journal_receives_the_stage_name(self):
         out = self.run_ui("ui_ok 自检与取证 probe=clean")
         self.assertEqual(out.returncode, 0, out.stderr)
         self.assertEqual(
-            self.journal.read_text(encoding="utf-8"), out.stdout
+            self.journal.read_text(encoding="utf-8"),
+            self.row(9, "自检与取证", "ok", "probe=clean") + "\n",
         )
+        self.assertNotIn("自检", out.stdout)
 
     def test_console_gets_the_line_when_stdout_is_a_pipe(self):
         console = self.dir / "console"
@@ -157,7 +180,7 @@ class Case(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertEqual(
             console.read_text(encoding="utf-8"),
-            "[ 8/9 ] 桌面就绪        ok   unit=lightdm\n",
+            self.row(8, "desktop", "ok", "unit=lightdm") + "\n",
         )
 
     def local_only(self) -> dict[str, str]:
@@ -227,10 +250,11 @@ class Case(unittest.TestCase):
         console.write_text("", encoding="utf-8")
         out = self.run_ui("ui_ok 桌面美容 x=1", UI_CONSOLE=str(console))
         self.assertEqual(out.returncode, 5, out.stderr)
-        self.assertIn(
-            "airymax-boot: 阶段名不在契约表: 桌面美容",
+        self.assertEqual(
             console.read_text(encoding="utf-8"),
+            "airymax-boot: stage-not-in-contract\n",
         )
+        self.assertIn("桌面美容", out.stderr)
 
     def test_sourcing_twice_is_harmless(self):
         out = self.run_ui(f". {UI}\n. {UI}\nui_ok 基础挂载 x=1")

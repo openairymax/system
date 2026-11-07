@@ -1107,7 +1107,7 @@ STAGE_RUN = "stage_run.sh"
 STAGE_BEAT = 30
 STAGE_LIMIT = 60
 UI_SH = ROOT / "scripts" / "ui.sh"
-UI_ROW = re.compile(r"^\s*'(\d+)\|([^|']+)\|(\d+)'\s*$", re.M)
+UI_ROW = re.compile(r"^\s*'(\d+)\|([^|']+)\|(\d+)\|([^|']+)'\s*$", re.M)
 
 
 def ui_path(units: Path) -> Path:
@@ -1122,21 +1122,25 @@ def ui_path(units: Path) -> Path:
     return units.parent / "scripts" / "ui.sh"
 
 
-def ui_rows(path: Path = UI_SH) -> dict[str, tuple[int, int]]:
+def ui_rows(path: Path = UI_SH) -> dict[str, tuple[int, int, str]]:
     """读取 ui.sh 的阶段契约表。
 
     Args:
         path: ui.sh 路径。
 
     Returns:
-        阶段名 → (序号, 显示宽度)；表不可读时为空字典。
+        阶段名 → (序号, 显示宽度, ASCII 代号)；表不可读时为空字典。
     """
     try:
         text = path.read_text(encoding="utf-8")
     except OSError:
         return {}
     return {
-        match.group(2): (int(match.group(1)), int(match.group(3)))
+        match.group(2): (
+            int(match.group(1)),
+            int(match.group(3)),
+            match.group(4),
+        )
         for match in UI_ROW.finditer(text)
     }
 
@@ -1150,12 +1154,13 @@ def _columns(name: str) -> int:
 
 
 def _ui_table_bad(path: Path = UI_SH) -> list[str]:
-    """阶段契约表必须连续编号、名称不含空白、宽度与字符一致。
+    """阶段契约表必须连续编号、名称不含空白、宽度与字符一致、代号纯 ASCII。
 
     单元以 ExecStart 传阶段名，systemd 按空白切分 ExecStart：名字里带空白
     会被拆成多个参数，运行期查不到序号而以非零退出，现场只剩一行 FAILED
     （run 41802417971 的装机首启）。宽度写错则九行打印不再对齐，「卡在哪
-    一步」要靠肉眼从错位的列里猜。
+    一步」要靠肉眼从错位的列里猜。代号是 console 侧唯一措辞，VT 字体没有
+    CJK 字形，非 ASCII 代号会让本已修好的开屏重新变成乱码。
 
     Args:
         path: ui.sh 路径。
@@ -1167,7 +1172,7 @@ def _ui_table_bad(path: Path = UI_SH) -> list[str]:
     if not rows:
         return [f"{path.name}: 阶段契约表缺失或为空"]
     errs = []
-    if sorted(index for index, _ in rows.values()) != list(
+    if sorted(index for index, _, _ in rows.values()) != list(
         range(1, len(rows) + 1)
     ):
         errs.append(f"{path.name}: 阶段序号必须从 1 连续编号")
@@ -1178,14 +1183,24 @@ def _ui_table_bad(path: Path = UI_SH) -> list[str]:
     )
     errs.extend(
         f"{path.name}: 阶段 {name} 宽度 {width} != 实际 {_columns(name)}"
-        for name, (_, width) in rows.items()
+        for name, (_, width, _) in rows.items()
         if width != _columns(name)
+    )
+    errs.extend(
+        f"{path.name}: 阶段 {name} 的 console 代号不是纯 ASCII: {code!r}"
+        for name, (_, _, code) in rows.items()
+        if not code.isascii() or code != code.strip()
+    )
+    codes = [code for _, _, code in rows.values()]
+    errs.extend(
+        f"{path.name}: console 代号重复: {code}"
+        for code in sorted({code for code in codes if codes.count(code) > 1})
     )
     return errs
 
 
 def _stage_arg_bad(
-    name: str, cfg: ConfigParser, rows: dict[str, tuple[int, int]]
+    name: str, cfg: ConfigParser, rows: dict[str, tuple[int, int, str]]
 ) -> list[str]:
     """ExecStart 的阶段名必须是单个参数且登记在契约表内。
 
