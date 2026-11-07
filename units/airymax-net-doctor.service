@@ -1,0 +1,21 @@
+[Unit]
+Description=Report the first-boot network verdict to the journal
+After=NetworkManager.service
+Before=graphical.target
+
+[Service]
+Type=oneshot
+ExecStart=-/usr/lib/airymaxos/scripts/net_doctor.sh
+RemainAfterExit=yes
+RuntimeDirectory=airymaxos
+RuntimeDirectoryMode=0755
+TimeoutStartSec=30
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+NoNewPrivileges=yes
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
