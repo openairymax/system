@@ -175,8 +175,15 @@ _ui_fmt() {
 # 就足以让整行在 VT 上退化成乱码。这里兜底把非 ASCII 字符换成 '?'，屏幕
 # 至少仍能读出序号、token 与键；原始措辞在 journal 里完整保留。纯 ASCII
 # 行不启动任何外部命令。
+#
+# 折叠必须按字节判定：UTF-8 locale 下 sed 的方括号区间走排序规则，
+# '[ -~]' 不再是 0x20..0x7E，标点之外的字母数字会被判为「非 ASCII」而
+# 整行替换成 '?'（run 42426433371 的九阶段行就是这样，[ ?/? ] ??????）。
+# 外壳正则与 sed 都只认 LC_ALL=C 的字节语义，因此 locale 钉在本函数内，
+# 不依赖调用方的 LANG。
 _ui_ascii() {
     local text="$1"
+    local LC_ALL=C
 
     case "${text}" in
         *[!-~]*) printf '%s' "${text}" | sed 's/[^ -~]/?/g' ;;
