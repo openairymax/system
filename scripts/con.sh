@@ -25,6 +25,7 @@
 #   con_init              解析通道，结果落在 CON_CH[]
 #   con_sink <行>         只写通道（stdout 已由调用方自行处理）
 #   con_put  <行...>      先写 stdout，再走 con_sink
+#   con_serial <行...>    只写串口，供机器判读面按原文转发
 # ===========================================================================
 
 [[ -n "${_AIRY_CON_SH:-}" ]] && return 0
@@ -84,4 +85,16 @@ con_sink() {
 con_put() {
     printf '%s\n' "$*"
     con_sink "$*"
+}
+
+# 机器判读面（TAP 明细、关键链原文）只走串口：这些行按原文转发才可对账，
+# 而原文里可能带 CJK（探针会报中文字体名）。本地屏的 VT 字体没有 CJK
+# 字形，同一行落到 /dev/console 只剩方块，正是「开机打印乱码」的来源。
+# 串口接收端是终端日志，不存在字形预算，因此按内容分流而不是折叠内容。
+con_serial() {
+    local line="$*"
+
+    [ -w "${CON_SER}" ] || return 0
+    printf '%s\n' "${line}" |
+        timeout "${CON_WLIM}" tee -a "${CON_SER}" >/dev/null 2>&1 || :
 }
