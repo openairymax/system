@@ -780,15 +780,13 @@ SESSION_PAIRS: dict[tuple[str, str], str] = {
 
 FSCK_DROPIN = "systemd-fsck.d/50-console-ascii.conf"
 
-# 发行版单元给 systemd-fsck 与 systemd-fsck@ 都带 StandardOutput=journal+console，
-# e2fsck 的进度行因此直接落到 Linux VT。装机 locale 是 zh_CN.UTF-8，gettext
-# 让这行变成中文，而 latarcyrheb-sun16 没有 CJK 字形、VT 字体上限 512 个字形
-# 也装不进中文字库——屏幕上只剩方块（285H 冷启动实测）。
-#
-# 只钉 locale、不动 StandardOutput：这一行是「卡在哪个文件系统」的唯一线索，
-# 丢掉输出等于把卡死原因一起丢掉。Environment 与桌面会话无关，用户会话读的
-# 仍是 locale.conf 里的 zh_CN。
+# 发行版 fsck 单元只写 stdout、不显式声明 StandardOutput，结论默认只进
+# journal。e2fsck 卡住时屏幕上没有任何线索，因此 drop-in 先把结论转发到
+# 本地屏；转发之后措辞又受装机 locale 支配（zh_CN.UTF-8 → 中文），而 VT
+# 字体没有 CJK 字形，整行只剩方块（285H 冷启动实测）。两个键缺一不可：
+# 只补 locale 而不转发，屏幕上依旧什么都没有。
 FSCK_PAIRS: dict[tuple[str, str], str] = {
+    ("Service", "StandardOutput"): "journal+console",
     ("Service", "Environment"): "LANG=C LC_ALL=C",
 }
 
