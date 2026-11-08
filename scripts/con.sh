@@ -39,13 +39,14 @@ readonly CON_WLIM="${AIRY_CON_WLIM:-2}"
 
 CON_CH=()
 
-# 串口是字符设备才纳入通道；活动列表的末位决定 /dev/console 的落点，
-# 末位就是串口时两者同源，只保留一份。
+# 可写的串口才纳入通道：设备节点存在但当前身份写不进去（权限、被占用）
+# 时写它只会失败或阻塞，落点应退回 /dev/console。判据用可写性而不是设备
+# 类型，测试用普通文件顶替串口时也走同一条路径。
 con_init() {
     local last=''
 
     CON_CH=()
-    if [ -c "${CON_SER}" ]; then
+    if [ -w "${CON_SER}" ]; then
         CON_CH=("${CON_SER}")
         last="$(tr ' ' '\n' <"${CON_ACT}" 2>/dev/null | sed -n '$p')" || last=''
         if [ "${last}" != "${CON_SER##*/}" ]; then
