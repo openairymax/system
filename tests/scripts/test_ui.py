@@ -346,5 +346,39 @@ class DueCase(Case):
         self.assertEqual(self.due(state="/proc/airy-no-such/ui").returncode, 0)
 
 
+class LocaleCase(Case):
+    """折叠按字节：排序 locale 下不得把字母数字换成 '?'。
+
+    run 42426433371 的冷启动串口里，九阶段行整行退化成「[ ?/? ] ???????」：
+    sed 的方括号区间在 UTF-8 locale 下走排序规则，'[ -~]' 不再是
+    0x20..0x7E，标点之外全被判为非 ASCII。判据只有一条——同一输入在 C 与
+    排序 locale 下的输出必须逐字相同。测试机没有对应 locale 时跳过，
+    不把「跑不了」伪装成「通过」。
+    """
+
+    CANDIDATES = ("en_US.UTF-8", "zh_CN.UTF-8")
+
+    def collation_locale(self) -> str:
+        """按能否真正加载判定：locale -a 不列出 LOCPATH 下临时生成的 locale。"""
+        for name in self.CANDIDATES:
+            env = {**os.environ, "LC_ALL": name}
+            res = subprocess.run(["locale", "charmap"], capture_output=True,
+                                 text=True, env=env, check=False)
+            if res.returncode == 0 and res.stdout.strip() == "UTF-8":
+                return name
+        return ""
+
+    def test_fold_is_locale_independent(self):
+        locale = self.collation_locale()
+        if not locale:
+            self.skipTest("没有可用的排序 locale")
+        body = "ui_ok 桌面就绪 unit=lightdm class=user session=1"
+        c = self.run_ui(body, LC_ALL="C", LANG="C")
+        u = self.run_ui(body, LC_ALL=locale, LANG=locale)
+        self.assertEqual(c.returncode, 0, c.stderr)
+        self.assertEqual(u.returncode, 0, u.stderr)
+        self.assertEqual(u.stdout, c.stdout)
+
+
 if __name__ == "__main__":
     sys.exit(unittest.main())
