@@ -790,9 +790,26 @@ FSCK_PAIRS: dict[tuple[str, str], str] = {
     ("Service", "Environment"): "LANG=C LC_ALL=C",
 }
 
+DBUS_RESET_DROPIN = "dbus.socket.d/10-airymax-listen-reset.conf"
+DBUS_RUN_DROPIN = "dbus.socket.d/20-airymax-listen-run.conf"
+
+# 发行版 dbus.socket 的 ListenStream 写在 legacy 目录 /var/run 下，systemd
+# 改写路径时打印一条含 U+2192 的告警；冷启动阶段它经 /dev/kmsg 直落本地屏，
+# 而 VT 字体没有该字形，屏幕上只剩一个方块（285H 实测）。列表型指令的
+# drop-in 只能先空赋值重置、再赋值，两份文件按文件名顺序应用。
+DBUS_RESET_PAIRS: dict[tuple[str, str], str] = {
+    ("Socket", "ListenStream"): "",
+}
+
+DBUS_RUN_PAIRS: dict[tuple[str, str], str] = {
+    ("Socket", "ListenStream"): "/run/dbus/system_bus_socket",
+}
+
 DROPINS: dict[str, dict[tuple[str, str], str]] = {
     SESSION_DROPIN: SESSION_PAIRS,
     FSCK_DROPIN: FSCK_PAIRS,
+    DBUS_RESET_DROPIN: DBUS_RESET_PAIRS,
+    DBUS_RUN_DROPIN: DBUS_RUN_PAIRS,
 }
 
 TIMERS: dict[str, dict[tuple[str, str], str]] = {
