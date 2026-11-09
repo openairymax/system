@@ -4,13 +4,29 @@
 #
 # 单次触发，不重排：判定窗口在服务内部，健康时完全静默，报出卡点后也
 # 不需要第二轮——卡点证据是快照，不是周期指标。OnBootSec 的原点是
-# CLOCK_BOOTTIME（内核起算），不依赖任何 target 是否达成，因此卡点单元
-# 自身不会因为目标达不到而错过触发；反过来说，这个秒数是按硬件开机时长
-# 标定的，在纯软件模拟的验收机上，同样的 60 秒可能还停在用户态早期。
+# CLOCK_BOOTTIME（内核起算），不依赖任何 target 是否达成；反过来说，这个
+# 秒数是按硬件开机时长标定的，在纯软件模拟的验收机上，同样的 60 秒可能
+# 还停在用户态早期。
+#
+# 为什么挂 sysinit.target 而不是 timers.target：timers.target 由
+# basic.target 拉起，而 basic.target 排在 sysinit.target 之后。sysinit
+# 被某个单元卡住时，WantedBy=timers.target 的定时器永远不会启动，看门狗
+# 与被观察者一同沉没（285H 2026-11-09 的冷启动即此形态）。
+#
+# 为什么还要 Before=sysinit.target：Wants 只表达「一起启动」，不表达先
+# 后。本定时器启动只是一次计时器注册，与 sysinit 的其余前置作业无排序；
+# 声明在其之前，sysinit 的启动事务一开始就会把本定时器拉起来，而
+# sysinit.target 自身的激活仍要等它的 After 依赖完成——这正是「目标到
+# 不了也要有报告」需要的形态。
+#
+# DefaultDependencies=no 必须写：定时器的缺省依赖含 Requires/After=
+# sysinit.target，留着就与 Before=sysinit.target 构成依赖环。
 # ===========================================================================
 [Unit]
 Description=Report a boot that stops making progress
 Documentation=https://atomgit.com/openairymax/agent-linux
+DefaultDependencies=no
+Before=sysinit.target
 
 [Timer]
 OnBootSec=60s
@@ -18,4 +34,4 @@ AccuracySec=5s
 Unit=airy-boot-watch.service
 
 [Install]
-WantedBy=timers.target
+WantedBy=sysinit.target

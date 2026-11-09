@@ -57,6 +57,7 @@ SYSTEM_UNITS = frozenset({
     "slices.target",
     "sysinit.target",
     "systemd-journald.service",
+    "systemd-journald.socket",
     "user@.service",
 })
 
@@ -455,12 +456,17 @@ BOOT_MOUNT_SCRIPT = ROOT / "scripts" / "boot_mount.sh"
 
 BOOT_WATCH = "airy-boot-watch.service"
 
-# 启动卡点自证：唯一一个刻意不挂 target 的单元。挂在目标之后就要等目标
+# 启动卡点自证：唯一一个刻意不参与启动排序的单元。挂在目标之后就要等目标
 # 达成，而它存在的理由正是目标达不成；由 timer 的 OnBootSec 触发，与
-# 启动排序完全解耦。stdout 只进 journal，console 与串口由脚本按设备实际
-# 归属自己写，交给 systemd 复制一遍会在 /dev/console 归串口的机器上重复。
+# 启动排序完全解耦。DefaultDependencies=no 不是风格问题：服务类单元的
+# 缺省依赖自带 Requires/After=sysinit.target，只删显式那一行仍排在目标
+# 之后，看门狗在最需要它的场景里拿不到执行机会（285H 2026-11-09 冷启动
+# 被 plymouth-read-write 卡死，本单元 journal 为空）。stdout 只进 journal，
+# console 与串口由脚本按设备实际归属自己写，交给 systemd 复制一遍会在
+# /dev/console 归串口的机器上重复。
 BOOT_WATCH_PAIRS: dict[tuple[str, str], str] = {
-    ("Unit", "After"): "sysinit.target",
+    ("Unit", "DefaultDependencies"): "no",
+    ("Unit", "After"): "systemd-journald.socket",
     ("Service", "Type"): "oneshot",
     (
         "Service",
@@ -858,14 +864,21 @@ TIMERS: dict[str, dict[tuple[str, str], str]] = {
         ("Timer", "Unit"): MEMCAP,
         ("Install", "WantedBy"): "timers.target",
     },
+    # 挂 sysinit.target 而不是 timers.target：后者由 basic.target 拉起，
+    # 而 basic 排在 sysinit 之后。sysinit 被卡住时，挂 timers.target 的
+    # 定时器永不启动，看门狗与被观察者一同沉没。Before=sysinit.target 让
+    # 计时器注册随 sysinit 的启动事务立即发生；DefaultDependencies=no 去掉
+    # 定时器缺省带入的 Requires/After=sysinit.target，否则与 Before 成环。
     "airy-boot-watch.timer": {
         ("Unit", "Description"): (
             "Report a boot that stops making progress"
         ),
+        ("Unit", "DefaultDependencies"): "no",
+        ("Unit", "Before"): "sysinit.target",
         ("Timer", "OnBootSec"): "60s",
         ("Timer", "AccuracySec"): "5s",
         ("Timer", "Unit"): BOOT_WATCH,
-        ("Install", "WantedBy"): "timers.target",
+        ("Install", "WantedBy"): "sysinit.target",
     },
 }
 
