@@ -2,15 +2,17 @@
 #
 # 系统清点的单元测试
 #
-# 钉住五件事：三个来源各自只认自己的证据格式；任一来源读不到时该面为
-# unknown 而不是 ok；缺包与多包分列两边；err 按单元归属分成自有／外来／
-# 未知三层，自有与未知无条件失败、外来只与预算比较；命令行退出码 0/1/3
-# 可区分。
+# 钉住六件事：三个来源各自只认自己的证据格式；任一来源读不到时该面为
+# unknown 而不是 ok；缺包与多包分列两边；err 按归属分四层，自有与未知
+# 无条件失败、平台与基底各与自己的预算比较；预算按机器类别分组、平台条目
+# 按机器指纹记账、缺组即判负；命令行退出码 0/1/3 可区分。
 #
-# 分层与预算的由来（285H 实测）：基底自身会打印消除不掉的 err（rtkit 拿
-# 不到实时优先级、ACPI 表重复），「任何 err 即失败」在真机上长期为红，
-# 判据就失去信号价值；而 pid 每次不同会让同一崩溃在基线里重复计数，故先
-# 归一化再按「内容 + 单元」去重。
+# 分层与预算的由来（285H 实测）：基底与主板都会打印消除不掉的 err（rtkit
+# 拿不到实时优先级、ACPI 表重复创建命名对象），「任何 err 即失败」在真机
+# 上长期为红，判据就失去信号价值；两类噪声混用一份预算时，收掉一条基底
+# 缺陷腾出的额度会被平台噪音吃掉，棘轮看似收紧而实际没有。pid 每次不同会
+# 让同一崩溃在基线里重复计数，会话号与 coredump 序号同理，故先归一化再按
+# 「内容 + 单元」去重。
 
 """System inventory tests."""
 
@@ -52,6 +54,10 @@ RPM = "airymaxos-system\nukui-session-manager\n"
 
 DRIFT = "airymaxos-system\nukui-session-manager\nextra-pkg\n"
 
+# 285H 实测的机器指纹（83JK / LNVNB161216 / QLCN24WW），预算文件里的平台
+# 条目按它记账。
+FP = "3ba63f38b87a"
+
 
 def rec(msg: str, unit: str = "", ident: str = "", **extra: str) -> str:
     """一条 journald JSON 记录；只填判定真正要读的字段。"""
@@ -64,7 +70,7 @@ def rec(msg: str, unit: str = "", ident: str = "", **extra: str) -> str:
     return json.dumps(item)
 
 
-FOREIGN = rec("alsa: cannot open card", "cups.service", "cupsd")
+BASE_ERR = rec("alsa: cannot open card", "cups.service", "cupsd")
 
 OWNED = rec("cannot bind socket", "airymax-desktop.service")
 
@@ -75,16 +81,27 @@ JOB_FAIL = rec("Failed to start AirymaxOS acceptance smoke report.",
                UNIT="airymax-smoke-report.service")
 
 # ACPICA 的表缺陷：内核转发、文本以「ACPI BIOS Error (bug)」「ACPI Error」
-# 开头，属于主板 DSDT 的问题，不进外来预算。
-FIRMWARE = rec("ACPI BIOS Error (bug): Failure creating named object",
-               ident="kernel", _TRANSPORT="kernel")
-FIRMWARE_TZ = rec("ACPI Error: Aborting method \\_TZ.TZ00._TMP due to "
-                  "previous error (AE_NOT_FOUND)", ident="kernel",
-                  _TRANSPORT="kernel")
+# 开头，说的是主板 DSDT 的问题，进平台层预算而不是基底预算。
+PLAT = rec("ACPI BIOS Error (bug): Failure creating named object",
+           ident="kernel", _TRANSPORT="kernel")
+PLAT_TZ = rec("ACPI Error: Aborting method \\_TZ.TZ00._TMP due to "
+              "previous error (AE_NOT_FOUND)", ident="kernel",
+              _TRANSPORT="kernel")
 
-# 内核的其他 err 不是固件缺陷，仍按外来层计数。
+# 内核的其他 err 不是平台缺陷，仍按基底计数。
 KERNEL_IO = rec("blk_update_request: I/O error, dev sda", ident="kernel",
                 _TRANSPORT="kernel")
+
+BUDGET = f"""\
+# 分组预算：平台条目带机器指纹，基底条目带日期与单元
+class=real
+platform {FP} 2026-11-10 ACPI BIOS Error (bug): \\_SB.PC00.XHCI.RHUB.HS01._UPC
+platform ffffffffffff 2026-11-10 另一块主板的同名噪音
+base 2026-11-06 user-session [pulseaudio] pid.c: Daemon already running.
+
+class=qemu
+base 2026-11-06 user-session [pulseaudio] pid.c: Daemon already running.
+"""
 
 
 class ParseTest(unittest.TestCase):
@@ -104,7 +121,7 @@ class ParseTest(unittest.TestCase):
         self.assertTrue(all(not err.known for err in errs))
 
     def test_json_names_the_owning_unit(self) -> None:
-        err = osys.journal_errs(FOREIGN)[0]
+        err = osys.journal_errs(BASE_ERR)[0]
         self.assertEqual(err.unit, "cups.service")
         self.assertTrue(err.known)
         self.assertFalse(err.owned)
@@ -123,17 +140,22 @@ class ParseTest(unittest.TestCase):
         self.assertEqual(err.unit, "airymax-smoke-report.service")
         self.assertTrue(err.owned)
 
-    def test_acpi_firmware_is_a_layer(self) -> None:
-        # 主板 DSDT 的表缺陷逐字重现且无法由发行版消除，单列固件层
-        errs = osys.journal_errs(f"{FIRMWARE}\n{FIRMWARE_TZ}")
+    def test_acpi_diagnostics_are_platform_layer(self) -> None:
+        errs = osys.journal_errs(f"{PLAT}\n{PLAT_TZ}")
         self.assertEqual(len(errs), 2)
-        self.assertTrue(all(err.firmware for err in errs))
+        self.assertTrue(all(err.platform for err in errs))
         self.assertTrue(all(err.known for err in errs))
 
-    def test_kernel_err_stays_foreign(self) -> None:
-        # 固件层只认 ACPICA 前缀；内核的其他 err 必须仍被计数
+    def test_thermal_zone_warning_is_platform(self) -> None:
+        err = osys.journal_errs(rec(
+            "thermal thermal_zone3: critical temperature reached",
+            ident="kernel", _TRANSPORT="kernel"))[0]
+        self.assertTrue(err.platform)
+
+    def test_kernel_err_stays_base(self) -> None:
+        # 平台层只认 ACPICA 与热区前缀；内核的其他 err 必须仍被计数
         err = osys.journal_errs(KERNEL_IO)[0]
-        self.assertFalse(err.firmware)
+        self.assertFalse(err.platform)
         self.assertTrue(err.known)
 
     def test_pid_normalized_before_dedup(self) -> None:
@@ -146,6 +168,45 @@ class ParseTest(unittest.TestCase):
         errs = osys.journal_errs(text)
         self.assertEqual(len(errs), 1, errs)
         self.assertIn("<pid>", errs[0].text)
+
+    def test_session_scopes_collapse(self) -> None:
+        # 会话号每次登录都换，不收敛时 ldapdb 一行噪声被每个会话各记一次，
+        # 预算只随登录次数上涨（285H 实测 22 条）
+        text = "\n".join(
+            rec("ldapdb_canonuser_plug_init() failed", f"session-{n}.scope")
+            for n in (2, 41, 530)
+        )
+        errs = osys.journal_errs(text)
+        self.assertEqual(len(errs), 1, errs)
+        self.assertEqual(errs[0].unit, "user-session")
+
+    def test_coredump_units_collapse(self) -> None:
+        # coredump 单元名里带序号与 pid，同一崩溃不收敛就会重复计账
+        text = "\n".join((
+            rec("Process 2306 (kscreen_backend) dumped core.",
+                "systemd-coredump@0-22095-0.service"),
+            rec("Process 39735 (kscreen_backend) dumped core.",
+                "systemd-coredump@4-39780-0.service"),
+        ))
+        errs = osys.journal_errs(text)
+        self.assertEqual(len(errs), 1, errs)
+        self.assertEqual(errs[0].unit, "coredump")
+
+    def test_core_dump_belongs_to_owned_layer(self) -> None:
+        # 崩溃来自镜像交付的组件，是可修的缺陷；记进预算即承认「可以崩」
+        err = osys.journal_errs(rec(
+            "Process 2306 (kscreen_backend) of user 1000 dumped core.",
+            "systemd-coredump@0-22095-0.service"))[0]
+        self.assertTrue(err.owned)
+        self.assertFalse(err.platform)
+
+    def test_coredump_notice_stays_base(self) -> None:
+        # 同一个单元的非崩溃提示（未编入 libelf）不是缺陷，仍按基底计数
+        err = osys.journal_errs(rec(
+            "elfutils disabled, parsing ELF objects not supported",
+            "systemd-coredump@0-22095-0.service"))[0]
+        self.assertFalse(err.owned)
+        self.assertEqual(err.unit, "coredump")
 
     def test_declared_skips_comments(self) -> None:
         self.assertEqual(
@@ -166,6 +227,69 @@ class ParseTest(unittest.TestCase):
         )
         self.assertEqual(missing, ("ukui-session-manager",))
         self.assertEqual(extra, ())
+
+
+class BudgetTest(unittest.TestCase):
+    def test_group_counts_by_class(self) -> None:
+        groups = osys.parse_budget(BUDGET, FP)
+        self.assertEqual(groups["real"], osys.Budget("real", 1, 1, True))
+        self.assertEqual(groups["qemu"], osys.Budget("qemu", 0, 1, True))
+
+    def test_platform_entries_follow_fingerprint(self) -> None:
+        # 同一块盘换到另一台机器：旧主板的平台条目一条也不继承
+        groups = osys.parse_budget(BUDGET, "000000000000")
+        self.assertEqual(groups["real"].platform, 0)
+        self.assertEqual(groups["real"].base, 1)
+
+    def test_missing_group_is_negative(self) -> None:
+        # 「读不到预算就放行」等于把棘轮拆掉，缺组必须判负
+        bud = osys.budget_for(osys.parse_budget(BUDGET, FP), "other")
+        self.assertFalse(bud.read)
+        self.assertEqual(bud.cls, "other")
+
+    def test_owned_entry_voids_group(self) -> None:
+        # owned 层的额度恒为 0，文件里出现即整组作废
+        text = f"class=real\nowned 2026-11-10 想给自有缺陷留额度\n"
+        groups = osys.parse_budget(text, FP)
+        self.assertFalse(groups["real"].read)
+
+    def test_short_entry_voids_group(self) -> None:
+        # 条目必须带归因证据（指纹/日期/摘要），缺字段即认不出这条债
+        text = "class=real\nbase 2026-11-06\n"
+        groups = osys.parse_budget(text, FP)
+        self.assertFalse(groups["real"].read)
+
+    def test_comments_and_blank_lines_ignored(self) -> None:
+        text = "# 说明\n\nclass=qemu\n# 段内注释\nbase 2026-11-06 x y\n"
+        groups = osys.parse_budget(text, FP)
+        self.assertEqual(groups["qemu"], osys.Budget("qemu", 0, 1, True))
+
+    def test_machine_fp_is_stable_digest(self) -> None:
+        dmi = {"product_name": "83JK", "board_name": "LNVNB161216",
+               "bios_version": "QLCN24WW"}
+        self.assertRegex(osys.machine_fp(dmi), r"^[0-9a-f]{12}$")
+        self.assertEqual(osys.machine_fp(dmi), osys.machine_fp(dict(dmi)))
+        self.assertNotEqual(
+            osys.machine_fp(dmi),
+            osys.machine_fp({**dmi, "bios_version": "QLCN99WW"}),
+        )
+
+    def test_machine_class_detects_virtual(self) -> None:
+        self.assertEqual(osys.machine_class(
+            {"product_name": "Standard PC (Q35 + ICH9, 2009)"}), "qemu")
+        self.assertEqual(osys.machine_class(
+            {"product_name": "83JK", "board_name": "LNVNB161216"}), "real")
+        self.assertEqual(osys.machine_class({}), "real")
+
+    def test_dmi_live_follows_view(self) -> None:
+        # --root 指向只读视图时机器身份也取自那里，判据不读宿主的主板
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / osys.DMI_REL
+            root.mkdir(parents=True)
+            (root / "product_name").write_text("83JK\n", encoding="utf-8")
+            values = osys.dmi_live(root)
+        self.assertEqual(values["product_name"], "83JK")
+        self.assertEqual(values["bios_version"], "")
 
 
 class SurveyTest(unittest.TestCase):
@@ -204,45 +328,51 @@ class SurveyTest(unittest.TestCase):
         self.assertEqual(found.units, ("airymax-data.mount",))
         self.assertEqual(found.state, osys.STATE_FAILED)
 
-    def test_counts_split_three_layers(self) -> None:
-        text = "\n".join((FOREIGN, OWNED, "[ 1.0] bare line"))
+    def test_counts_split_four_layers(self) -> None:
+        text = "\n".join((BASE_ERR, OWNED, PLAT, "[ 1.0] bare line"))
         found = osys.collect("", text, RPM, MANIFEST)
         self.assertEqual(
-            (found.owned_n, found.foreign_n, found.unknown_n), (1, 1, 1),
+            (found.owned_n, found.platform_n, found.base_n,
+             found.unknown_n), (1, 1, 1, 1),
         )
 
-    def test_foreign_within_budget(self) -> None:
-        found = osys.collect("", FOREIGN, RPM, MANIFEST, 1)
+    def test_base_within_budget(self) -> None:
+        found = osys.collect("", BASE_ERR, RPM, MANIFEST,
+                             osys.Budget(base=1))
         self.assertEqual(found.logs_state, osys.STATE_OK)
         self.assertEqual(found.state, osys.STATE_OK)
 
-    def test_foreign_over_budget(self) -> None:
-        found = osys.collect("", FOREIGN, RPM, MANIFEST, 0)
+    def test_base_over_budget(self) -> None:
+        found = osys.collect("", BASE_ERR, RPM, MANIFEST)
+        self.assertEqual(found.logs_state, osys.STATE_ERRORS)
+
+    def test_platform_has_its_own_budget(self) -> None:
+        # 平台层与基底层各记各的账：基底额度不能挪给平台噪音，反之亦然
+        text = "\n".join((PLAT, PLAT_TZ))
+        found = osys.collect("", text, RPM, MANIFEST,
+                             osys.Budget(base=9))
+        self.assertEqual(found.logs_state, osys.STATE_ERRORS)
+        found = osys.collect("", BASE_ERR, RPM, MANIFEST,
+                             osys.Budget(platform=9))
         self.assertEqual(found.logs_state, osys.STATE_ERRORS)
 
     def test_owned_ignores_budget(self) -> None:
         # 自有单元的 err 是本产品缺陷，预算再宽也不能放过
-        found = osys.collect("", OWNED, RPM, MANIFEST, 99)
+        found = osys.collect("", OWNED, RPM, MANIFEST,
+                             osys.Budget(platform=9, base=99))
         self.assertEqual(found.logs_state, osys.STATE_ERRORS)
 
     def test_unknown_layer_ignores_budget(self) -> None:
-        found = osys.collect("", JOURNAL, RPM, MANIFEST, 99)
+        found = osys.collect("", JOURNAL, RPM, MANIFEST,
+                             osys.Budget(platform=9, base=99))
         self.assertEqual(found.logs_state, osys.STATE_ERRORS)
 
-    def test_firmware_layer_ignores_budget(self) -> None:
-        # 固件层不判失败，但条数要如实出现在清点里
-        text = "\n".join((FIRMWARE, FIRMWARE_TZ))
-        found = osys.collect("", text, RPM, MANIFEST, 0)
-        self.assertEqual(found.logs_state, osys.STATE_OK)
-        self.assertEqual((found.firmware_n, found.foreign_n), (2, 0))
-        self.assertEqual(found.state, osys.STATE_OK)
-
-    def test_foreign_count_excludes_firmware(self) -> None:
-        # 同一份日志里外来与固件各计各的，互不冲抵
-        text = "\n".join((FOREIGN, FIRMWARE, KERNEL_IO))
-        found = osys.collect("", text, RPM, MANIFEST, 2)
-        self.assertEqual((found.foreign_n, found.firmware_n), (2, 1))
-        self.assertEqual(found.logs_state, osys.STATE_OK)
+    def test_missing_group_fails_clean_journal(self) -> None:
+        # 日志干净但预算缺组同样判负：缺证据的预算不能当成放行
+        bud = osys.budget_for(osys.parse_budget(BUDGET, FP), "other")
+        found = osys.collect("", "", RPM, MANIFEST, bud)
+        self.assertEqual(found.logs_state, osys.STATE_ERRORS)
+        self.assertEqual(found.state, osys.STATE_FAILED)
 
     def test_missing_manifest_is_unknown(self) -> None:
         found = osys.collect("", "", RPM, None)
@@ -254,12 +384,15 @@ class SurveyTest(unittest.TestCase):
         self.assertEqual(found.logs_state, osys.STATE_UNKNOWN)
 
     def test_dump_carries_layers(self) -> None:
-        found = osys.collect("", FOREIGN, RPM, MANIFEST, 3)
+        found = osys.collect("", BASE_ERR, RPM, MANIFEST,
+                             osys.Budget(base=3))
         logs = found.dump()["logs"]
-        self.assertEqual(logs["budget"], 3)
-        self.assertEqual(logs["foreign"], 1)
-        self.assertEqual(logs["firmware"], 0)
-        self.assertEqual(logs["errors"], [json.loads(FOREIGN)["MESSAGE"]])
+        self.assertEqual(logs["budget"],
+                         {"platform": 0, "base": 3, "read": True})
+        self.assertEqual(logs["base"], 1)
+        self.assertEqual(logs["platform"], 0)
+        self.assertEqual(logs["class"], "real")
+        self.assertEqual(logs["errors"], [json.loads(BASE_ERR)["MESSAGE"]])
 
 
 class CommandTest(unittest.TestCase):
@@ -283,6 +416,11 @@ class CommandTest(unittest.TestCase):
             path.write_text(manifest, encoding="utf-8")
             paths.append(str(path))
         return paths
+
+    def budget(self, body: str) -> str:
+        path = Path(tempfile.mkdtemp(), "err-budget")
+        path.write_text(body, encoding="utf-8")
+        return str(path)
 
     def test_clean_exit_zero(self) -> None:
         units, journal, rpm, manifest = self.files("", "", RPM, MANIFEST)
@@ -313,35 +451,54 @@ class CommandTest(unittest.TestCase):
         self.assertEqual(code, 0, out)
         self.assertIn("units=0", out)
 
-    def test_budget_lifts_foreign_only(self) -> None:
-        units, journal, rpm, manifest = self.files("", FOREIGN, RPM, MANIFEST)
+    def test_budget_file_lifts_base_only(self) -> None:
+        units, journal, rpm, manifest = self.files("", BASE_ERR, RPM, MANIFEST)
         argv = ("system", "--units", units, "--journal", journal,
-                "--rpm", rpm, "--manifest", manifest)
-        self.assertEqual(self.run_cli(*argv, "--budget", "1")[0], 0)
-        code, out = self.run_cli(*argv, "--budget", "0")
-        self.assertEqual(code, 1)
-        self.assertIn("foreign=1", out)
+                "--rpm", rpm, "--manifest", manifest,
+                "--class", "real", "--machine-fp", FP)
+        self.assertEqual(self.run_cli(*argv)[0], 1)
+        code, out = self.run_cli(*argv, "--budget-file", self.budget(BUDGET))
+        self.assertEqual(code, 0, out)
+        self.assertIn("base=1", out)
+        self.assertIn("budget=platform:1/base:1", out)
+
+    def test_platform_marked_and_gated(self) -> None:
+        # 平台层在文本里带层标；额度由条目数决定，缺额度即判失败
+        units, journal, rpm, manifest = self.files("", PLAT, RPM, MANIFEST)
+        argv = ("system", "--units", units, "--journal", journal,
+                "--rpm", rpm, "--manifest", manifest,
+                "--class", "real", "--machine-fp", FP)
+        code, out = self.run_cli(*argv, "--budget-file", self.budget(BUDGET))
+        self.assertEqual(code, 0, out)
+        self.assertIn("platform=1", out)
+        self.assertIn("[platform]", out)
+        code, out = self.run_cli(
+            *argv, "--budget-file",
+            self.budget(f"class=real\nbase 2026-11-06 x y\n"))
+        self.assertEqual(code, 1, out)
+
+    def test_missing_group_reports_and_fails(self) -> None:
+        units, journal, rpm, manifest = self.files("", "", RPM, MANIFEST)
+        code, out = self.run_cli(
+            "system", "--units", units, "--journal", journal,
+            "--rpm", rpm, "--manifest", manifest,
+            "--class", "real", "--machine-fp", FP,
+            "--budget-file", self.budget("class=qemu\nbase 2026-11-06 x y\n"),
+        )
+        self.assertEqual(code, 1, out)
+        self.assertIn("budget=missing:real", out)
 
     def test_owned_marked_in_text(self) -> None:
         units, journal, rpm, manifest = self.files("", OWNED, RPM, MANIFEST)
         code, out = self.run_cli(
             "system", "--units", units, "--journal", journal,
-            "--rpm", rpm, "--manifest", manifest, "--budget", "99",
+            "--rpm", rpm, "--manifest", manifest,
+            "--class", "real", "--machine-fp", FP,
+            "--budget-file", self.budget(BUDGET),
         )
         self.assertEqual(code, 1)
         self.assertIn("owned=1", out)
         self.assertIn("[owned]", out)
-
-    def test_firmware_marked_and_not_gated(self) -> None:
-        # 固件层在文本里带层标，预算为 0 也不判失败
-        units, journal, rpm, manifest = self.files("", FIRMWARE, RPM, MANIFEST)
-        code, out = self.run_cli(
-            "system", "--units", units, "--journal", journal,
-            "--rpm", rpm, "--manifest", manifest, "--budget", "0",
-        )
-        self.assertEqual(code, 0, out)
-        self.assertIn("firmware=1", out)
-        self.assertIn("[firmware]", out)
 
     def test_unreadable_exit_three(self) -> None:
         units, journal, rpm = self.files("", "", RPM, None)
