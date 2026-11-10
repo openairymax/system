@@ -3,18 +3,20 @@
 # AirymaxOS 升级检查命令行入口
 #
 # check 取通道、比对三元组并原子写状态，退出码 0 最新 / 10 有新版 /
-# 1 失败；远端尚未发布清单（HTTP 404）同样退出 0，因为它等同于「暂无
-# 可装更新」而非故障。status 只读状态与本地身份，退出码 0 有状态 /
-# 1 无状态；notify 只读状态并在会话内提醒一次，永远返回 0；apply 只承担
-# 基底勘误，退出码 0 成功 / 1 失败 / 20 需重装介质。网络与状态属系统，
-# 提醒属会话，故提醒单独成子命令，不为取件失败承担告警职责。
+# 2 未判定（没连上）/ 1 失败；远端尚未发布清单（HTTP 404）同样退出 0，
+# 因为它等同于「暂无可装更新」而非故障。status 只读状态与本地身份，退出
+# 码 0 有状态 / 1 无状态；notify 只读状态并在会话内提醒一次，永远返回 0；
+# apply 只承担基底勘误，退出码 0 成功 / 1 失败 / 20 需重装介质。网络与
+# 状态属系统，提醒属会话，故提醒单独成子命令，不为取件失败承担告警职责。
 
 """AirymaxOS update command line (V-14-07, V-14-08, V-14-09).
 
 设计依据：docs-linux/190-distribution/04-update-mechanism.md §2.4、§2.5。
-``check`` 无网络时判失败而非通过：把「没连上」记成「已是最新」是唯一
-无法靠人工复核发现的假绿。反之，远端明确回 404（尚未发布清单）是连上了
-却没有可比对象，属于正常起点，判通过。``notify`` 不取网络、不解读失败原因，
+``check`` 无网络时判 2（未判定）而非通过，也不判 1：记成「已是最新」是
+唯一无法靠人工复核发现的假绿，而记成失败会把「这台机器此刻没联网」写成
+产品故障——定时单元在离线机器上每次开机都会执行，一个恒红的单元会盖住
+真正的故障。反之，远端明确回 404（尚未发布清单）是连上了却没有可比对象，
+属于正常起点，判通过。``notify`` 不取网络、不解读失败原因，
 只因状态里已有更新结论而提醒，故它与 ``apply`` 都不改 ``last_ok``。
 ``apply`` 以 ``--assumeno`` 求解事务，再以 ``--cacheonly`` 对同一份元数据
 执行：重新取元数据会让「看过的那份计划」和「执行的那份计划」不是一回事。
@@ -34,8 +36,8 @@ from pathlib import Path
 
 from . import local, net, state
 from .identity import Verdict, compare
-from .model import (EXIT_FAIL, EXIT_NEW, EXIT_OK, EXIT_REINSTALL, STATE_DIR,
-                    Identity)
+from .model import (EXIT_FAIL, EXIT_NEW, EXIT_OK, EXIT_REINSTALL,
+                    EXIT_UNKNOWN, STATE_DIR, Identity)
 
 __all__ = ["main"]
 
@@ -113,6 +115,13 @@ def _check(args: argparse.Namespace) -> int:
         # （没有比对过任何版本）。
         print(f"airy-update: {_flat(exc)}")
         return EXIT_OK
+    except net.Unreachable as exc:
+        # 没连上：既不能报「已是最新」（假绿），也不该算产品故障。原因照
+        # 样落 last_error，status 与日志仍能说明这次检查为何没结论。
+        reason = _flat(exc)
+        _store(path, state.record_error(prior, state.Failure(reason, _now())))
+        print(f"airy-update: {reason}", file=sys.stderr)
+        return EXIT_UNKNOWN
     except (local.Probe, net.Fetch) as exc:
         reason = _flat(exc)
         _store(path, state.record_error(prior, state.Failure(reason, _now())))

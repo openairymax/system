@@ -687,8 +687,10 @@ CHECK_PAIRS: dict[tuple[str, str], str] = {
     ("Service", "Type"): "oneshot",
     ("Service", "ExecStart"): "/usr/bin/airy-update check",
     # 10 表示「有新版」：按失败上报会让每次发现更新都把单元记成 failed，
-    # 运维看到的是红点而不是「今天有更新」。
-    ("Service", "SuccessExitStatus"): "10",
+    # 运维看到的是红点而不是「今天有更新」。2 表示「没连上、本次未判定」：
+    # 离线机器每次开机都会跑本单元，把它算失败会让 failed 列表常年挂着一条
+    # 与产品无关的红项，真实故障反被盖住。
+    ("Service", "SuccessExitStatus"): "10 2",
     ("Service", "StateDirectory"): "airy-update",
     ("Service", "TimeoutStartSec"): "300",
     ("Service", "ProtectSystem"): "strict",

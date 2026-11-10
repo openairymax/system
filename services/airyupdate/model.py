@@ -25,6 +25,7 @@ __all__ = [
     "EXIT_NEW",
     "EXIT_OK",
     "EXIT_REINSTALL",
+    "EXIT_UNKNOWN",
     "FEED_URL",
     "FIELDS",
     "ISO_FIELDS",
@@ -64,6 +65,11 @@ EXIT_FAIL = 1
 EXIT_NEW = 10
 
 EXIT_REINSTALL = 20
+
+# 「没能判定」与「判定失败」是两件事，必须两个退出码：没连上时既不能报
+# 已是最新（假绿），也不该把环境状态记成产品故障。调用方据此把网络不可达
+# 与清单不可信分开处理。
+EXIT_UNKNOWN = 2
 
 FIELDS = frozenset({
     "schema_version",

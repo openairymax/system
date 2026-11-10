@@ -22,6 +22,7 @@ from .model import (
     EXIT_NEW,
     EXIT_OK,
     EXIT_REINSTALL,
+    EXIT_UNKNOWN,
     FEED_URL,
     FIELDS,
     ISO_FIELDS,
@@ -36,7 +37,7 @@ from .model import (
     Kernel,
     Manifest,
 )
-from .net import Fetch, fetch_manifest
+from .net import Fetch, Unreachable, fetch_manifest
 from .state import (
     Corrupt,
     Failure,
@@ -57,6 +58,7 @@ __all__ = [
     "EXIT_NEW",
     "EXIT_OK",
     "EXIT_REINSTALL",
+    "EXIT_UNKNOWN",
     "FEED_URL",
     "FIELDS",
     "ISO_FIELDS",
@@ -76,6 +78,7 @@ __all__ = [
     "Manifest",
     "Probe",
     "State",
+    "Unreachable",
     "Untrusted",
     "Verdict",
     "compare",
