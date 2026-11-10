@@ -13,9 +13,11 @@
 # 必检项整类不在、固件载入失败、单元 failed、err 日志越界或包集合漂移。
 # 2 为用法错误。
 #
-# system 的 err 日志按单元归属分两层：产品自有单元（airymax-、airy- 前缀）
-# 的任何一条即失败；外来条目只与 --budget 给出的棘轮预算比较，超出即失败。
-# 预算由调用方按版本给出，缺省 0 即「外来 err 也必须为零」的最严口径。
+# system 的 err 日志按归属分四层：产品自有单元（airymax-、airy- 前缀）、任何
+# 崩溃行（dumped core）与读不到归属的条目一律判失败；平台层（固件表与热区
+# 诊断）与基底层（上游组件）各有一份预算，互不挪用。预算来自 `--budget-file`
+# 指向的分组文件：按机器类别取组，平台条目再按机器指纹过滤，缺组即判负。
+# 不给文件时两层额度都是 0，即「外来 err 也必须为零」的最严口径。
 
 """AirymaxOS observe command line (I-24, J-31)."""
 
@@ -23,6 +25,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from collections.abc import Sequence
 
 from . import fw, hw, sys as osys
@@ -37,8 +40,8 @@ EXIT_PARTIAL = 3
 
 # 明细行的上限。曾固定为 4，结果 T23 报 errors=42 却只列 4 条，现场看不出
 # 另外 38 条是什么——计数与明细必须能对上，否则这一行就失去了诊断价值。
-# 取值按外来预算（err-budget 当前 26）的三倍留余量：正常失败现场一次列全，
-# 真出现雪崩时仍然截断并显式告知剩余条数，不让日志淹没有效信息。
+# 取值按两层预算之和的三倍留余量：正常失败现场一次列全，真出现雪崩时仍然
+# 截断并显式告知剩余条数，不让日志淹没有效信息。
 SHOWN = 80
 
 
@@ -104,8 +107,17 @@ def _args(argv: Sequence[str] | None) -> argparse.Namespace:
         help="rpm -qa 的包名清单文件（默认现场执行）",
     )
     parser.add_argument(
-        "--budget", metavar="N", type=int, default=0,
-        help="外来 err 的棘轮预算（去重条数，默认 0 即最严）",
+        "--budget-file", metavar="FILE", default=None,
+        help="分层 err 预算文件（按机器类别分组；不给即两层额度均为 0）",
+    )
+    parser.add_argument(
+        "--class", metavar="CLS", dest="cls", default="auto",
+        choices=["auto", "qemu", "real"],
+        help="机器类别（默认按 DMI 判定；测试可显式指定）",
+    )
+    parser.add_argument(
+        "--machine-fp", metavar="FP", default=None,
+        help="机器指纹（默认按 DMI 计算；测试可显式指定）",
     )
     parser.add_argument(
         "--exclude", metavar="UNIT", action="append", default=[],
@@ -200,7 +212,7 @@ def _sys_main(args: argparse.Namespace) -> int:
         _source(args.journal, osys.journal_live),
         _source(args.rpm, osys.rpm_live),
         osys.read_text(args.manifest),
-        args.budget,
+        _budget(args),
         tuple(args.exclude),
     )
     if args.json:
@@ -210,18 +222,38 @@ def _sys_main(args: argparse.Namespace) -> int:
     return _sys_code(found)
 
 
+def _budget(args: argparse.Namespace) -> osys.Budget:
+    """按当前机器的类别与指纹取一组预算；文件读不到即整组判负。"""
+    values = osys.dmi_live(os.path.join(args.root, osys.DMI_REL))
+    cls = osys.machine_class(values) if args.cls == "auto" else args.cls
+    fp = args.machine_fp or osys.machine_fp(values)
+    if not args.budget_file:
+        return osys.Budget(cls)
+    text = osys.read_text(args.budget_file)
+    if text is None:
+        return osys.Budget(cls, read=False)
+    return osys.budget_for(osys.parse_budget(text, fp), cls)
+
+
 def _source(path: str | None, live) -> str | None:
     """给定了文件就只读文件（读不到即 unknown），否则现场执行。"""
     return live() if path is None else osys.read_text(path)
 
 
 def _tag(err: osys.Err) -> str:
-    """err 明细的层标：自有缺陷与固件表缺陷要能一眼分开，其余层不加标。"""
+    """err 明细的层标：自有缺陷与平台噪声要能一眼分开，其余层不加标。"""
     if err.owned:
         return f"{err.text} [owned]"
-    if err.firmware:
-        return f"{err.text} [firmware]"
+    if err.platform:
+        return f"{err.text} [platform]"
     return err.text
+
+
+def _budget_label(bud: osys.Budget) -> str:
+    """预算的可读形态；整组不成立时写明缺失的类别，不假装额度为 0。"""
+    if not bud.read:
+        return f"missing:{bud.cls}"
+    return f"platform:{bud.platform}/base:{bud.base}"
 
 
 def _emit_sys(found: osys.Survey) -> None:
@@ -230,17 +262,18 @@ def _emit_sys(found: osys.Survey) -> None:
     print(
         f"{PROG} system state={found.state} units={len(found.units)}"
         f" errors={len(found.errors)} owned={found.owned_n}"
-        f" foreign={found.foreign_n} firmware={found.firmware_n}"
-        f" unknown={found.unknown_n}"
-        f" budget={found.budget} packages={found.packs_state}"
+        f" platform={found.platform_n} base={found.base_n}"
+        f" unknown={found.unknown_n} class={found.budget.cls}"
+        f" budget={_budget_label(found.budget)}"
+        f" packages={found.packs_state}"
         f" missing={len(found.missing)} extra={len(found.extra)}"
     )
     print(f"  {'units':<9}{found.units_state:<8}{len(found.units):>5}"
           f" failed")
     print(f"  {'logs':<9}{found.logs_state:<8}{len(found.errors):>5}"
-          f" errors  owned={found.owned_n} foreign={found.foreign_n}"
-          f" firmware={found.firmware_n} unknown={found.unknown_n}"
-          f" budget={found.budget}")
+          f" errors  owned={found.owned_n} platform={found.platform_n}"
+          f" base={found.base_n} unknown={found.unknown_n}"
+          f" budget={_budget_label(found.budget)}")
     print(f"  {'packages':<9}{found.packs_state:<8}{found.have_n:>5}"
           f" installed  declared={found.want_n}")
     _rows("failed", found.units)
