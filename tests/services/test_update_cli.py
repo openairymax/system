@@ -107,6 +107,18 @@ class CheckTest(Base):
         self.assertEqual(saved.last_ok.version, "0.0.3")
         self.assertEqual(saved.last_error.reason, "offline")
 
+    def test_offline_keeps_last_ok(self) -> None:
+        """没连上不是产品故障：退出码区分于失败，状态仍留原因。"""
+        state.save(self.path, state.State(last_ok=state.Finding(
+            "0.0.3", 19, STAMP)))
+        code = self.invoke(error=net.Unreachable("feed: timed out"))
+        self.assertEqual(code, model.EXIT_UNKNOWN)
+        self.assertNotEqual(model.EXIT_UNKNOWN, model.EXIT_FAIL)
+        saved = state.load(self.path)
+        self.assertEqual(saved.last_ok.version, "0.0.3")
+        self.assertEqual(saved.last_error.reason, "feed: timed out")
+        self.assertIn("timed out", self.err.getvalue())
+
     def test_missing_feed_is_not_failure(self) -> None:
         """远端尚未发版是正常起点：判通过，且不把状态写成病态。"""
         state.save(self.path, state.State(last_ok=state.Finding(

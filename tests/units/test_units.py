@@ -326,8 +326,8 @@ class UpdateCheckCase(UnitsCase):
         self.assert_bad("ExecStart")
 
     def test_uc_exit(self) -> None:
-        """10 是「有新版」而非失败，漏掉它每次发现更新都会报红。"""
-        self.edit(UPDATE_CHECK, "SuccessExitStatus=10\n", "")
+        """10 是「有新版」、2 是「没连上」：都不是失败，漏掉任一都会报红。"""
+        self.edit(UPDATE_CHECK, "SuccessExitStatus=10 2\n", "")
         self.assert_bad("SuccessExitStatus")
 
     def test_uc_state(self) -> None:

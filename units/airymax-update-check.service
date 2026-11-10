@@ -7,7 +7,10 @@ After=network-online.target
 [Service]
 Type=oneshot
 ExecStart=/usr/bin/airy-update check
-SuccessExitStatus=10
+# 10 = 有新版本；2 = 没连上、本次无从判定。两者都不是单元失败：前者是
+# 正常结论，后者是环境状态——离线的机器每次开机都会跑本单元，把它判成
+# 失败会让 failed 列表常年挂着一条与产品无关的红项。
+SuccessExitStatus=10 2
 StateDirectory=airy-update
 TimeoutStartSec=300
 ProtectSystem=strict

@@ -8,6 +8,8 @@
 from __future__ import annotations
 
 import json
+import socket
+import ssl
 import sys
 import unittest
 import urllib.error
@@ -54,6 +56,13 @@ class Response:
 
     def __exit__(self, *exc) -> None:
         return None
+
+
+class Stalled(Response):
+    """连接已建立而读取卡死：链路异常，不是清单内容的问题。"""
+
+    def read(self, size: int) -> bytes:
+        raise TimeoutError("read timed out")
 
 
 class AcceptTest(unittest.TestCase):
@@ -148,6 +157,44 @@ class FailureTest(unittest.TestCase):
                                return_value=Response(b"{")):
             with self.assertRaises(net.Fetch):
                 net.fetch_manifest()
+
+
+class LinkTest(unittest.TestCase):
+    """没走到对端与走到对端拿到坏东西，必须落在两个异常上。"""
+
+    def fetch(self, error: Exception) -> net.Fetch:
+        with mock.patch.object(net.urllib.request, "urlopen", side_effect=error):
+            with self.assertRaises(net.Fetch) as caught:
+                net.fetch_manifest()
+        return caught.exception
+
+    def test_dns_failure(self) -> None:
+        err = urllib.error.URLError(socket.gaierror(-2, "Name not known"))
+        self.assertIsInstance(self.fetch(err), net.Unreachable)
+
+    def test_connect_timeout(self) -> None:
+        err = urllib.error.URLError(TimeoutError("timed out"))
+        self.assertIsInstance(self.fetch(err), net.Unreachable)
+
+    def test_refused(self) -> None:
+        err = urllib.error.URLError(ConnectionRefusedError(111, "refused"))
+        self.assertIsInstance(self.fetch(err), net.Unreachable)
+
+    def test_read_timeout(self) -> None:
+        with mock.patch.object(net.urllib.request, "urlopen",
+                               return_value=Stalled(b"")):
+            with self.assertRaises(net.Unreachable):
+                net.fetch_manifest()
+
+    def test_tls_failure_is_not_unreachable(self) -> None:
+        """链路已建立而对端身份不可信属安全边界，不能降级成环境状态。"""
+        err = urllib.error.URLError(ssl.SSLError("bad certificate"))
+        caught = self.fetch(err)
+        self.assertNotIsInstance(caught, net.Unreachable)
+
+    def test_unrecognized_reason_stays_fetch(self) -> None:
+        self.assertNotIsInstance(self.fetch(urllib.error.URLError("offline")),
+                                 net.Unreachable)
 
 
 if __name__ == "__main__":
