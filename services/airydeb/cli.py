@@ -5,16 +5,23 @@
 # info 只读打印元数据；install 现场转成 RPM 后交给 dnf；convert 只产出 RPM。
 # 三条路径共用 archive 的结构校验与 plan 的脚本取舍，命令行只做分派。
 #
+# install 的 --ask 是给人看的入口：先把包元数据、转出的 RPM、将执行的
+# dnf 命令与被跳过的脚本逐项回显，读到显式肯定才动手。非 root 时以
+# pkexec 重入本命令（interact.elevate），确认发生在提权之后，不再另立
+# 一个提权入口，避免桌面与终端两套行为。
+#
 # 退出码沿用 airy-bright 的分层：0 成功；2 用法错误；4 环境不具备（缺工具、
-# 平台不支持、文件不是 deb）；5 策略拒绝（带维护者脚本但没给 --ignore-scripts）；
-# 6 构建或安装失败。4 与 5 分开，是为了让「机器上没装 rpm-build」和「这个包
-# 带了 Debian 维护者脚本」在日志里一眼能分辨。
+# 平台不支持、文件不是 deb）；5 策略拒绝（带维护者脚本但没给 --ignore-scripts、
+# 用户在 --ask 处取消、无终端无法确认）；6 构建或安装失败。4 与 5 分开，
+# 是为了让「机器上没装 rpm-build」和「这个包带了 Debian 维护者脚本」在
+# 日志里一眼能分辨。
 
 """AirymaxOS deb helper command line."""
 
 from __future__ import annotations
 
 import argparse
+import os
 import shutil
 import subprocess
 import sys
@@ -22,7 +29,7 @@ import tempfile
 from collections.abc import Sequence
 from pathlib import Path
 
-from . import archive, control, plan, spec
+from . import archive, control, interact, plan, spec
 from .err import (
     EXIT_BUILD,
     EXIT_ENV,
@@ -73,6 +80,8 @@ def _args(argv: Sequence[str] | None) -> argparse.Namespace:
                      help="允许跳过 Debian 维护者脚本")
     put.add_argument("--dry-run", action="store_true",
                      help="只打印将要执行的命令")
+    put.add_argument("--ask", action="store_true",
+                     help="回显并等待终端确认后才安装（桌面双击入口用）")
     conv = sub.add_parser("convert", help="只转换出 RPM")
     conv.add_argument("file")
     conv.add_argument("-o", "--output", default=".", help="RPM 输出目录")
@@ -80,6 +89,11 @@ def _args(argv: Sequence[str] | None) -> argparse.Namespace:
 
 
 def _run(args: argparse.Namespace) -> int:
+    if args.cmd == "install" and args.ask:
+        if args.dry_run:
+            raise Fault("--ask 与 --dry-run 不能同时使用", EXIT_USAGE)
+        if os.geteuid() != 0:
+            return interact.elevate("airy-deb", _reenter(args))
     deb = archive.open_deb(Path(args.file))
     fields = control.parse(archive.control_text(deb))
     if args.cmd == "info":
@@ -87,6 +101,14 @@ def _run(args: argparse.Namespace) -> int:
     if args.cmd == "convert":
         return _convert(deb, fields, Path(args.output))
     return _install(deb, fields, args)
+
+
+def _reenter(args: argparse.Namespace) -> list[str]:
+    """提权重入时的参数：文件取绝对路径，工作目录与相对路径无关。"""
+    argv = ["install", str(Path(args.file).resolve()), "--ask"]
+    if args.ignore_scripts:
+        argv.append("--ignore-scripts")
+    return argv
 
 
 def _info(deb: archive.Deb, fields: dict[str, str]) -> int:
@@ -135,9 +157,40 @@ def _install(deb: archive.Deb, fields: dict[str, str],
     if args.dry_run:
         _preview(name, version)
         return EXIT_OK
+    if args.ask:
+        return _asked(deb, fields, found)
     with tempfile.TemporaryDirectory(prefix="airy-deb-") as tmp:
         _dnf(_build(deb, fields, Path(tmp)))
     return EXIT_OK
+
+
+def _asked(deb: archive.Deb, fields: dict[str, str],
+           found: tuple[archive.Script, ...]) -> int:
+    """回显后等确认：取消不构建安装，也不留下任何改动。"""
+    with tempfile.TemporaryDirectory(prefix="airy-deb-") as tmp:
+        rpm = _build(deb, fields, Path(tmp))
+        _show(fields, rpm, found)
+        if not interact.ask("airy-deb: 继续安装？[y/N] "):
+            print("airy-deb: 已取消，未做任何修改", file=sys.stderr)
+            return EXIT_POLICY
+        _dnf(rpm)
+    return EXIT_OK
+
+
+def _show(fields: dict[str, str], rpm: Path,
+          found: tuple[archive.Script, ...]) -> None:
+    name, version, arch = spec.meta(fields)
+    print(f"package: {name} {version} ({arch})")
+    print(f"rpm:     {rpm}")
+    print("root:    /")
+    print(f"+ dnf install -y {rpm}")
+    print(f"scripts: {_skipped(found)}")
+
+
+def _skipped(found: tuple[archive.Script, ...]) -> str:
+    if not found:
+        return "none"
+    return "跳过 " + ", ".join(item.name for item in found)
 
 
 def _refuse(found: tuple[archive.Script, ...]) -> None:
