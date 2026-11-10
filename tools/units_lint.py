@@ -820,6 +820,19 @@ DROPINS: dict[str, dict[tuple[str, str], str]] = {
     DBUS_RUN_DROPIN: DBUS_RUN_PAIRS,
 }
 
+# journal+console 把 journal 里的人类措辞原样搬到 VT，而 VT 字体只有拉丁
+# 字形，中文与箭头符号落到屏幕上就是空白或方块（285H 冷启动实测）。这类
+# 回归只能靠豁免表收口：想转发到本地屏的单元必须在这里登记并写明理由。
+CONSOLE_EXEMPT: frozenset[str] = frozenset({
+    # e2fsck 卡住时屏幕上没有任何线索，结论必须同时落本地屏；配套
+    # LANG=C 保证措辞仍是 ASCII。
+    FSCK_DROPIN,
+})
+
+CONSOLE_SINK_LINES: frozenset[str] = frozenset(
+    f"{key}=journal+console" for key in ("StandardOutput", "StandardError")
+)
+
 TIMERS: dict[str, dict[tuple[str, str], str]] = {
     "airymax-update-check.timer": {
         ("Unit", "Description"): "Daily AirymaxOS Update Check",
@@ -1446,6 +1459,26 @@ def _dropin_bad(path: Path, name: str) -> list[str]:
     return errs + _pairs_bad(name, cfg, dict(DROPINS[name]))
 
 
+def _console_bad(rel: str, path: Path) -> list[str]:
+    """拒绝未经豁免就把输出转发到本地控制台的单元。
+
+    Args:
+        rel: 相对单元目录的路径，用于豁免比对与报错。
+        path: 单元文件路径。
+
+    Returns:
+        违约描述列表，空列表表示通过。
+    """
+    if rel in CONSOLE_EXEMPT:
+        return []
+    text = path.read_text(encoding="utf-8")
+    return [
+        f"{rel}:{line_no}: console forwarding needs an exemption"
+        for line_no, line in enumerate(text.splitlines(), 1)
+        if line.strip() in CONSOLE_SINK_LINES
+    ]
+
+
 def check_file(path: Path) -> list[str]:
     """校验单个单元文件。
 
@@ -1465,6 +1498,7 @@ def check_file(path: Path) -> list[str]:
         + _doc_bad(path.name, cfg)
         + _body_bad(path.name, cfg)
         + _stage_bad(path.name, cfg)
+        + _console_bad(path.name, path)
         + _stage_arg_bad(
             path.name, cfg, ui_rows(ui_path(path.parent))
         )
@@ -1525,6 +1559,8 @@ def check_dir(path: Path) -> list[str]:
     )
     for name in sorted(nested & set(DROPINS)):
         errs.extend(_dropin_bad(path / name, name))
+    for rel in sorted(nested | names):
+        errs.extend(_console_bad(rel, path / rel))
     units = [item for item in files if item.name in UNITS]
     parsed: dict[str, ConfigParser] = {}
     for item in units:
