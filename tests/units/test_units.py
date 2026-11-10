@@ -473,6 +473,31 @@ class DropinCase(UnitsCase):
         self.assert_bad("unexpected directive")
 
 
+class ConsoleCase(UnitsCase):
+    """控制台转发只在豁免表内允许。
+
+    journal 里的措辞是给人读的中文，VT 字体没有 CJK 字形；一旦某个单元
+    把输出转发到 console，屏幕上就是空白或方块，而 journal 侧完好，回归
+    测不出来。豁免只留给 e2fsck 这条「卡住时屏幕必须留痕」的路径。
+    """
+
+    def test_unit_forwards(self) -> None:
+        self.edit(
+            GATEWAY,
+            "StandardOutput=journal\n",
+            "StandardOutput=journal+console\n",
+        )
+        self.assert_bad("console forwarding needs an exemption")
+
+    def test_dropin_forwards(self) -> None:
+        """豁免项确实在转发，且整棵树仍然干净。"""
+        text = (self.root / units_lint.FSCK_DROPIN).read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("StandardOutput=journal+console\n", text)
+        self.assertEqual(self.errors(), [])
+
+
 class DiskCase(UnitsCase):
     """数据分区挂载与健康单元契约。
 
