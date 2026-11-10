@@ -98,6 +98,54 @@ class InstallTest(Tree):
         self.assertIn("rpm-build", str(caught.exception))
 
 
+class AskTest(Tree):
+    def test_yes_echoes_and_installs(self):
+        deb = self.deb()
+        rpm = self.base / "demo-1.0-1.x86_64.rpm"
+        with mock.patch.object(cli.os, "geteuid", return_value=0), \
+                mock.patch.object(cli, "_build", return_value=rpm), \
+                mock.patch.object(cli, "_dnf") as dnf, \
+                mock.patch.object(cli.interact, "ask", return_value=True):
+            code, out, _ = run(["install", str(deb), "--ask"])
+        self.assertEqual(code, err.EXIT_OK)
+        self.assertIn("package: demo 1.0 (x86_64)", out)
+        self.assertIn(f"+ dnf install -y {rpm}", out)
+        self.assertIn("scripts: none", out)
+        dnf.assert_called_once_with(rpm)
+
+    def test_no_cancels_without_side_effect(self):
+        deb = self.deb()
+        rpm = self.base / "demo-1.0-1.x86_64.rpm"
+        with mock.patch.object(cli.os, "geteuid", return_value=0), \
+                mock.patch.object(cli, "_build", return_value=rpm), \
+                mock.patch.object(cli, "_dnf") as dnf, \
+                mock.patch.object(cli.interact, "ask", return_value=False):
+            code, _, errout = run(["install", str(deb), "--ask"])
+        self.assertEqual(code, err.EXIT_POLICY)
+        self.assertIn("已取消", errout)
+        dnf.assert_not_called()
+
+    def test_rejects_dry_run_combination(self):
+        deb = self.deb()
+        code, _, errout = run(["install", str(deb), "--ask", "--dry-run"])
+        self.assertEqual(code, err.EXIT_USAGE)
+        self.assertIn("不能同时使用", errout)
+
+    def test_elevates_before_touching_package(self):
+        # 非 root 时先重入提权，未提权成功前不读包也不构建
+        deb = self.deb()
+        with mock.patch.object(cli.os, "geteuid", return_value=1000), \
+                mock.patch.object(cli, "_build") as build, \
+                mock.patch.object(cli.interact, "elevate",
+                                  return_value=err.EXIT_OK) as lift:
+            code, _, _ = run(["install", str(deb), "--ask"])
+        self.assertEqual(code, err.EXIT_OK)
+        argv = lift.call_args.args[1]
+        self.assertEqual(lift.call_args.args[0], "airy-deb")
+        self.assertEqual(argv, ["install", str(deb.resolve()), "--ask"])
+        build.assert_not_called()
+
+
 class ConvertTest(Tree):
     def test_copies_rpm(self):
         deb = self.deb(scripts={"postinst": POSTINST})
