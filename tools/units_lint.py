@@ -1369,24 +1369,29 @@ def _ui_dir_bad(name: str, cfg: ConfigParser) -> list[str]:
     ]
 
 
-def _health_bad(name: str, cfg: ConfigParser) -> list[str]:
-    return _pairs_bad(name, cfg, dict(HEALTH_PAIRS))
-
-
-def _firstboot_bad(name: str, cfg: ConfigParser) -> list[str]:
-    return _pairs_bad(name, cfg, dict(FIRSTBOOT_PAIRS))
-
-
-def _check_bad(name: str, cfg: ConfigParser) -> list[str]:
-    return _pairs_bad(name, cfg, dict(CHECK_PAIRS))
-
-
-def _llm_bad(name: str, cfg: ConfigParser) -> list[str]:
-    return _pairs_bad(name, cfg, dict(LLM_PAIRS))
-
-
 def _timer_bad(name: str, cfg: ConfigParser) -> list[str]:
     return _pairs_bad(name, cfg, dict(TIMERS[name]))
+
+
+# 名字 → 成对判据表。值在调用时复制，判据表本身只读；新增只声明键值的
+# 单元在这里加一行即可，没有登记的名字会落到模板判据，而漏登记本身由
+# check_dir 的 missing/unexpected unit 两条判据兜住。
+PAIR_SPECS: dict[str, dict[tuple[str, str], str | None]] = {
+    FIRSTBOOT: FIRSTBOOT_PAIRS,
+    HEALTH: HEALTH_PAIRS,
+    BOOT_MOUNT: BOOT_MOUNT_PAIRS,
+    BOOT_WATCH: BOOT_WATCH_PAIRS,
+    NET_DOCTOR: NET_DOCTOR_PAIRS,
+    DISK_MOUNT: DISK_MOUNT_PAIRS,
+    DISK_HEALTH: DISK_HEALTH_PAIRS,
+    RT_BANDWIDTH: RT_PAIRS,
+    MEMCAP: MEMCAP_PAIRS,
+    POWER: POWER_PAIRS,
+    COEXIST: COEXIST_PAIRS,
+    UPDATE_CHECK: CHECK_PAIRS,
+    LLM: LLM_PAIRS,
+    AGENT_SLICE: AGENT_SLICE_PAIRS,
+}
 
 
 def _body_bad(name: str, cfg: ConfigParser) -> list[str]:
@@ -1394,34 +1399,9 @@ def _body_bad(name: str, cfg: ConfigParser) -> list[str]:
         return _service_bad(name, cfg)
     if name in TARGETS:
         return _target_bad(name, cfg)
-    if name == FIRSTBOOT:
-        return _firstboot_bad(name, cfg)
-    if name == HEALTH:
-        return _health_bad(name, cfg)
-    if name == BOOT_MOUNT:
-        return _pairs_bad(name, cfg, dict(BOOT_MOUNT_PAIRS))
-    if name == BOOT_WATCH:
-        return _pairs_bad(name, cfg, dict(BOOT_WATCH_PAIRS))
-    if name == NET_DOCTOR:
-        return _pairs_bad(name, cfg, dict(NET_DOCTOR_PAIRS))
-    if name == DISK_MOUNT:
-        return _pairs_bad(name, cfg, dict(DISK_MOUNT_PAIRS))
-    if name == DISK_HEALTH:
-        return _pairs_bad(name, cfg, dict(DISK_HEALTH_PAIRS))
-    if name == RT_BANDWIDTH:
-        return _pairs_bad(name, cfg, dict(RT_PAIRS))
-    if name == MEMCAP:
-        return _pairs_bad(name, cfg, dict(MEMCAP_PAIRS))
-    if name == POWER:
-        return _pairs_bad(name, cfg, dict(POWER_PAIRS))
-    if name == COEXIST:
-        return _pairs_bad(name, cfg, dict(COEXIST_PAIRS))
-    if name == UPDATE_CHECK:
-        return _check_bad(name, cfg)
-    if name == LLM:
-        return _llm_bad(name, cfg)
-    if name == AGENT_SLICE:
-        return _pairs_bad(name, cfg, dict(AGENT_SLICE_PAIRS))
+    pairs = PAIR_SPECS.get(name)
+    if pairs is not None:
+        return _pairs_bad(name, cfg, dict(pairs))
     if name in TIMERS:
         return _timer_bad(name, cfg)
     return _incident_bad(name, cfg)
