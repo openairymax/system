@@ -324,6 +324,25 @@ def _err(line: str) -> Err | None:
     return Err(text, known=False) if text else None
 
 
+def _msg(rec: dict[str, object]) -> str:
+    """MESSAGE 正文：journald 会把非 UTF-8 字节存成整数数组。"""
+    msg = rec.get("MESSAGE", "")
+    if isinstance(msg, list):
+        msg = bytes(msg).decode("utf-8", "replace")
+    return _norm(str(msg))
+
+
+def _unit(rec: dict[str, object], ident: str) -> str:
+    """归属单元：UNIT 优先，其次 _SYSTEMD_*，最后退回标识符。"""
+    return str(rec.get("UNIT") or rec.get("_SYSTEMD_UNIT")
+               or rec.get("_SYSTEMD_USER_UNIT") or ident)
+
+
+def _kernel(rec: dict[str, object], ident: str) -> bool:
+    """这行是否内核转发：_TRANSPORT 与 SYSLOG_IDENTIFIER 任一为证。"""
+    return rec.get("_TRANSPORT") == "kernel" or ident == "kernel"
+
+
 def _json(body: str) -> Err | None:
     try:
         rec = json.loads(body)
@@ -331,19 +350,15 @@ def _json(body: str) -> Err | None:
         return None
     if not isinstance(rec, dict):
         return None
-    msg = rec.get("MESSAGE", "")
-    if isinstance(msg, list):
-        msg = bytes(msg).decode("utf-8", "replace")
-    text = _norm(str(msg))
+    text = _msg(rec)
     if not text:
         return None
     ident = str(rec.get("SYSLOG_IDENTIFIER") or "")
-    raw = str(rec.get("UNIT") or rec.get("_SYSTEMD_UNIT")
-              or rec.get("_SYSTEMD_USER_UNIT") or ident)
-    kern = rec.get("_TRANSPORT") == "kernel" or ident == "kernel"
+    raw = _unit(rec, ident)
     owned = _own(raw, ident) or bool(_CRASH.search(text))
     return Err(text, _canon(raw), owned,
-               platform=bool(kern and _PLATFORM.match(text)))
+               platform=bool(_kernel(rec, ident)
+                             and _PLATFORM.match(text)))
 
 
 def _canon(unit: str) -> str:
@@ -387,6 +402,19 @@ def diff(declared_names: tuple[str, ...],
 # 预算与机器身份 ---------------------------------------------------------------
 
 
+def _budget_slot(word: str, rest: list[str], fp: str) -> int | None:
+    """条目落哪一层：0 平台、1 基底，-1 合法但不计数，None 认不出。
+
+    平台条目带机器指纹，指纹不符不是错误，只是这台机器不该继承那份额度；
+    字段不足三条的条目与认不出的层记作 None，由调用方整组作废。
+    """
+    if len(rest) < 3:
+        return None
+    if word == "platform":
+        return 0 if rest[0] == fp else -1
+    return 1 if word == "base" else None
+
+
 def parse_budget(text: str, fp: str) -> dict[str, Budget]:
     """把 `err-budget` 解析成 {机器类别: 该组预算}。
 
@@ -415,13 +443,11 @@ def parse_budget(text: str, fp: str) -> dict[str, Budget]:
             continue
         if not cur or cur in bad:
             continue
-        if word == "platform" and len(rest) >= 3:
-            if rest[0] == fp:
-                groups[cur][0] += 1
-        elif word == "base" and len(rest) >= 3:
-            groups[cur][1] += 1
-        else:
+        slot = _budget_slot(word, rest, fp)
+        if slot is None:
             bad.add(cur)
+        elif slot >= 0:
+            groups[cur][slot] += 1
     return {cls: Budget(cls, plat, base, cls not in bad)
             for cls, (plat, base) in groups.items()}
 
