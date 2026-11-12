@@ -25,6 +25,12 @@
 # 报告附 journal 末尾若干行，并整条命令限时：journald 不可用或自身阻塞时
 # 跳过该段，观测者不得成为新的卡点。
 #
+# 九阶段行只覆盖本项目自己的单元，卡住的常常不是它们：桌面停在最后一条
+# Starting，九行阶段行里看不出停在第几步之后。报告因此另取一段事实——本次
+# 开机 airymax-boot 的最后一条阶段行落在第几步、结论是 ok 还是 wait，以及
+# 一共出现过几步。一行都没有同样要报（seen=0 即「还没走到第一阶段」，
+# initramfs 或根切换就停了），这比只看 journal 末尾更能钉住卡在哪一层。
+#
 # 作业表在变不再判为健康：登录管理器反复重启、会话刚拉起就崩溃时，作业
 # 表每轮都在变，目标是永远达不到的，而按「在变即推进」处理会一句话都不留
 # （run 41839320731 的冷启动就停在这种形态上）。推进与停滞的区分改由
@@ -188,6 +194,40 @@ rep_last() {
     return 0
 }
 
+# 九阶段走到第几步。取中文行（logger -t airymax-boot）而不是各单元的 stdout
+# 行：两者的序号、token 与关键值逐字相同，而中文行恰好每阶段每开机一条，
+# 不会被单元的 stdout 重复计入。阶段行的形状是 `[ 5/9 ] 名称  token ...`，
+# 前三个字段是界符，名称与 token 依次落在第四、第五个字段。
+#
+# 一行都没有同样是事实：seen=0 说明开机在第一个阶段之前就停了。命令本身
+# 失败（无权限、journald 未起）则整段跳过，观测者不得因取证而制造新的失败。
+rep_stage() {
+    local out=''
+
+    out="$(timeout "${JTIMEOUT}" journalctl -b -t airymax-boot --no-pager \
+        -o cat 2>/dev/null)" || return 0
+    out="$(printf '%s\n' "${out}" | awk '
+    $1 == "[" && $2 ~ /^[0-9]+\/[0-9]+$/ && NF >= 5 {
+        split($2, seq, "/")
+        seen[seq[1]] = 1
+        total = seq[2]
+        last = seq[1]
+        tok = $5
+    }
+    END {
+        n = 0
+        for (id in seen) n++
+        if (n == 0)
+            print "AIRYMAX-BOOT-STAGE seen=0 last=0 token=none"
+        else
+            printf "AIRYMAX-BOOT-STAGE seen=%d/%s last=%s token=%s\n", \
+                n, total, last, tok
+    }')"
+    [ -n "${out}" ] || return 0
+    put "${out}"
+    return 0
+}
+
 rep_fail() {
     local n=''
 
@@ -255,6 +295,7 @@ main() {
         rep_unit "${first}"
     fi
     rep_unit "${tgt}"
+    rep_stage
     rep_last
     rep_fail
     rep_console
