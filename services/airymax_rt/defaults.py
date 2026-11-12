@@ -215,28 +215,15 @@ def inspect(
     rtprio = rlimit(limits)
     if privileged is None:
         privileged = os.geteuid() == 0
-    total = found.total if found is not None else None
+    total, period = _budget(found)
     gates = _gates(found is None, total, layout, group, rtprio, privileged)
-    enabled = layout is not None and layout.routed
-    fresh = None
-    if (
-        layout is not None
-        and layout.supported
-        and group
-        and found is not None
-        and found.total > 0
-    ):
-        fresh = cgroup.read_raw(layout, group)
-        if fresh is None:
-            gates.append(GROUP_ABSENT)
-        elif _zero(fresh):
-            gates.append(GROUP_ZERO)
+    fresh = _fresh(layout, group, found, gates)
     return Defaults(
-        kind=layout.kind if layout is not None else None,
+        kind=_kind(layout),
         total=total,
-        period=found.period if found is not None else None,
-        enabled=enabled,
-        root=cgroup.read_raw(layout, "") if layout is not None else None,
+        period=period,
+        enabled=layout is not None and layout.routed,
+        root=_root(layout),
         group=group,
         fresh=fresh,
         rtprio=rtprio,
@@ -244,6 +231,56 @@ def inspect(
         blocked=tuple(dict.fromkeys(gates)),
         verdict=_verdict(found is None, total, layout, gates),
     )
+
+
+def _budget(found: sysctl.Budget | None) -> tuple[int | None, int | None]:
+    """两个预算字段一起取；接口不可读时都缺席，不拿 0 冒充读数。"""
+    if found is None:
+        return None, None
+    return found.total, found.period
+
+
+def _kind(layout: Layout | None) -> Kind | None:
+    """识别到的记账布局种类；没有记账树时为 None。"""
+    return layout.kind if layout is not None else None
+
+
+def _root(layout: Layout | None) -> str | None:
+    """记账根的原始 budgets 内容；只作诊断，不参与判据。"""
+    return cgroup.read_raw(layout, "") if layout is not None else None
+
+
+def _fresh(
+    layout: Layout | None,
+    group: str,
+    found: sysctl.Budget | None,
+    gates: list[str],
+) -> str | None:
+    """指定组的真实预算，命中缺失或为 0 时把对应门禁记进 ``gates``。
+
+    判读的是「任务直属组」：父组有预算不会继承下来，所以这里必须读被点名
+    的那一组，而不是它的上级。没有按组记账或全局没有可切分的预算时，
+    组内数值对启动没有意义，返回 None 而不去读一个不存在的边界。
+    """
+    if not _grouped(layout, group, found):
+        return None
+    fresh = cgroup.read_raw(layout, group)
+    if fresh is None:
+        gates.append(GROUP_ABSENT)
+    elif _zero(fresh):
+        gates.append(GROUP_ZERO)
+    return fresh
+
+
+def _grouped(
+    layout: Layout | None,
+    group: str,
+    found: sysctl.Budget | None,
+) -> bool:
+    """读组预算的前提：按组记账、点名了组、全局确实切了预算。"""
+    if layout is None or not layout.supported or not group:
+        return False
+    return found is not None and found.total > 0
 
 
 def _gates(
