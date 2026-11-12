@@ -338,8 +338,6 @@ SERVICES: dict[str, Service] = {
         omit=(
             ("Service", "NotifyAccess"),
             ("Service", "WatchdogSec"),
-            ("Service", "TimeoutStartSec"),
-            ("Service", "TimeoutStopSec"),
             ("Service", "KillMode"),
         ),
         extra=(
@@ -382,6 +380,8 @@ TEMPLATES: dict[str, tuple[tuple[str, str, str], ...]] = {
         ("Unit", "After", "%i"),
         ("Unit", "ConditionPathExists", "/usr/sbin/airyctl"),
         ("Service", "Type", "oneshot"),
+        ("Service", "TimeoutStartSec", "20"),
+        ("Service", "TimeoutStopSec", "10"),
         (
             "Service",
             "ExecStart",
@@ -1120,6 +1120,25 @@ def _set_bad(
     ]
 
 
+def _oneshot_bad(name: str, cfg: ConfigParser) -> list[str]:
+    """oneshot 单元必须显式给出有限的启动超时。
+
+    Type=oneshot 的超时缺省为 infinity：ExecStart 一旦阻塞，启动事务就
+    无界等待，屏幕停在最后一行，现场只能靠猜。285H 的 plymouth 卡死正是
+    这一类。infinity、0 与非数字与「没写」等效或更糟，一律判负。
+    """
+    if _get(cfg, "Service", "Type") != "oneshot":
+        return []
+    value = _get(cfg, "Service", "TimeoutStartSec")
+    number = _seconds(value, 0)
+    if number is not None and number > 0:
+        return []
+    return [
+        f"{name}: Type=oneshot needs a finite TimeoutStartSec"
+        f" (got {value!r})"
+    ]
+
+
 def _service_bad(name: str, cfg: ConfigParser) -> list[str]:
     pairs = _pairs(SERVICES[name])
     return (
@@ -1498,6 +1517,7 @@ def check_file(path: Path) -> list[str]:
         + _doc_bad(path.name, cfg)
         + _body_bad(path.name, cfg)
         + _stage_bad(path.name, cfg)
+        + _oneshot_bad(path.name, cfg)
         + _console_bad(path.name, path)
         + _stage_arg_bad(
             path.name, cfg, ui_rows(ui_path(path.parent))
@@ -1579,6 +1599,7 @@ def check_dir(path: Path) -> list[str]:
             errs.extend(_doc_bad(item.name, cfg))
             errs.extend(_body_bad(item.name, cfg))
             errs.extend(_stage_bad(item.name, cfg))
+            errs.extend(_oneshot_bad(item.name, cfg))
             errs.extend(_stage_arg_bad(item.name, cfg, rows))
     errs.extend(check_script())
     errs.extend(check_script(FIRSTBOOT_SCRIPT))

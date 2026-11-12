@@ -5,6 +5,10 @@ ConditionPathExists=/usr/sbin/airyctl
 
 [Service]
 Type=oneshot
+# 失败处理器自己不能变成新的无界阻塞：oneshot 缺省超时是 infinity，
+# airyctl 卡住时失败单元的就绪与关机事务会一起停在它身上。
+TimeoutStartSec=20
+TimeoutStopSec=10
 ExecStart=/usr/sbin/airyctl incident create --source systemd --unit %i --status failed
 User=airy
 Group=airy
