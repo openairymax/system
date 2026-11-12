@@ -21,6 +21,10 @@
 # 作业、失败单元数、控制台归属、内核命令行——最后给出下一步命令。目标已
 # 达成且登录管理器在跑则静默，健康路径不留一行。
 #
+# 卡住的单元在阻塞前通常已经写下最后一句（等 D-Bus 名、等设备、重试超时）。
+# 报告附 journal 末尾若干行，并整条命令限时：journald 不可用或自身阻塞时
+# 跳过该段，观测者不得成为新的卡点。
+#
 # 作业表在变不再判为健康：登录管理器反复重启、会话刚拉起就崩溃时，作业
 # 表每轮都在变，目标是永远达不到的，而按「在变即推进」处理会一句话都不留
 # （run 41839320731 的冷启动就停在这种形态上）。推进与停滞的区分改由
@@ -57,6 +61,8 @@ exec 2>&1
 readonly POLL="${AIRY_WATCH_POLL:-10}"
 readonly WIN="${AIRY_WATCH_WIN:-40}"
 readonly JTOT="${AIRY_WATCH_JOBS:-8}"
+readonly TAIL="${AIRY_WATCH_TAIL:-8}"
+readonly JTIMEOUT="${AIRY_WATCH_JTIME:-5}"
 readonly CONSOLE="${UI_CONSOLE:-/dev/console}"
 readonly SERIAL="${AIRY_WATCH_SERIAL:-/dev/ttyS0}"
 readonly ACTIVE="${AIRY_WATCH_ACTIVE:-/sys/class/tty/console/active}"
@@ -167,6 +173,21 @@ rep_unit() {
         "sub=${sub} pid=${pid} result=${res}"
 }
 
+# journal 末尾若干行：阻塞前的最后一句往往就是卡点所在。整条命令限时，
+# 读不到（无权限、journald 未起、超时）即跳过——证据段可缺省，观测者
+# 不能因为取证而变成新的卡点。
+rep_last() {
+    local out='' line=''
+
+    out="$(timeout "${JTIMEOUT}" journalctl -b -n "${TAIL}" --no-pager \
+        -o short-monotonic 2>/dev/null)" || return 0
+    while IFS= read -r line; do
+        [ -n "${line}" ] || continue
+        put "AIRYMAX-BOOT-LAST ${line}"
+    done <<<"${out}"
+    return 0
+}
+
 rep_fail() {
     local n=''
 
@@ -234,6 +255,7 @@ main() {
         rep_unit "${first}"
     fi
     rep_unit "${tgt}"
+    rep_last
     rep_fail
     rep_console
     rep_cmd

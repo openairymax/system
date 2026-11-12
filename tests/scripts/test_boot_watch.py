@@ -84,6 +84,16 @@ esac
 exit 0
 """
 
+JOURNALCTL = """#!/usr/bin/env bash
+set -uo pipefail
+printf '%s\\n' "$*" >>"${FAKE_JLOG:?}"
+[ "${FAKE_JEXIT:-0}" -eq 0 ] || exit "${FAKE_JEXIT}"
+[ "${FAKE_JLINES:-0}" -eq 1 ] || exit 0
+printf '09:00:01.1 host systemd[1]: Starting lightdm.service...\\n'
+printf '09:00:03.2 host lightdm[812]: waiting for bus name\\n'
+exit 0
+"""
+
 
 class BootWatchCase(unittest.TestCase):
     """构造桩 systemctl 与隔离的输出通道。"""
@@ -100,6 +110,11 @@ class BootWatchCase(unittest.TestCase):
         ply = self.bin / "plymouth"
         ply.write_text(PLYMOUTH, encoding="utf-8")
         ply.chmod(0o755)
+        jrn = self.bin / "journalctl"
+        jrn.write_text(JOURNALCTL, encoding="utf-8")
+        jrn.chmod(0o755)
+        self.jlog = base / "journal.log"
+        self.jlog.write_text("", encoding="utf-8")
         self.ply = base / "plymouth.log"
         self.ply.write_text("", encoding="utf-8")
         self.seq = base / "seq"
@@ -130,6 +145,7 @@ class BootWatchCase(unittest.TestCase):
                 "AIRY_WATCH_POLL": "1",
                 "AIRY_WATCH_WIN": "2",
                 "FAKE_PLY_LOG": str(self.ply),
+                "FAKE_JLOG": str(self.jlog),
                 "LANG": "C.UTF-8",
             }
         )
@@ -238,6 +254,36 @@ class BootWatchCase(unittest.TestCase):
         self.assertEqual(res.returncode, 0, res.stderr)
         self.assertIn("AIRYMAX-BOOT-STUCK", res.stdout)
         self.assertEqual(self.console.read_text(encoding="utf-8"), "")
+
+    def test_last_lines_reported(self) -> None:
+        """卡住前写下的最后一句就在 journal 末尾，报告必须带出来。"""
+        self.jobs(JOB)
+        res = self.run_watch(FAKE_ACTIVE="1", FAKE_JLINES="1")
+        self.assertEqual(res.returncode, 0, res.stderr)
+        self.assertIn(
+            "AIRYMAX-BOOT-LAST 09:00:01.1 host systemd[1]:"
+            " Starting lightdm.service...",
+            res.stdout,
+        )
+        self.assertIn(
+            "AIRYMAX-BOOT-LAST 09:00:03.2 host lightdm[812]:"
+            " waiting for bus name",
+            res.stdout,
+        )
+        self.assertIn("-n 8", self.jlog.read_text(encoding="utf-8"))
+
+    def test_last_absent_when_journal_fails(self) -> None:
+        """取证命令失败即跳过该段：观测者不得因取证而制造新的失败。"""
+        self.jobs(JOB)
+        res = self.run_watch(FAKE_ACTIVE="1", FAKE_JEXIT="1")
+        self.assertEqual(res.returncode, 0, res.stderr)
+        self.assertNotIn("AIRYMAX-BOOT-LAST", res.stdout)
+        self.assertIn("AIRYMAX-BOOT-HINT", res.stdout)
+
+    def test_last_absent_when_healthy(self) -> None:
+        self.jobs(JOB)
+        res = self.run_watch(FAKE_ACTIVE="0", FAKE_JLINES="1")
+        self.assertEqual(res.stdout, "")
 
     def test_failed_count(self) -> None:
         self.jobs(JOB)
