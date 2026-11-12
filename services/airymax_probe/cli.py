@@ -25,6 +25,8 @@ import sys
 from collections.abc import Sequence
 
 from . import probe
+from .channels import Channel, Outcome
+from .events import Event
 from .paths import Paths, defaults
 from .report import SAMPLE, VERIFY, Report, State
 
@@ -151,6 +153,7 @@ def _repeat(text: str) -> int:
 
 
 def _emit(found: Report, as_json: bool) -> None:
+    """两种呈现读同一份 Report：JSON 一种，分节的人类可读一种。"""
     if as_json:
         print(json.dumps(found.dump(), ensure_ascii=False))
         return
@@ -158,24 +161,45 @@ def _emit(found: Report, as_json: bool) -> None:
         f"{PROG} state={found.state.value} mode={found.mode}"
         f" readable={found.readable}/{len(found.events)}"
     )
-    for item in found.events:
-        ident = "-" if item.id is None else str(item.id)
-        print(
-            f"  {item.name:<26}{ident:>5}"
-            f"  {item.state:<12}{item.reason or ''}"
-        )
-    for item in found.channels:
-        right = "writable" if item.writable else "read-only"
-        print(
-            f"  {item.name:<8}{item.mode or '-':>6}"
-            f"  {right:<11}{item.reason or ''}"
-        )
-    for item in found.attempts:
-        result = "accepted" if item.delivered else item.error or "-"
-        print(f"  write {item.channel:<8}-> {result}")
+    _events(found.events)
+    _channels(found.channels)
+    _tries(found.attempts)
     _stats(found)
     _shots(found)
     print(f"advice {found.hint}")
+
+
+def _events(rows: Sequence[Event]) -> None:
+    for item in rows:
+        print(
+            f"  {item.name:<26}{_val(item.id):>5}"
+            f"  {item.state:<12}{item.reason or ''}"
+        )
+
+
+def _channels(rows: Sequence[Channel]) -> None:
+    for item in rows:
+        print(
+            f"  {item.name:<8}{item.mode or '-':>6}"
+            f"  {_right(item.writable):<11}{item.reason or ''}"
+        )
+
+
+def _right(writable: bool) -> str:
+    """通道方向：可写才是注入通道，只读只是登记在册。"""
+    return "writable" if writable else "read-only"
+
+
+def _tries(rows: Sequence[Outcome]) -> None:
+    for item in rows:
+        print(f"  write {item.channel:<8}-> {_result(item)}")
+
+
+def _result(item: Outcome) -> str:
+    """一次试探写入的结果：送达即 accepted，否则取内核 errno 原文。"""
+    if item.delivered:
+        return "accepted"
+    return item.error or "-"
 
 
 def _stats(found: Report) -> None:
