@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -91,11 +92,19 @@ class StageCase(unittest.TestCase):
     def test_ok(self) -> None:
         res = self.stage()
         self.assertEqual(res.returncode, 0, res.stderr)
-        self.assertIn(
-            "[ 6/9 ] power           ok   landed=49/49 cap=100%"
-            " severity=ok charge=97%",
+        self.assertRegex(
             res.stdout,
+            r"\[ 6/9 \] power           ok   ms=\d+ landed=49/49 cap=100%"
+            r" severity=ok charge=97%\n",
         )
+
+    def test_duration(self) -> None:
+        """结论行带实测耗时：快阶段与慢阶段在日志里可以分开读。"""
+        res = self.stage(FAKE_SLEEP="1")
+        self.assertEqual(res.returncode, 0, res.stderr)
+        got = re.search(r"ok   ms=(\d+)", res.stdout)
+        self.assertIsNotNone(got, res.stdout)
+        self.assertGreaterEqual(int(got.group(1)), 900)
 
     def test_note(self) -> None:
         res = self.stage(first=FIRST, rc=3)
@@ -119,12 +128,12 @@ class StageCase(unittest.TestCase):
     def test_order(self) -> None:
         res = self.stage(keys="charge,landed")
         self.assertEqual(res.returncode, 0, res.stderr)
-        self.assertIn("ok   charge=97% landed=49/49\n", res.stdout)
+        self.assertRegex(res.stdout, r"ok   ms=\d+ charge=97% landed=49/49\n")
 
     def test_no_facts(self) -> None:
         res = self.stage(keys="-")
         self.assertEqual(res.returncode, 0, res.stderr)
-        self.assertIn("[ 6/9 ] power           ok\n", res.stdout)
+        self.assertRegex(res.stdout, r"\[ 6/9 \] power           ok   ms=\d+\n")
 
     def test_raw(self) -> None:
         res = self.stage()
@@ -132,7 +141,10 @@ class StageCase(unittest.TestCase):
         self.assertTrue(self.journal.exists())
 
     def test_repeat_quiet(self) -> None:
-        """同一结论在 REPEAT 之内不再转发快照：285H 的 9886 行噪声根因。"""
+        """同一结论在 REPEAT 之内不再转发快照：285H 的 9886 行噪声根因。
+
+        两轮的 ms= 必然不同，抑制仍命中，说明耗时没有进指纹。
+        """
         self.assertEqual(self.stage().returncode, 0)
         res = self.stage()
         self.assertEqual(res.returncode, 0, res.stderr)

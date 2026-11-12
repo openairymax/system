@@ -44,6 +44,15 @@
 # 上限而不是杀进程的手：运行器无权改变服务生命周期，越界与否由单元的
 # TimeoutStartSec 收尾，心跳只负责把「慢」与「死」分开。
 #
+# 没有卡的阶段也要能回答「卡了多久」：结论行在关键值之前带 ms=<毫秒>，是
+# 工具从开始执行到退出的实测耗时。开始与结束时间取自 bash 5 的 EPOCHREALTIME
+# （内建，不为每一阶段多起两个进程）；取不到时不写 ms=，也不写 0——「没有
+# 耗时这个事实」与「耗时是 0 毫秒」在验收现场是两件事。
+#
+# ms= 不进结论指纹：它是每一轮都变的读数，进指纹等于让抑制永不命中，timer
+# 每 60 秒重跑的三个单元又会把同一条结论刷满 journal。指纹仍只取分档与
+# 关键值，ms 在打印前才拼上。
+#
 # 关键值只取工具给出的事实，缺项就不出现：不补默认值，因为「没有这个
 # 事实」与「事实是 0」在验收现场是两件不同的事；键的顺序由参数决定，
 # 因此工具内部字段顺序变化不会让阶段行的列漂移。
@@ -150,6 +159,23 @@ mark() {
     printf '%s\n' "$2" >"${f}" 2>/dev/null || :
 }
 
+# 微秒时间戳。bash 5 的 EPOCHREALTIME 是内建，取它不为每一阶段多起两个进程；
+# 取不到时返回空串，调用方据此让这一行不带 ms=，而不是崩在算术里或写一个
+# 假的 0。
+stamp() {
+    printf '%s' "${EPOCHREALTIME:-}"
+}
+
+# 毫秒差。非 C locale 下 EPOCHREALTIME 的小数点可能是逗号，两种分隔符都去掉
+# 再按整数相减，结果仍是微秒，最后除 1000 得毫秒（先减后除，避免各自取整
+# 丢掉不足 1 毫秒的进位）。任一端缺失就不给结论。
+elapsed() {
+    local began="$1" now="${EPOCHREALTIME:-}"
+
+    [ -n "${began}" ] && [ -n "${now}" ] || return 0
+    printf '%s' $(((${now//[.,]/} - ${began//[.,]/}) / 1000))
+}
+
 # 心跳：每 BEAT 秒一行 used/limit。sleep 的 stdout 必须丢掉——它比子壳活得
 # 久，若继承调用方的管道，管道的 EOF 要等到 BEAT 秒之后，把测试与采集器
 # 一起挂住。正常阶段的耗时远小于 BEAT，开机日志里通常一行心跳都没有。
@@ -163,7 +189,7 @@ beat() {
 }
 
 main() {
-    local out= rc=0 due=0 line ticker='' vrf='' id='' snap=''
+    local out= rc=0 due=0 line ticker='' vrf='' id='' snap='' began='' spent=''
 
     ui_due "${STAGE}" || due=$?
     case "${due}" in
@@ -179,7 +205,9 @@ main() {
     id="$(ui_id "${STAGE}")" || return $?
     snap="$(ui_state)/${id}.snap"
 
+    began="$(stamp)"
     out=$("$@") || rc=$?
+    spent="$(elapsed "${began}")"
 
     if [ -n "${ticker}" ]; then
         kill "${ticker}" 2>/dev/null || :
@@ -188,6 +216,10 @@ main() {
 
     line=$(facts "${out%%$'\n'*}" "${KEYS}")
     vrf="$(band "${rc}")|${line}"
+    # 指纹已定，此后才拼 ms=：它每轮都变，进了指纹抑制就永不命中。
+    if [ -n "${spent}" ]; then
+        line="ms=${spent}${line:+ ${line}}"
+    fi
     if [ -n "${out}" ] && keep "${snap}" "${vrf}"; then
         printf '%s\n' "${out}"
         mark "${snap}" "${vrf}"
