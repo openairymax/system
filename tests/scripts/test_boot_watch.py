@@ -88,6 +88,14 @@ JOURNALCTL = """#!/usr/bin/env bash
 set -uo pipefail
 printf '%s\\n' "$*" >>"${FAKE_JLOG:?}"
 [ "${FAKE_JEXIT:-0}" -eq 0 ] || exit "${FAKE_JEXIT}"
+case " $* " in
+*" -t "*)
+    # 阶段行按 ident 过滤的取法；无 fixture 即「本次开机一条阶段行都没有」。
+    [ -r "${FAKE_STAGE_FILE:-/nonexistent}" ] || exit 0
+    cat "${FAKE_STAGE_FILE}"
+    exit 0
+    ;;
+esac
 [ "${FAKE_JLINES:-0}" -eq 1 ] || exit 0
 printf '09:00:01.1 host systemd[1]: Starting lightdm.service...\\n'
 printf '09:00:03.2 host lightdm[812]: waiting for bus name\\n'
@@ -115,6 +123,7 @@ class BootWatchCase(unittest.TestCase):
         jrn.chmod(0o755)
         self.jlog = base / "journal.log"
         self.jlog.write_text("", encoding="utf-8")
+        self.stages = base / "stages.log"
         self.ply = base / "plymouth.log"
         self.ply.write_text("", encoding="utf-8")
         self.seq = base / "seq"
@@ -146,6 +155,7 @@ class BootWatchCase(unittest.TestCase):
                 "AIRY_WATCH_WIN": "2",
                 "FAKE_PLY_LOG": str(self.ply),
                 "FAKE_JLOG": str(self.jlog),
+                "FAKE_STAGE_FILE": str(self.stages),
                 "LANG": "C.UTF-8",
             }
         )
@@ -271,6 +281,36 @@ class BootWatchCase(unittest.TestCase):
             res.stdout,
         )
         self.assertIn("-n 8", self.jlog.read_text(encoding="utf-8"))
+
+    def test_stage_progress_reported(self) -> None:
+        """阶段行只覆盖本项目自己的单元，卡点报告仍要给出停在第几步。"""
+        self.jobs(JOB)
+        self.stages.write_text(
+            "[ 1/9 ] 基础挂载        ok    ms=48 mounted=/ sys=rw\n"
+            "[ 2/9 ] 首启判定        ok    ms=12 first=0\n"
+            "[ 3/9 ] 数据分区        ok    ms=31 mounted=/data\n"
+            "[ 4/9 ] 运行时带宽      note  ms=9 capped=1\n"
+            "[ 5/9 ] 换页上限        ...\n",
+            encoding="utf-8",
+        )
+        res = self.run_watch(FAKE_ACTIVE="1")
+        self.assertEqual(res.returncode, 0, res.stderr)
+        self.assertIn("AIRYMAX-BOOT-STAGE seen=5/9 last=5 token=...", res.stdout)
+        self.assertIn("-t airymax-boot", self.jlog.read_text(encoding="utf-8"))
+
+    def test_stage_absent_reported(self) -> None:
+        """一条阶段行都没有同样是事实：开机没走到第一阶段。"""
+        self.jobs(JOB)
+        res = self.run_watch(FAKE_ACTIVE="1")
+        self.assertEqual(res.returncode, 0, res.stderr)
+        self.assertIn("AIRYMAX-BOOT-STAGE seen=0 last=0 token=none", res.stdout)
+
+    def test_stage_absent_when_journal_fails(self) -> None:
+        """取证失败即不出现该段，不拿 0 步冒充观测结果。"""
+        self.jobs(JOB)
+        self.stages.write_text("[ 1/9 ] 基础挂载        ok\n", encoding="utf-8")
+        res = self.run_watch(FAKE_ACTIVE="1", FAKE_JEXIT="1")
+        self.assertNotIn("AIRYMAX-BOOT-STAGE", res.stdout)
 
     def test_last_absent_when_journal_fails(self) -> None:
         """取证命令失败即跳过该段：观测者不得因取证而制造新的失败。"""
