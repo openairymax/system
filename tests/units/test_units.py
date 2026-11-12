@@ -209,6 +209,29 @@ class ServiceCase(UnitsCase):
         self.assert_bad("unexpected directive [Service] StartLimitBurst")
 
 
+class OneshotTimeoutCase(UnitsCase):
+    """oneshot 不得以缺省 infinity 超时进入启动事务。
+
+    与 285H 上 plymouth-read-write 无界阻塞 sysinit.target 同类：超时缺失
+    时 ExecStart 一阻塞，启动事务就无界等待，屏幕停在最后一行。契约要求
+    每个 oneshot 显式声明正整数秒的 TimeoutStartSec。
+    """
+
+    def test_missing(self) -> None:
+        self.edit(DISK_MOUNT, "TimeoutStartSec=120\n", "")
+        self.assert_bad("needs a finite TimeoutStartSec")
+
+    def test_infinity(self) -> None:
+        self.edit(
+            DISK_MOUNT, "TimeoutStartSec=120", "TimeoutStartSec=infinity"
+        )
+        self.assert_bad("needs a finite TimeoutStartSec")
+
+    def test_zero(self) -> None:
+        self.edit(DISK_MOUNT, "TimeoutStartSec=120", "TimeoutStartSec=0")
+        self.assert_bad("needs a finite TimeoutStartSec")
+
+
 class DepsCase(UnitsCase):
     """依赖矩阵与无环约束。"""
 

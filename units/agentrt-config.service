@@ -17,6 +17,12 @@ RemainAfterExit=yes
 ExecStart=/usr/sbin/config_d --load --config=/etc/agentrt/airy.conf
 ExecReload=/usr/sbin/config_d --reload
 ExecStop=/bin/true
+# Type=oneshot 不设 TimeoutStartSec 时默认就是 infinity（plymouth 卡死的
+# 同一类问题）：config_d 一旦在加载中阻塞，agentrt.target 的启动事务无界
+# 等待，屏幕停在最后一行且无从归因。30 秒足够正常加载，超时按失败处理并
+# 受 StartLimitBurst 约束重试。
+TimeoutStartSec=30
+TimeoutStopSec=15
 Restart=on-failure
 RestartSec=5s
 
