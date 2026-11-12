@@ -1230,6 +1230,50 @@ def _columns(name: str) -> int:
     )
 
 
+def _seq_bad(
+    path: Path, rows: dict[str, tuple[int, int, str]]
+) -> list[str]:
+    """阶段序号必须从 1 连续编号。"""
+    index = sorted(item for item, _, _ in rows.values())
+    if index == list(range(1, len(rows) + 1)):
+        return []
+    return [f"{path.name}: 阶段序号必须从 1 连续编号"]
+
+
+def _name_bad(
+    path: Path, rows: dict[str, tuple[int, int, str]]
+) -> list[str]:
+    """阶段名不含空白，宽度与字符数一致。"""
+    errs = [
+        f"{path.name}: 阶段名含空白，ExecStart 会把它拆成多个参数: {name!r}"
+        for name in rows
+        if any(char.isspace() for char in name)
+    ]
+    errs.extend(
+        f"{path.name}: 阶段 {name} 宽度 {width} != 实际 {_columns(name)}"
+        for name, (_, width, _) in rows.items()
+        if width != _columns(name)
+    )
+    return errs
+
+
+def _code_bad(
+    path: Path, rows: dict[str, tuple[int, int, str]]
+) -> list[str]:
+    """console 代号纯 ASCII、无首尾空白、不重复。"""
+    errs = [
+        f"{path.name}: 阶段 {name} 的 console 代号不是纯 ASCII: {code!r}"
+        for name, (_, _, code) in rows.items()
+        if not code.isascii() or code != code.strip()
+    ]
+    codes = [code for _, _, code in rows.values()]
+    errs.extend(
+        f"{path.name}: console 代号重复: {code}"
+        for code in sorted({code for code in codes if codes.count(code) > 1})
+    )
+    return errs
+
+
 def _ui_table_bad(path: Path = UI_SH) -> list[str]:
     """阶段契约表必须连续编号、名称不含空白、宽度与字符一致、代号纯 ASCII。
 
@@ -1248,32 +1292,7 @@ def _ui_table_bad(path: Path = UI_SH) -> list[str]:
     rows = ui_rows(path)
     if not rows:
         return [f"{path.name}: 阶段契约表缺失或为空"]
-    errs = []
-    if sorted(index for index, _, _ in rows.values()) != list(
-        range(1, len(rows) + 1)
-    ):
-        errs.append(f"{path.name}: 阶段序号必须从 1 连续编号")
-    errs.extend(
-        f"{path.name}: 阶段名含空白，ExecStart 会把它拆成多个参数: {name!r}"
-        for name in rows
-        if any(char.isspace() for char in name)
-    )
-    errs.extend(
-        f"{path.name}: 阶段 {name} 宽度 {width} != 实际 {_columns(name)}"
-        for name, (_, width, _) in rows.items()
-        if width != _columns(name)
-    )
-    errs.extend(
-        f"{path.name}: 阶段 {name} 的 console 代号不是纯 ASCII: {code!r}"
-        for name, (_, _, code) in rows.items()
-        if not code.isascii() or code != code.strip()
-    )
-    codes = [code for _, _, code in rows.values()]
-    errs.extend(
-        f"{path.name}: console 代号重复: {code}"
-        for code in sorted({code for code in codes if codes.count(code) > 1})
-    )
-    return errs
+    return _seq_bad(path, rows) + _name_bad(path, rows) + _code_bad(path, rows)
 
 
 def _stage_arg_bad(
