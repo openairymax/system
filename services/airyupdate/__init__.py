@@ -37,6 +37,7 @@ from .model import (
     Kernel,
     Manifest,
 )
+from .model import __all__ as _contract
 from .net import Fetch, Unreachable, fetch_manifest
 from .state import (
     Corrupt,
@@ -51,31 +52,11 @@ from .state import (
     state_path,
 )
 
-__all__ = [
-    "CHANNELS",
-    "CHANNEL_STABLE",
-    "EXIT_FAIL",
-    "EXIT_NEW",
-    "EXIT_OK",
-    "EXIT_REINSTALL",
-    "EXIT_UNKNOWN",
-    "FEED_URL",
-    "FIELDS",
-    "ISO_FIELDS",
-    "ISO_OPTIONAL",
-    "KERNEL_FIELDS",
-    "NOTES_HOSTS",
-    "SCHEMA_VERSION",
-    "STATE_DIR",
-    "STATE_FILE",
-    "Asset",
+_EXTRA = [
     "Corrupt",
     "Failure",
     "Fetch",
     "Finding",
-    "Identity",
-    "Kernel",
-    "Manifest",
     "Probe",
     "State",
     "Unreachable",
@@ -92,3 +73,10 @@ __all__ = [
     "save",
     "state_path",
 ]
+
+# 契约常量的顺序由 model 决定；类型与其他符号沿用「合并后按名排序」
+# 的既有排列，读者按名字找即可，不必记住来源模块。
+_CONSTS = [name for name in _contract if name.isupper()]
+_TYPES = [name for name in _contract if not name.isupper()]
+
+__all__ = [*_CONSTS, *sorted([*_TYPES, *_EXTRA])]

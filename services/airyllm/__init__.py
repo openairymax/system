@@ -31,22 +31,6 @@ from .model import (
     State,
     Status,
 )
+from .model import __all__ as _contract
 
-__all__ = [
-    "ASSET_FIELDS",
-    "MANIFEST_FIELDS",
-    "MANIFEST_FILE",
-    "MODELS",
-    "REASON_SEP",
-    "ROOT",
-    "RUNTIME_FIELDS",
-    "SCHEMA_VERSION",
-    "STATUS_FILE",
-    "Asset",
-    "Backend",
-    "Manifest",
-    "Reason",
-    "Runtime",
-    "State",
-    "Status",
-]
+__all__ = list(_contract)
