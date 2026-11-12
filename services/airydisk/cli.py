@@ -341,6 +341,38 @@ def _apply(args: argparse.Namespace) -> int:
     return 0 if outcome.ok else EXIT_FAIL
 
 
+def _mount_rc(found: mount.Mount) -> int:
+    """挂载后的退出码：失败 1、未启用 4，其余按是否就绪分 0/3。
+
+    「未启用」与「失败」必须分开：0.0.3 及更早的系统没有数据分区，把
+    未启用报成失败会让每次开机都留一个假故障。
+    """
+    if found.state is mount.State.FAILED:
+        return EXIT_FAIL
+    if found.state is mount.State.UNSET:
+        return EXIT_NA
+    return 0 if found.ok else EXIT_REFUSED
+
+
+def _mount_dry(found: mount.Mount, as_json: bool) -> int:
+    """dry-run 出口：只判不挂，已就绪或有可执行计划都算通过。"""
+    _mount_out(found, as_json, dry=True)
+    if found.state is mount.State.UNSET:
+        return EXIT_NA
+    return 0 if found.ok or found.step is not None else EXIT_REFUSED
+
+
+def _mount_do(text: str, declared: bool, found: mount.Mount,
+              as_json: bool) -> int:
+    """真正挂载：只有存在待执行步骤时才校验 root 并执行。"""
+    if found.step is not None and os.geteuid() != 0:
+        return _err("挂载数据分区需要 root 权限", EXIT_REFUSED)
+    if found.step is not None:
+        found = mount.ensure(text, runner=runner.run, declared=declared)
+    _mount_out(found, as_json)
+    return _mount_rc(found)
+
+
 def _mount_cmd(args: argparse.Namespace) -> int:
     """在 agentrt 之前把 /data 挂上；dry-run 只判不挂。"""
     text = _fstab(args.file)
@@ -349,20 +381,8 @@ def _mount_cmd(args: argparse.Namespace) -> int:
     declared = record.load().known
     found = mount.planned(text, declared)
     if args.dry_run:
-        _mount_out(found, args.json, dry=True)
-        if found.state is mount.State.UNSET:
-            return EXIT_NA
-        return 0 if found.ok or found.step is not None else EXIT_REFUSED
-    if found.step is not None and os.geteuid() != 0:
-        return _err("挂载数据分区需要 root 权限", EXIT_REFUSED)
-    if found.step is not None:
-        found = mount.ensure(text, runner=runner.run, declared=declared)
-    _mount_out(found, args.json)
-    if found.state is mount.State.FAILED:
-        return EXIT_FAIL
-    if found.state is mount.State.UNSET:
-        return EXIT_NA
-    return 0 if found.ok else EXIT_REFUSED
+        return _mount_dry(found, args.json)
+    return _mount_do(text, declared, found, args.json)
 
 
 def _grow(args: argparse.Namespace) -> int:
