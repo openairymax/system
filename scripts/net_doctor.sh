@@ -365,11 +365,56 @@ no_dev() {
     HINT="netdev=0,unbound=$(unbound_hint),dt=$(dt_net)"
 }
 
+# fw_pass DEV... —— 内核日志点名的缺固件设备，命中即出结论。
+#
+# 这一遍必须走完全部设备：能拿到地址的未必是驱动真正要用的那台，而
+# "Direct firmware load for X failed" 是内核给出的唯一直接证据。
+fw_pass() {
+    local d file
+    for d in "$@"; do
+        if file=$(fw_fail "$(drv "${d}")"); then
+            focus "${d}"
+            STATE_NAME=no-firmware
+            FW="missing:${file}"
+            HINT="path=${FW_DIR}/${file},dev=${d}"
+            return 0
+        fi
+    done
+    return 1
+}
+
+# rank_dev CAR SSID CNT ERR DHCP —— 没拿到地址时的降级链。
+#
+# 次序是判据的一部分，不能调换：无线未关联时 carrier 本来就是 0，先判
+# no-carrier 会让 no-ssid 永远不可达（见文件头）。前四档取第一个非空，
+# 全空时给「载波不成立」的兜底结论。
+rank_dev() {
+    if [ -n "${1}" ]; then
+        focus "${1}"
+        STATE_NAME=no-carrier
+        HINT="carrier=0,soft=${RF_SOFT},hard=${RF_HARD}"
+        return 0
+    fi
+    if [ -n "${2}" ]; then
+        focus "${2}"
+        STATE_NAME=no-ssid
+        HINT="scans=1,ap=${3},err=${4}"
+        return 0
+    fi
+    if [ -n "${5}" ]; then
+        focus "${5}"
+        STATE_NAME=dhcp-timeout
+        HINT="wait=$(boot_sec),nmcli=$(nm_state "${5}")"
+        return 0
+    fi
+    STATE_NAME=no-carrier
+    HINT="carrier=-,soft=${RF_SOFT},hard=${RF_HARD}"
+}
+
 judge() {
     local -a devs=()
-    local d c a file
-    local ok='' car_dev='' ssid_dev='' dhcp_dev=''
-    local ok_addr='' ssid_cnt=0 ssid_err=none
+    local d c a car_dev='' ssid_dev='' dhcp_dev=''
+    local ssid_cnt=0 ssid_err=none
 
     rf_scan
     mapfile -t devs < <(list_devs)
@@ -378,14 +423,17 @@ judge() {
         return 0
     fi
 
+    # 一台台归类，边归边认领候选。拿到地址即出结论，不再看后面的设备：
+    # 现场要的是「哪台能用」，不是全部设备的明细。
     for d in "${devs[@]}"; do
         c=$(car "${d}")
         if [ "${c}" = 1 ]; then
             a=$(ip4 "${d}")
             if [ "${a}" != - ]; then
-                ok=${d}
-                ok_addr=${a}
-                break
+                focus "${d}"
+                STATE_NAME=ok
+                HINT="addr=${a}"
+                return 0
             fi
             dhcp_dev=${dhcp_dev:-${d}}
             continue
@@ -396,48 +444,16 @@ judge() {
                 ssid_cnt=${SCAN_CNT}
                 ssid_err=${SCAN_ERR}
             fi
-        else
-            car_dev=${car_dev:-${d}}
+            continue
         fi
+        car_dev=${car_dev:-${d}}
     done
 
-    if [ -n "${ok}" ]; then
-        focus "${ok}"
-        STATE_NAME=ok
-        HINT="addr=${ok_addr}"
+    if fw_pass "${devs[@]}"; then
         return 0
     fi
-
-    for d in "${devs[@]}"; do
-        if file=$(fw_fail "$(drv "${d}")"); then
-            focus "${d}"
-            STATE_NAME=no-firmware
-            FW="missing:${file}"
-            HINT="path=${FW_DIR}/${file},dev=${d}"
-            return 0
-        fi
-    done
-
-    if [ -n "${car_dev}" ]; then
-        focus "${car_dev}"
-        STATE_NAME=no-carrier
-        HINT="carrier=0,soft=${RF_SOFT},hard=${RF_HARD}"
-        return 0
-    fi
-    if [ -n "${ssid_dev}" ]; then
-        focus "${ssid_dev}"
-        STATE_NAME=no-ssid
-        HINT="scans=1,ap=${ssid_cnt},err=${ssid_err}"
-        return 0
-    fi
-    if [ -n "${dhcp_dev}" ]; then
-        focus "${dhcp_dev}"
-        STATE_NAME=dhcp-timeout
-        HINT="wait=$(boot_sec),nmcli=$(nm_state "${dhcp_dev}")"
-        return 0
-    fi
-    STATE_NAME=no-carrier
-    HINT="carrier=-,soft=${RF_SOFT},hard=${RF_HARD}"
+    rank_dev "${car_dev}" "${ssid_dev}" "${ssid_cnt}" "${ssid_err}" \
+        "${dhcp_dev}"
 }
 
 emit() {
