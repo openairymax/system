@@ -79,6 +79,11 @@ readonly BEAT="${AIRY_STAGE_BEAT:-30}"
 readonly LIMIT="${AIRY_STAGE_LIMIT:-60}"
 readonly REPEAT="${AIRY_STAGE_REPEAT:-1800}"
 
+# 心跳进程号与判据行必须走全局：前者要与 kill/wait 同处一个 shell，后者
+# 要与正文分开走两个通道，两者都经不起命令替换。
+TICK=''
+LINE=''
+
 # 首行是工具对外的结论行，键值以空格分隔。只认识参数里登记的键，其它
 # 字段一律丢弃：工具的调试字段变化不该改变阶段行的形状。
 facts() {
@@ -188,63 +193,86 @@ beat() {
     done
 }
 
-main() {
-    local out= rc=0 due=0 line ticker='' vrf='' id='' snap='' began='' spent=''
+# 开跑之前先落阶段行再挂心跳。ui_due 的三种答复各有去处：0 要落结论并
+# 心跳，1 是 timer 重跑的静默档，其余是它自己的拒绝码（阶段名不在表内）。
+beat_on()
+{
+    local due=0
 
     ui_due "${STAGE}" || due=$?
     case "${due}" in
     0)
         ui_begin "${STAGE}"
         beat &
-        ticker=$!
+        TICK=$!
         ;;
     1) : ;;
     *) return "${due}" ;;
     esac
+    return 0
+}
 
+# 收心跳。kill 与 wait 都要留在同一个 shell 里：wait 单独用会一直挂到
+# BEAT 秒之后，把本该立刻出结论的阶段拖成慢阶段。
+beat_off()
+{
+    [ -n "${TICK}" ] || return 0
+    kill "${TICK}" 2>/dev/null || :
+    wait "${TICK}" 2>/dev/null || :
+    TICK=''
+}
+
+# 判据行与快照去重。指纹只取分档与关键值，ms= 在指纹定下来之后才拼上；
+# 顺序反了每轮都会得到新指纹，抑制永不命中。
+brief()
+{
+    local rc="$1" out="$2" spent="$3" snap="$4" vrf
+
+    LINE=$(facts "${out%%$'\n'*}" "${KEYS}")
+    vrf="$(band "${rc}")|${LINE}"
+    # 指纹已定，此后才拼 ms=：它每轮都变，进了指纹抑制就永不命中。
+    if [ -n "${spent}" ]; then
+        LINE="ms=${spent}${LINE:+ ${LINE}}"
+    fi
+    if [ -n "${out}" ] && keep "${snap}" "${vrf}"; then
+        printf '%s\n' "${out}"
+        mark "${snap}" "${vrf}"
+    fi
+}
+
+# 出结论行。闸在命令之后：先占标记再执行，命令中途崩掉时标记已被消耗，
+# 这条结论就再也不会出现。阶段名已由 ui_due 校验，这里只剩「本次开机
+# 已出过结论」一种拒绝。
+report()
+{
+    local rc="$1" line="$2"
+
+    ui_gate "${STAGE}" || return "${rc}"
+    if [ "${rc}" -eq 0 ]; then
+        if [ -n "${line}" ]; then ui_ok "${STAGE}" "${line}"
+        else ui_ok "${STAGE}"; fi
+        return 0
+    fi
+    if [ -n "${line}" ]; then emit "${rc}" "${line}"
+    else emit "${rc}"; fi
+    return "${rc}"
+}
+
+main()
+{
+    local out='' rc=0 id='' snap='' began='' spent=''
+
+    beat_on || return $?
     id="$(ui_id "${STAGE}")" || return $?
     snap="$(ui_state)/${id}.snap"
 
     began="$(stamp)"
     out=$("$@") || rc=$?
     spent="$(elapsed "${began}")"
+    beat_off
 
-    if [ -n "${ticker}" ]; then
-        kill "${ticker}" 2>/dev/null || :
-        wait "${ticker}" 2>/dev/null || :
-    fi
-
-    line=$(facts "${out%%$'\n'*}" "${KEYS}")
-    vrf="$(band "${rc}")|${line}"
-    # 指纹已定，此后才拼 ms=：它每轮都变，进了指纹抑制就永不命中。
-    if [ -n "${spent}" ]; then
-        line="ms=${spent}${line:+ ${line}}"
-    fi
-    if [ -n "${out}" ] && keep "${snap}" "${vrf}"; then
-        printf '%s\n' "${out}"
-        mark "${snap}" "${vrf}"
-    fi
-
-    # 闸在命令之后：先占标记再执行，命令中途崩掉时标记已被消耗，这条
-    # 结论就再也不会出现。阶段名已由 ui_due 校验，这里只剩「本次开机
-    # 已出过结论」一种拒绝。
-    ui_gate "${STAGE}" || return "${rc}"
-
-    if [ "${rc}" -eq 0 ]; then
-        if [ -n "${line}" ]; then
-            ui_ok "${STAGE}" "${line}"
-        else
-            ui_ok "${STAGE}"
-        fi
-        return 0
-    fi
-
-    if [ -n "${line}" ]; then
-        emit "${rc}" "${line}"
-    else
-        emit "${rc}"
-    fi
-    return "${rc}"
+    brief "${rc}" "${out}" "${spent}" "${snap}"
+    report "${rc}" "${LINE}"
 }
 
 if [ "$#" -lt 4 ]; then
