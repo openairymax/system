@@ -1528,6 +1528,90 @@ def check_script(path: Path = SCRIPT) -> list[str]:
     return errs
 
 
+def _tree_bad(path: Path, names: set[str]) -> list[str]:
+    """名字集合与磁盘实物的差异，以及 drop-in 树的内容。
+
+    Args:
+        path: 单元目录路径。
+        names: 目录下顶层文件名集合。
+
+    Returns:
+        违约描述列表，逐条列出缺件与多件。
+    """
+    errs = [f"missing unit {name}" for name in sorted(UNITS - names)]
+    errs.extend(
+        f"{name}: unexpected unit file" for name in sorted(names - UNITS)
+    )
+    nested = {
+        item.relative_to(path).as_posix()
+        for item in path.rglob("*")
+        if item.is_file() and item.parent != path
+    }
+    errs.extend(
+        f"missing drop-in {name}" for name in sorted(set(DROPINS) - nested)
+    )
+    errs.extend(
+        f"{name}: unexpected drop-in file"
+        for name in sorted(nested - set(DROPINS))
+    )
+    for name in sorted(nested & set(DROPINS)):
+        errs.extend(_dropin_bad(path / name, name))
+    for rel in sorted(nested | names):
+        errs.extend(_console_bad(rel, path / rel))
+    return errs
+
+
+def _parse_all(
+    units: list[Path],
+) -> tuple[dict[str, ConfigParser], list[str]]:
+    """解析全部单元并检查依赖环。
+
+    Args:
+        units: 待解析的单元文件。
+
+    Returns:
+        解析成功的配置与违约描述列表；解析失败的单元不进图。
+    """
+    parsed: dict[str, ConfigParser] = {}
+    errs: list[str] = []
+    for item in units:
+        cfg, parse_errs = _parse(item)
+        errs.extend(parse_errs)
+        if cfg is not None:
+            parsed[item.name] = cfg
+    errs.extend(_cycle_bad(_graph(parsed)))
+    return parsed, errs
+
+
+def _unit_bad(
+    units: list[Path],
+    parsed: dict[str, ConfigParser],
+    rows: dict[str, tuple[int, int, str]],
+) -> list[str]:
+    """已解析单元的内容判据。
+
+    Args:
+        units: 待校验的单元文件。
+        parsed: 单元名到解析结果的映射。
+        rows: ui.sh 的阶段契约表。
+
+    Returns:
+        违约描述列表；解析失败的单元只报解析错，不再叠内容判据。
+    """
+    errs: list[str] = []
+    for item in units:
+        errs.extend(_file_bad(item))
+        cfg = parsed.get(item.name)
+        if cfg is None:
+            continue
+        errs.extend(_doc_bad(item.name, cfg))
+        errs.extend(_body_bad(item.name, cfg))
+        errs.extend(_stage_bad(item.name, cfg))
+        errs.extend(_oneshot_bad(item.name, cfg))
+        errs.extend(_stage_arg_bad(item.name, cfg, rows))
+    return errs
+
+
 def check_dir(path: Path) -> list[str]:
     """校验单元目录的全部静态契约。
 
@@ -1538,54 +1622,22 @@ def check_dir(path: Path) -> list[str]:
         违约描述列表，空列表表示全部通过。
     """
     files = sorted(item for item in path.iterdir() if item.is_file())
-    names = {item.name for item in files}
-    errs = [f"missing unit {name}" for name in sorted(UNITS - names)]
-    errs.extend(
-        f"{name}: unexpected unit file"
-        for name in sorted(names - UNITS)
-    )
-    nested = {
-        item.relative_to(path).as_posix()
-        for item in path.rglob("*")
-        if item.is_file() and item.parent != path
-    }
-    errs.extend(
-        f"missing drop-in {name}"
-        for name in sorted(set(DROPINS) - nested)
-    )
-    errs.extend(
-        f"{name}: unexpected drop-in file"
-        for name in sorted(nested - set(DROPINS))
-    )
-    for name in sorted(nested & set(DROPINS)):
-        errs.extend(_dropin_bad(path / name, name))
-    for rel in sorted(nested | names):
-        errs.extend(_console_bad(rel, path / rel))
+    errs = _tree_bad(path, {item.name for item in files})
     units = [item for item in files if item.name in UNITS]
-    parsed: dict[str, ConfigParser] = {}
-    for item in units:
-        cfg, parse_errs = _parse(item)
-        errs.extend(parse_errs)
-        if cfg is not None:
-            parsed[item.name] = cfg
-    errs.extend(_cycle_bad(_graph(parsed)))
+    parsed, parse_errs = _parse_all(units)
+    errs.extend(parse_errs)
     script = ui_path(path)
     rows = ui_rows(script)
     errs.extend(_ui_table_bad(script))
-    for item in units:
-        errs.extend(_file_bad(item))
-        cfg = parsed.get(item.name)
-        if cfg is not None:
-            errs.extend(_doc_bad(item.name, cfg))
-            errs.extend(_body_bad(item.name, cfg))
-            errs.extend(_stage_bad(item.name, cfg))
-            errs.extend(_oneshot_bad(item.name, cfg))
-            errs.extend(_stage_arg_bad(item.name, cfg, rows))
+    errs.extend(_unit_bad(units, parsed, rows))
     errs.extend(check_script())
-    errs.extend(check_script(FIRSTBOOT_SCRIPT))
-    errs.extend(check_script(BOOT_MOUNT_SCRIPT))
-    errs.extend(check_script(BOOT_WATCH_SCRIPT))
-    errs.extend(check_script(NET_DOCTOR_SCRIPT))
+    for extra in (
+        FIRSTBOOT_SCRIPT,
+        BOOT_MOUNT_SCRIPT,
+        BOOT_WATCH_SCRIPT,
+        NET_DOCTOR_SCRIPT,
+    ):
+        errs.extend(check_script(extra))
     return errs
 
 
