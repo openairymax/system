@@ -208,42 +208,57 @@ rep_last() {
 # 算成负数或天文数字。结论行（ok/FAIL）不带 up=，此时 stall= 是「结论之后
 # 再没有阶段行」的时长，与 wait 行的小 stall 合起来正好区分「还在跑」与
 # 「已经不出声」。
-rep_stage() {
-    local out='' now=''
-
-    out="$(timeout "${JTIMEOUT}" journalctl -b -t airymax-boot --no-pager \
-        -o cat 2>/dev/null)" || return 0
-    now="$(cut -d. -f1 /proc/uptime 2>/dev/null)" || now=''
-    out="$(printf '%s\n' "${out}" | awk -v now="${now}" '
+#
+# 求和与停滞分开：行扫描只认阶段行本身，读数与算术各归一处。两件事混在
+# 一段里时判定点叠成十一层，改动任何一侧都要重读整段 awk。
+_stage_sum() {
+    awk '
     $1 == "[" && $2 ~ /^[0-9]+\/[0-9]+$/ && NF >= 5 {
         split($2, seq, "/")
         seen[seq[1]] = 1
         total = seq[2]
         last = seq[1]
         tok = $5
-        upd = ""
-        for (i = 6; i <= NF; i++)
-            if ($i ~ /^up=[0-9]+s$/) upd = substr($i, 4, length($i) - 4)
     }
     END {
         n = 0
         for (id in seen) n++
         if (n == 0) {
-            print "AIRYMAX-BOOT-STAGE seen=0 last=0 token=none"
-        } else if (upd == "") {
-            printf "AIRYMAX-BOOT-STAGE seen=%d/%s last=%s token=%s\n", \
-                n, total, last, tok
-        } else if (now == "") {
-            printf "AIRYMAX-BOOT-STAGE seen=%d/%s last=%s token=%s up=%ss\n", \
-                n, total, last, tok, upd
-        } else {
-            printf "AIRYMAX-BOOT-STAGE seen=%d/%s last=%s token=%s up=%ss" \
-                " stall=%ds\n", n, total, last, tok, upd, \
-                (now > upd + 0 ? now - upd : 0)
+            print "seen=0 last=0 token=none"
+            exit
         }
-    }')"
-    [ -n "${out}" ] || return 0
-    put "${out}"
+        printf "seen=%d/%s last=%s token=%s\n", n, total, last, tok
+    }'
+}
+
+# 停滞时长：取全部阶段行里最后一个 up=<秒>，原样带出并按开机时钟算出停滞
+# 秒数；时钟读不到时只留 up=，早于起始时刻的差值按 0 处理，不拿负数或 0
+# 冒充「刚刚还在推进」。
+_stall() {
+    local hit='' now='' at='' gap=0
+
+    hit="$(printf '%s\n' "$1" | grep -o 'up=[0-9][0-9]*s' | tail -n 1)" ||
+        return 0
+    [ -n "${hit}" ] || return 0
+    now="$(cut -d. -f1 /proc/uptime 2>/dev/null)" || now=''
+    printf ' %s' "${hit}"
+    [ -n "${now}" ] || return 0
+    at="${hit#up=}"
+    at="${at%s}"
+    gap=$((now - at))
+    [ "${gap}" -ge 0 ] || gap=0
+    printf ' stall=%ds' "${gap}"
+}
+
+rep_stage() {
+    local out='' sum='' st=''
+
+    out="$(timeout "${JTIMEOUT}" journalctl -b -t airymax-boot --no-pager \
+        -o cat 2>/dev/null)" || return 0
+    sum="$(printf '%s\n' "${out}" | _stage_sum)"
+    [ -n "${sum}" ] || return 0
+    st="$(_stall "${out}")"
+    put "AIRYMAX-BOOT-STAGE ${sum}${st}"
     return 0
 }
 
