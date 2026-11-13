@@ -180,8 +180,9 @@ class StageCase(unittest.TestCase):
         """起始行先落，卡住的阶段才有一行可指认的「我在第几步」。"""
         res = self.stage()
         self.assertEqual(res.returncode, 0, res.stderr)
-        self.assertEqual(
-            res.stdout.splitlines()[0], "[ 6/9 ] power           ..."
+        self.assertRegex(
+            res.stdout.splitlines()[0],
+            r"^\[ 6/9 \] power           \.\.\. +up=\d+s$",
         )
 
     def test_heartbeat_while_slow(self) -> None:

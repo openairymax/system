@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -102,7 +103,18 @@ class Case(unittest.TestCase):
     def test_begin_line_names_the_stage(self):
         out = self.run_ui("ui_begin 数据分区")
         self.assertEqual(out.returncode, 0, out.stderr)
-        self.assertEqual(out.stdout, self.row(3, "data", "...") + "\n")
+        self.assertRegex(
+            out.stdout,
+            r"^\[ 3/9 \] data            \.\.\. +up=\d+s\n$",
+        )
+
+    def test_begin_line_carries_boot_clock(self):
+        """起始行带开机秒数：只有一行「...」时也能读出开机第几秒进的这一步。"""
+        out = self.run_ui("ui_begin 数据分区\nsleep 1\nui_begin 数据分区")
+        self.assertEqual(out.returncode, 0, out.stderr)
+        ups = [int(m) for m in re.findall(r"up=(\d+)s", out.stdout)]
+        self.assertEqual(len(ups), 2, out.stdout)
+        self.assertGreaterEqual(ups[1], ups[0] + 1, out.stdout)
 
     def test_ok_line_carries_key_values(self):
         out = self.run_ui("ui_ok 数据分区 mounted=/data dev=/dev/nvme0n1p4")
