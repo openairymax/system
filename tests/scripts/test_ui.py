@@ -161,11 +161,13 @@ class Case(unittest.TestCase):
         cols = [width(row[: row.index("ok")]) for row in rows]
         self.assertEqual(cols[0], cols[1], "token 列必须对齐")
 
-    def test_beat_reports_used_and_limit(self):
+    def test_beat_reports_used_limit_and_clock(self):
+        """心跳自带 used/limit 与开机秒数：只剩 wait 行时仍能定位时刻。"""
         out = self.run_ui("ui_beat 换页上限 40 60")
         self.assertEqual(out.returncode, 0, out.stderr)
-        self.assertEqual(
-            out.stdout, self.row(5, "swaplimit", "wait", "used=40s limit=60s") + "\n"
+        self.assertRegex(
+            out.stdout,
+            r"^\[ 5/9 \] swaplimit       wait used=40s limit=60s up=\d+s\n$",
         )
 
     def test_journal_receives_the_stage_name(self):

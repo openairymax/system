@@ -191,7 +191,7 @@ class StageCase(unittest.TestCase):
             AIRY_STAGE_BEAT="1", AIRY_STAGE_LIMIT="3", FAKE_SLEEP="2"
         )
         self.assertEqual(res.returncode, 0, res.stderr)
-        self.assertIn("wait used=1s limit=3s", res.stdout)
+        self.assertRegex(res.stdout, r"wait used=1s limit=3s up=\d+s")
         self.assertTrue(res.stdout.splitlines()[-1].endswith("charge=97%"))
 
     def test_no_heartbeat_when_fast(self) -> None:
