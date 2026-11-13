@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -135,11 +136,11 @@ class ExitCase(FirstbootCase):
         self.assertTrue(self.marker().exists())
         self.assertIn("sysctl --system --quiet", self.calls())
         self.assertIn("start --no-block agentrt.target", self.calls())
-        self.assertEqual(
+        self.assertRegex(
             res.stdout,
-            "[ 2/9 ] firstboot       ...\n"
-            "[ 2/9 ] firstboot       ok   "
-            "mid=present sysctl=ok lsm=present target=queued\n",
+            r"^\[ 2/9 \] firstboot       \.\.\. +up=\d+s\n"
+            r"\[ 2/9 \] firstboot       ok   "
+            r"mid=present sysctl=ok lsm=present target=queued\n$",
         )
 
     def test_idem(self) -> None:

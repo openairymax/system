@@ -16,6 +16,8 @@
 #   ui_total
 #
 # 输出形态（console 只出 ASCII，journal 出中文）：
+#   console: [ 3/9 ] data            ...   up=8s
+#   journal: [ 3/9 ] 数据分区        ...   up=8s
 #   console: [ 3/9 ] data            ok   mounted=/data dev=/dev/nvme0n1p4
 #   journal: [ 3/9 ] 数据分区        ok   mounted=/data dev=/dev/nvme0n1p4
 #
@@ -216,13 +218,36 @@ ui_total() {
 
 # 阶段行前导。序号与总数只来自契约表，调用方不重复它们：一旦允许自报，
 # 同一阶段在不同脚本里就会报出不同的序号。
+#
+# 起始行额外带 up=<开机秒数>：卡住时屏幕上可能只有这一行「...」，没有它
+# 就分不清是刚进这一步还是已经停在这里一分多钟；结论行要等工具退出才出现，
+# 而卡在系统调用里时那一刻永远不来。起止两个读数（up= 与结论行的 ms=）
+# 合起来就是「第几步、开机第几秒进的、这一步花了多久」。
+#
+# 读数取 /proc/uptime（CLOCK_BOOTTIME，含挂起），用 read 内建直接读，不为
+# 一行多起进程。取不到（chroot、受限挂载、格式异常）时整段不写，也不写 0：
+# 「没有计时这个事实」与「开机第 0 秒」在验收现场是两件事。
 ui_begin() {
+    local up='' rest=''
+
     if [ "$#" -ne 1 ]; then
         _ui_err "${UI_EUSAGE}" "usage: ui_begin <stage>" "用法: ui_begin <阶段名>"
         return
     fi
 
-    _ui_put "$1" '...'
+    if read -r up rest 2>/dev/null </proc/uptime; then
+        case "${up}" in
+        '' | *[!0-9.]*) up='' ;;
+        *) up="${up%%.*}" ;;
+        esac
+    else
+        up=''
+    fi
+    if [ -n "${up}" ]; then
+        _ui_put "$1" '...' "up=${up}s"
+    else
+        _ui_put "$1" '...'
+    fi
 }
 
 ui_ok() {
