@@ -201,27 +201,46 @@ rep_last() {
 #
 # 一行都没有同样是事实：seen=0 说明开机在第一个阶段之前就停了。命令本身
 # 失败（无权限、journald 未起）则整段跳过，观测者不得因取证而制造新的失败。
+#
+# 停在最后一步多久，要与「现在」同源才读得出来：起始行与心跳行自带
+# up=<开机秒数>，本段把最后一个 up= 原样带出，并按同一个开机时钟算出
+# stall=<离最后一行的秒数>。两个读数都不经过墙钟，NTP 校时不会把停滞时长
+# 算成负数或天文数字。结论行（ok/FAIL）不带 up=，此时 stall= 是「结论之后
+# 再没有阶段行」的时长，与 wait 行的小 stall 合起来正好区分「还在跑」与
+# 「已经不出声」。
 rep_stage() {
-    local out=''
+    local out='' now=''
 
     out="$(timeout "${JTIMEOUT}" journalctl -b -t airymax-boot --no-pager \
         -o cat 2>/dev/null)" || return 0
-    out="$(printf '%s\n' "${out}" | awk '
+    now="$(cut -d. -f1 /proc/uptime 2>/dev/null)" || now=''
+    out="$(printf '%s\n' "${out}" | awk -v now="${now}" '
     $1 == "[" && $2 ~ /^[0-9]+\/[0-9]+$/ && NF >= 5 {
         split($2, seq, "/")
         seen[seq[1]] = 1
         total = seq[2]
         last = seq[1]
         tok = $5
+        upd = ""
+        for (i = 6; i <= NF; i++)
+            if ($i ~ /^up=[0-9]+s$/) upd = substr($i, 4, length($i) - 4)
     }
     END {
         n = 0
         for (id in seen) n++
-        if (n == 0)
+        if (n == 0) {
             print "AIRYMAX-BOOT-STAGE seen=0 last=0 token=none"
-        else
+        } else if (upd == "") {
             printf "AIRYMAX-BOOT-STAGE seen=%d/%s last=%s token=%s\n", \
                 n, total, last, tok
+        } else if (now == "") {
+            printf "AIRYMAX-BOOT-STAGE seen=%d/%s last=%s token=%s up=%ss\n", \
+                n, total, last, tok, upd
+        } else {
+            printf "AIRYMAX-BOOT-STAGE seen=%d/%s last=%s token=%s up=%ss" \
+                " stall=%ds\n", n, total, last, tok, upd, \
+                (now > upd + 0 ? now - upd : 0)
+        }
     }')"
     [ -n "${out}" ] || return 0
     put "${out}"
