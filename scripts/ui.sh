@@ -20,6 +20,7 @@
 #   journal: [ 3/9 ] 数据分区        ...   up=8s
 #   console: [ 3/9 ] data            ok   mounted=/data dev=/dev/nvme0n1p4
 #   journal: [ 3/9 ] 数据分区        ok   mounted=/data dev=/dev/nvme0n1p4
+#   console: [ 5/9 ] swaplimit       wait used=30s limit=60s up=38s
 #
 # 为什么两套措辞：本地屏是 Linux VT，镜像里的 FONT 为 latarcyrheb-sun16，
 # 该字体没有 CJK 字形；而 VT 字体上限 512 个字形，装不下一个中文字库。
@@ -216,24 +217,12 @@ ui_total() {
     printf '%s\n' "${#UI_STAGES[@]}"
 }
 
-# 阶段行前导。序号与总数只来自契约表，调用方不重复它们：一旦允许自报，
-# 同一阶段在不同脚本里就会报出不同的序号。
-#
-# 起始行额外带 up=<开机秒数>：卡住时屏幕上可能只有这一行「...」，没有它
-# 就分不清是刚进这一步还是已经停在这里一分多钟；结论行要等工具退出才出现，
-# 而卡在系统调用里时那一刻永远不来。起止两个读数（up= 与结论行的 ms=）
-# 合起来就是「第几步、开机第几秒进的、这一步花了多久」。
-#
-# 读数取 /proc/uptime（CLOCK_BOOTTIME，含挂起），用 read 内建直接读，不为
-# 一行多起进程。取不到（chroot、受限挂载、格式异常）时整段不写，也不写 0：
-# 「没有计时这个事实」与「开机第 0 秒」在验收现场是两件事。
-ui_begin() {
+# 开机秒数只在这里读一次：读数取 /proc/uptime（CLOCK_BOOTTIME，含挂起），
+# 用 read 内建直接读，不为一行多起进程。取不到（chroot、受限挂载、格式异常）
+# 时返回空串，调用方据此整段不写，也不写 0：「没有计时这个事实」与「开机
+# 第 0 秒」在验收现场是两件事。
+_ui_up() {
     local up='' rest=''
-
-    if [ "$#" -ne 1 ]; then
-        _ui_err "${UI_EUSAGE}" "usage: ui_begin <stage>" "用法: ui_begin <阶段名>"
-        return
-    fi
 
     if read -r up rest 2>/dev/null </proc/uptime; then
         case "${up}" in
@@ -243,6 +232,25 @@ ui_begin() {
     else
         up=''
     fi
+    printf '%s' "${up}"
+}
+
+# 阶段行前导。序号与总数只来自契约表，调用方不重复它们：一旦允许自报，
+# 同一阶段在不同脚本里就会报出不同的序号。
+#
+# 起始行额外带 up=<开机秒数>：卡住时屏幕上可能只有这一行「...」，没有它
+# 就分不清是刚进这一步还是已经停在这里一分多钟；结论行要等工具退出才出现，
+# 而卡在系统调用里时那一刻永远不来。起止两个读数（up= 与结论行的 ms=）
+# 合起来就是「第几步、开机第几秒进的、这一步花了多久」。
+ui_begin() {
+    local up=''
+
+    if [ "$#" -ne 1 ]; then
+        _ui_err "${UI_EUSAGE}" "usage: ui_begin <stage>" "用法: ui_begin <阶段名>"
+        return
+    fi
+
+    up="$(_ui_up)"
     if [ -n "${up}" ]; then
         _ui_put "$1" '...' "up=${up}s"
     else
@@ -264,8 +272,18 @@ ui_fail() {
 
 # 长等待的周期心跳：阶段运行器按 AIRY_STAGE_BEAT（默认 30 秒）调用，行里
 # 同时给出已用与上限，「还在跑」与「已越界」因此不必靠猜。
+#
+# 心跳也带 up=<开机秒数>：卡住的阶段连落多行 wait，起始行早被推出屏幕，
+# 只剩 used= 这一相对读数时无法判断这台机器是开机第 10 秒还是第 300 秒。
+# up= 与起始行同义同源，屏幕上任意一行都足以把时刻落回开机时间轴。
 ui_beat() {
-    _ui_put "$1" 'wait' "used=${2:-0}s limit=${3:-60}s"
+    local up='' tail="used=${2:-0}s limit=${3:-60}s"
+
+    up="$(_ui_up)"
+    if [ -n "${up}" ]; then
+        tail="${tail} up=${up}s"
+    fi
+    _ui_put "$1" 'wait' "${tail}"
 }
 
 # 去重标记目录：全局共享的固定路径，理由见文件头。UI_STATE 只供回归把标记
