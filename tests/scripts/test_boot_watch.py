@@ -298,6 +298,21 @@ class BootWatchCase(unittest.TestCase):
         self.assertIn("AIRYMAX-BOOT-STAGE seen=5/9 last=5 token=...", res.stdout)
         self.assertIn("-t airymax-boot", self.jlog.read_text(encoding="utf-8"))
 
+    def test_stage_stall_reported(self) -> None:
+        """最后一行带 up= 时，报告给出同源的开机时刻与停滞时长。"""
+        self.jobs(JOB)
+        self.stages.write_text(
+            "[ 1/9 ] 基础挂载        ok    ms=48 mounted=/\n"
+            "[ 5/9 ] 换页上限        ...   up=41s\n",
+            encoding="utf-8",
+        )
+        res = self.run_watch(FAKE_ACTIVE="1")
+        self.assertEqual(res.returncode, 0, res.stderr)
+        self.assertRegex(
+            res.stdout,
+            r"AIRYMAX-BOOT-STAGE seen=2/9 last=5 token=\.\.\. up=41s stall=\d+s",
+        )
+
     def test_stage_absent_reported(self) -> None:
         """一条阶段行都没有同样是事实：开机没走到第一阶段。"""
         self.jobs(JOB)
