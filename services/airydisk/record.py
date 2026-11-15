@@ -26,7 +26,7 @@ import json
 from dataclasses import dataclass
 from enum import Enum, unique
 
-from .model import Topology
+from .model import Disk, Topology
 
 __all__ = ["PATH", "SCHEMA", "Agree", "Install", "Verdict", "compare",
            "dump", "load"]
@@ -101,6 +101,21 @@ def load(path: str | None = None) -> Install:
     )
 
 
+def found_disk(topo: Topology, name: str) -> Disk | None:
+    """在拓扑里按名字找盘；找不到返回 None。"""
+    return next((item for item in topo.disks if item.name == name), None)
+
+
+def field_diff(disk: Disk, install: Install) -> tuple[str, ...]:
+    """逐字段比对：容量必比，总线只在双方都已知时比。"""
+    diff: list[str] = []
+    if disk.size != install.size:
+        diff.append("size")
+    if install.bus != UNKNOWN_BUS and disk.bus.value != install.bus:
+        diff.append("bus")
+    return tuple(diff)
+
+
 def compare(install: Install, topo: Topology) -> Agree:
     """把记录与现场拓扑逐字段比对。
 
@@ -111,18 +126,13 @@ def compare(install: Install, topo: Topology) -> Agree:
     if not install.known:
         return Agree(Verdict.ABSENT if install.state == "absent"
                      else Verdict.INVALID)
-    disk = next((item for item in topo.disks if item.name == install.disk),
-                None)
+    disk = found_disk(topo, install.disk)
     if disk is None:
         return Agree(Verdict.MISMATCH, ("disk",))
-    diff: list[str] = []
-    if disk.size != install.size:
-        diff.append("size")
-    if install.bus != UNKNOWN_BUS and disk.bus.value != install.bus:
-        diff.append("bus")
-    if not diff:
-        return Agree(Verdict.MATCH)
-    return Agree(Verdict.MISMATCH, tuple(diff))
+    diff = field_diff(disk, install)
+    if diff:
+        return Agree(Verdict.MISMATCH, diff)
+    return Agree(Verdict.MATCH)
 
 
 def dump(install: Install, agree: Agree) -> dict[str, object]:
