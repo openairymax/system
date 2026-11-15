@@ -341,6 +341,17 @@ def _verdict(
     return BLOCKED if gates else BUDGETED
 
 
+def _blank(groups: tuple[str, ...], state: str, note: str,
+           layout: Layout | None = None) -> tuple[Seed, ...]:
+    """整批同结论；没有记账树时现值留空，有布局时逐组回读。"""
+    return tuple(
+        Seed(name, 0,
+             None if layout is None else cgroup.read(layout, name),
+             state, note)
+        for name in groups
+    )
+
+
 def seed(
     policy: Policy,
     groups: tuple[str, ...],
@@ -355,21 +366,14 @@ def seed(
     found = sysctl.budget(policy)
     layout = cgroup.detect(policy.cgroup_root)
     if found is None or layout is None:
-        note = _absence(found is None)
-        return tuple(Seed(name, 0, None, ABSENT, note) for name in groups)
+        return _blank(groups, ABSENT, _absence(found is None))
     if not layout.supported:
-        note = "内核按全局预算统一限流，无需按组补写"
-        return tuple(Seed(name, 0, None, KEPT, note) for name in groups)
+        return _blank(groups, KEPT, "内核按全局预算统一限流，无需按组补写",
+                      layout)
     if found.total < 0:
-        return tuple(
-            Seed(name, 0, cgroup.read(layout, name), KEPT, "内核不限预算")
-            for name in groups
-        )
+        return _blank(groups, KEPT, "内核不限预算", layout)
     if found.total == 0:
-        return tuple(
-            Seed(name, 0, cgroup.read(layout, name), BLOCKED, "全局预算为 0")
-            for name in groups
-        )
+        return _blank(groups, BLOCKED, "全局预算为 0", layout)
     return tuple(
         _seed_one(policy, layout, found.total, found.period, name)
         for name in groups
