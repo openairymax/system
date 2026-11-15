@@ -70,8 +70,10 @@ import hashlib
 import json
 import re
 import subprocess
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TypeVar
 
 __all__ = [
     "Budget", "DMI_REL", "DMI_ROOT", "Err", "MANIFEST", "OWNED_PREFIXES",
@@ -254,6 +256,15 @@ class Survey:
         }
 
 
+_T = TypeVar("_T")
+
+
+def _read(text: str | None, parse: Callable[[str], tuple[_T, ...]]
+          ) -> tuple[_T, ...]:
+    """来源读不到时按空处理；读得到就交给解析函数。"""
+    return () if text is None else parse(text)
+
+
 def collect(units_text: str | None, journal_text: str | None,
             rpm_text: str | None, manifest_text: str | None,
             budget: Budget = Budget(),
@@ -266,10 +277,10 @@ def collect(units_text: str | None, journal_text: str | None,
     （285H 实测）。真实失败单元仍由上报路径独立列出。
     """
     skip = frozenset(exclude)
-    units = () if units_text is None else failed_units(units_text)
-    errors = () if journal_text is None else journal_errs(journal_text)
-    have = () if rpm_text is None else installed(rpm_text)
-    want = () if manifest_text is None else declared(manifest_text)
+    units = _read(units_text, failed_units)
+    errors = _read(journal_text, journal_errs)
+    have = _read(rpm_text, installed)
+    want = _read(manifest_text, declared)
     missing, extra = diff(want, have)
     return Survey(
         units=tuple(name for name in units if name not in skip),
