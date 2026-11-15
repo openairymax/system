@@ -93,13 +93,8 @@ class Report:
         if not live:
             return State.ABSENT
         if self.mode == "read":
-            if any(row.pct is not None for row in live):
-                return State.OK
-            return State.FAILED
-        good = [row for row in live if row.landed]
-        if len(good) == len(self.rows):
-            return State.OK
-        return State.PARTIAL if good else State.FAILED
+            return read_state(live)
+        return write_state(live, len(self.rows))
 
     def dump(self) -> dict[str, object]:
         return {
@@ -112,6 +107,20 @@ class Report:
             "state": self.state.value,
             "target": self.target,
         }
+
+
+def read_state(live: list[Row]) -> State:
+    """只读：任一行回读到刻度即算通，全部读不到是失败。"""
+    seen = any(row.pct is not None for row in live)
+    return State.OK if seen else State.FAILED
+
+
+def write_state(live: list[Row], total: int) -> State:
+    """写入：全部落地才成功；落了部分为部分，一行没落为失败。"""
+    good = [row for row in live if row.landed]
+    if len(good) == total:
+        return State.OK
+    return State.PARTIAL if good else State.FAILED
 
 
 def row_of(dev: Device) -> Row:
