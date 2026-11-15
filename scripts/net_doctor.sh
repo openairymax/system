@@ -225,31 +225,41 @@ ssid_rdy() {
     return 0
 }
 
+# fw_name <line> — 从「Direct firmware load for X failed」里取出固件名；
+# 不是这类行或取不到名字时返回非零。
+fw_name() {
+    local file="${1}"
+    case "${file}" in
+        *"Direct firmware load for "*" failed"*) ;;
+        *) return 1 ;;
+    esac
+    file=${file##*Direct firmware load for }
+    file=${file%% failed*}
+    [ -n "${file}" ] || return 1
+    printf '%s' "${file}"
+}
+
+# fw_flat_hit <file> — 日志里已有 direct-loading 记录，说明扁平布局命中。
+fw_flat_hit() {
+    printf '%s\n' "${KLOG}" | grep -qF "direct-loading firmware $1"
+}
+
+# fw_tagged <line> <tag> — tag 为 - 时不筛；否则行内必须含该标签。
+fw_tagged() {
+    [ "${2}" = - ] && return 0
+    case "${1}" in
+        *"${2}"*) return 0 ;;
+    esac
+    return 1
+}
+
 fw_fail() {
     local line file
-    if [ -z "${KLOG}" ]; then
-        return 1
-    fi
+    [ -n "${KLOG}" ] || return 1
     while IFS= read -r line; do
-        case "${line}" in
-            *"Direct firmware load for "*" failed"*) ;;
-            *) continue ;;
-        esac
-        if [ "${1}" != - ]; then
-            case "${line}" in
-                *"${1}"*) ;;
-                *) continue ;;
-            esac
-        fi
-        file=${line##*Direct firmware load for }
-        file=${file%% failed*}
-        if [ -z "${file}" ]; then
-            continue
-        fi
-        if printf '%s\n' "${KLOG}" |
-                grep -qF "direct-loading firmware ${file}"; then
-            continue
-        fi
+        fw_tagged "${line}" "${1}" || continue
+        file=$(fw_name "${line}") || continue
+        fw_flat_hit "${file}" && continue
         printf '%s' "${file}"
         return 0
     done <<< "${KLOG}"
