@@ -256,39 +256,65 @@ fw_fail() {
     return 1
 }
 
+bus_class() {
+    local c
+    c=$(cat "${1}/class" 2>/dev/null) || return 1
+    case "${c}" in
+        0x02*) return 0 ;;
+    esac
+    return 1
+}
+
+bus_iface() {
+    local c
+    c=$(cat "${1}/bInterfaceClass" 2>/dev/null) || return 1
+    case "${c}" in
+        02|0x02) return 0 ;;
+    esac
+    return 1
+}
+
+# 没有 class 属性的平台设备只能按名字认：DT 与 ACPI 两种命名都列上。
+name_net() {
+    case "${1}:${2}" in
+        platform:*eth*|platform:*wlan*|platform:*wifi*) ;;
+        platform:*mdio*|platform:*dwmac*|platform:*stmmac*) ;;
+        amba:*eth*|amba:*wlan*|amba:*wifi*|amba:*mdio*) ;;
+        soc:*eth*|soc:*wlan*|soc:*wifi*) ;;
+        *) return 1 ;;
+    esac
+    return 0
+}
+
+is_net() {
+    local p="${1}" s="${2}"
+    if [ -r "${p}/class" ]; then
+        bus_class "${p}"
+    elif [ -r "${p}/bInterfaceClass" ]; then
+        bus_iface "${p}"
+    else
+        name_net "${s}" "${p##*/}"
+    fi
+}
+
+bus_line() {
+    local tag=unbound
+    if [ -e "${1}/driver" ]; then
+        tag=bound
+    fi
+    printf '%s %s/%s\n' "${tag}" "${2}" "${1##*/}"
+}
+
 bus_net() {
-    local p s c
+    local p s
     for p in "${SYS}"/bus/*/devices/*; do
         if [ ! -d "${p}" ]; then
             continue
         fi
         s=${p#*/bus/}
         s=${s%%/*}
-        if [ -r "${p}/class" ]; then
-            c=$(cat "${p}/class" 2>/dev/null) || c=
-            case "${c}" in
-                0x02*) ;;
-                *) continue ;;
-            esac
-        elif [ -r "${p}/bInterfaceClass" ]; then
-            c=$(cat "${p}/bInterfaceClass" 2>/dev/null) || c=
-            case "${c}" in
-                02|0x02) ;;
-                *) continue ;;
-            esac
-        else
-            case "${s}:${p##*/}" in
-                platform:*eth*|platform:*wlan*|platform:*wifi*) ;;
-                platform:*mdio*|platform:*dwmac*|platform:*stmmac*) ;;
-                amba:*eth*|amba:*wlan*|amba:*wifi*|amba:*mdio*) ;;
-                soc:*eth*|soc:*wlan*|soc:*wifi*) ;;
-                *) continue ;;
-            esac
-        fi
-        if [ -e "${p}/driver" ]; then
-            printf 'bound %s/%s\n' "${s}" "${p##*/}"
-        else
-            printf 'unbound %s/%s\n' "${s}" "${p##*/}"
+        if is_net "${p}" "${s}"; then
+            bus_line "${p}" "${s}"
         fi
     done
 }

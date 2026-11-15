@@ -209,6 +209,28 @@ class NetDoctorCase(unittest.TestCase):
         fields = self.verdict(self.run_doctor(), "no-device")
         self.assertIn("unbound=pci/0000:01:00.0", fields["hint"])
 
+    def test_unbound_usb_interface(self) -> None:
+        dev = self.sys / "bus" / "usb" / "devices" / "2-1:1.0"
+        dev.mkdir(parents=True)
+        (dev / "bInterfaceClass").write_text("02\n", encoding="utf-8")
+        fields = self.verdict(self.run_doctor(), "no-device")
+        self.assertIn("unbound=usb/2-1:1.0", fields["hint"])
+
+    def test_unbound_platform_named_dev(self) -> None:
+        dev = self.sys / "bus" / "platform" / "devices" / "soc:ethernet@1"
+        dev.mkdir(parents=True)
+        fields = self.verdict(self.run_doctor(), "no-device")
+        self.assertIn("unbound=platform/soc:ethernet@1", fields["hint"])
+
+    def test_bus_class_without_network_ignored(self) -> None:
+        self.add_bus()
+        dev = self.sys / "bus" / "pci" / "devices" / "0000:02:00.0"
+        dev.mkdir()
+        (dev / "class").write_text("0x010802\n", encoding="utf-8")
+        fields = self.verdict(self.run_doctor(), "no-device")
+        self.assertIn("unbound=pci/0000:01:00.0", fields["hint"])
+        self.assertNotIn("0000:02:00.0", fields["hint"])
+
     def test_no_firmware_before_netdev(self) -> None:
         self.add_bus("iwlwifi")
         self.kernel(
