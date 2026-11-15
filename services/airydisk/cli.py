@@ -397,12 +397,28 @@ def _grow(args: argparse.Namespace) -> int:
     if args.dry_run:
         _grow_out(found, args.json, dry=True)
         return 0
+    plan = _grow_target(args, found)
+    if plan is None:
+        return EXIT_USAGE
+    return _grow_apply(plan, args)
+
+
+def _grow_target(args: argparse.Namespace,
+                 found: grow.Grow) -> ops.Plan | None:
+    """取出可执行的计划；缺计划或确认名不符时报用法错误并返回 None。"""
     plan = found.plan
     if plan is None:
-        return _err("扩容判定缺少计划", EXIT_USAGE)
+        _err("扩容判定缺少计划", EXIT_USAGE)
+        return None
     if args.confirm != plan.disk:
-        return _err(f"确认名 {args.confirm or '-'} 与计划盘 "
-                    f"{plan.disk} 不符", EXIT_USAGE)
+        _err(f"确认名 {args.confirm or '-'} 与计划盘 "
+             f"{plan.disk} 不符", EXIT_USAGE)
+        return None
+    return plan
+
+
+def _grow_apply(plan: ops.Plan, args: argparse.Namespace) -> int:
+    """以 root 执行扩容并回报；失败时给出该步骤的修复建议。"""
     if os.geteuid() != 0:
         return _err("扩容数据分区需要 root 权限", EXIT_REFUSED)
     outcome = runner.apply(plan)
