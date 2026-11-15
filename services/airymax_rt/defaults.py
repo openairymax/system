@@ -283,6 +283,17 @@ def _grouped(
     return found is not None and found.total > 0
 
 
+def _acct(layout: Layout | None, group: str) -> list[str]:
+    """记账类门禁：没有记账树、未启用记账或未点名任务组。"""
+    if layout is None:
+        return [NO_CGROUP]
+    if not layout.routed:
+        return [NO_ACCOUNT]
+    if layout.supported and not group:
+        return [NEW_GROUP_ZERO]
+    return []
+
+
 def _gates(
     unreadable: bool,
     total: int | None,
@@ -292,20 +303,14 @@ def _gates(
     privileged: bool,
 ) -> list[str]:
     """逐个列出挡住启动的门禁；不限全局预算时记账类门禁不算阻塞。"""
+    prio = _prio(rtprio, privileged)
     if unreadable:
-        return [GLOBAL_READ] + _prio(rtprio, privileged)
+        return [GLOBAL_READ] + prio
     if total is not None and total == 0:
-        return [GLOBAL_ZERO] + _prio(rtprio, privileged)
+        return [GLOBAL_ZERO] + prio
     if total is not None and total < 0:
-        return _prio(rtprio, privileged)
-    gates: list[str] = []
-    if layout is None:
-        gates.append(NO_CGROUP)
-    elif not layout.routed:
-        gates.append(NO_ACCOUNT)
-    elif layout.supported and not group:
-        gates.append(NEW_GROUP_ZERO)
-    return gates + _prio(rtprio, privileged)
+        return prio
+    return _acct(layout, group) + prio
 
 
 def _prio(rtprio: int | None, privileged: bool) -> list[str]:
