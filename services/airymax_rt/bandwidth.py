@@ -78,6 +78,16 @@ def _landed(layout: Layout | None, entry: Entry) -> bool:
     return cgroup.read(layout, entry.slice) == entry.budget
 
 
+def _applied(landings: tuple[Landing, ...]) -> State:
+    """按落地情况收敛：全成、部分、全败。"""
+    flags = [item.applied for item in landings]
+    if flags and all(flags):
+        return State.OK
+    if any(flags):
+        return State.PARTIAL
+    return State.FAILED
+
+
 def _verdict(
     total: int,
     share: int,
@@ -92,9 +102,4 @@ def _verdict(
         return State.NO_CPU if not layout.routed else State.UNACCOUNTED
     if share <= 0:
         return State.FAILED
-    applied = [item.applied for item in landings]
-    if applied and all(applied):
-        return State.OK
-    if any(applied):
-        return State.PARTIAL
-    return State.FAILED
+    return _applied(landings)
