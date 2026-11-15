@@ -106,6 +106,10 @@ class Report:
             return BLOCKED_HINT
         if self.missing or not self.stats.facts:
             return SURFACE_HINT
+        return self._run_hint()
+
+    def _run_hint(self) -> str:
+        """取证面可用时的建议：窗口失败、空窗、或全部成立。"""
         if any(item.state == UNAVAILABLE for item in self.samples):
             return WINDOW_HINT
         if self.mode == VERIFY and not self.witnessed:
