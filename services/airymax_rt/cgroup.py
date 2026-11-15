@@ -166,6 +166,26 @@ def read(layout: Layout, name: str) -> int | None:
     return value if value >= 0 else None
 
 
+def child_dirs(parent: Path) -> list[Path]:
+    """一个组下的直接子目录；不可读时按空处理。"""
+    try:
+        return sorted(item for item in parent.iterdir() if item.is_dir())
+    except OSError:
+        return []
+
+
+def walk_level(frontier: list[tuple[Path, str]],
+               found: list[str]) -> list[tuple[Path, str]]:
+    """展开一层：把相对路径记入 found，返回下一层的前沿。"""
+    following: list[tuple[Path, str]] = []
+    for parent, prefix in frontier:
+        for child in child_dirs(parent):
+            rel = f"{prefix}/{child.name}" if prefix else child.name
+            found.append(rel)
+            following.append((child, rel))
+    return following
+
+
 def subgroups(layout: Layout, name: str, depth: int = 1) -> tuple[str, ...]:
     """列出某个 slice 下已存在的子组，名称为相对记账根的路径。
 
@@ -179,19 +199,7 @@ def subgroups(layout: Layout, name: str, depth: int = 1) -> tuple[str, ...]:
     frontier = [(base / name if name else base, name)]
     found: list[str] = []
     for _ in range(depth):
-        following: list[tuple[Path, str]] = []
-        for parent, prefix in frontier:
-            try:
-                children = sorted(
-                    item for item in parent.iterdir() if item.is_dir()
-                )
-            except OSError:
-                continue
-            for child in children:
-                rel = f"{prefix}/{child.name}" if prefix else child.name
-                found.append(rel)
-                following.append((child, rel))
-        frontier = following
+        frontier = walk_level(frontier, found)
     return tuple(found)
 
 
