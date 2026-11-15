@@ -296,6 +296,20 @@ def _hold(want: int, usage: int, head: int, have: int | None) -> int:
     return usage if target < usage else target
 
 
+def _over(path: Path, name: str, want: int, usage: int,
+          have: int | None, plan: bool, head: int) -> Step:
+    """在用量已超目标：不留余量就无法落地的唯一合法改法是按现值封顶。"""
+    if not plan or head <= 0:
+        return Step(name, want, have, usage, TIGHT, "在用量已超目标")
+    want = _hold(want, usage, head, have)
+    if have == want:
+        return Step(name, want, have, usage, HELD, "现值已在封顶之内")
+    if not _put(path, want):
+        return Step(name, want, _read(path), usage, ABSENT, "写入未生效")
+    return Step(name, want, _read(path), usage, HELD,
+                "在用量已超目标，按现值加余量封顶")
+
+
 def _ceil(
     home: Path,
     name: str,
@@ -312,15 +326,7 @@ def _ceil(
     if have == want:
         return Step(name, want, have, usage, OK)
     if usage is not None and usage > want:
-        if not plan or head <= 0:
-            return Step(name, want, have, usage, TIGHT, "在用量已超目标")
-        want = _hold(want, usage, head, have)
-        if have == want:
-            return Step(name, want, have, usage, HELD, "现值已在封顶之内")
-        if not _put(path, want):
-            return Step(name, want, _read(path), usage, ABSENT, "写入未生效")
-        note = "在用量已超目标，按现值加余量封顶"
-        return Step(name, want, _read(path), usage, HELD, note)
+        return _over(path, name, want, usage, have, plan, head)
     if not plan:
         return Step(name, want, have, usage, DIFFERS)
     if not _put(path, want):
