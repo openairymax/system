@@ -1547,6 +1547,60 @@ def check_script(path: Path = SCRIPT) -> list[str]:
     return errs
 
 
+def _names_bad(names: set[str]) -> list[str]:
+    """顶层单元文件的缺件与多件。
+
+    Args:
+        names: 目录下顶层文件名集合。
+
+    Returns:
+        违约描述列表，缺件在前、多件在后。
+    """
+    errs = [f"missing unit {name}" for name in sorted(UNITS - names)]
+    errs.extend(
+        f"{name}: unexpected unit file" for name in sorted(names - UNITS)
+    )
+    return errs
+
+
+def _nested(path: Path) -> set[str]:
+    """单元目录下非顶层的文件集合，即 drop-in 树。
+
+    Args:
+        path: 单元目录路径。
+
+    Returns:
+        相对路径字符串集合。
+    """
+    return {
+        item.relative_to(path).as_posix()
+        for item in path.rglob("*")
+        if item.is_file() and item.parent != path
+    }
+
+
+def _dropin_tree(path: Path, nested: set[str]) -> list[str]:
+    """drop-in 树的缺件、多件与逐文件内容。
+
+    Args:
+        path: 单元目录路径。
+        nested: 非顶层文件的相对路径集合。
+
+    Returns:
+        违约描述列表，空列表表示 drop-in 树完整。
+    """
+    errs = [
+        f"missing drop-in {name}" for name in sorted(set(DROPINS) - nested)
+    ]
+    errs.extend(
+        f"{name}: unexpected drop-in file"
+        for name in sorted(nested - set(DROPINS))
+    )
+    for name in sorted(nested & set(DROPINS)):
+        errs.extend(_dropin_bad(path / name, name))
+    return errs
+
+
 def _tree_bad(path: Path, names: set[str]) -> list[str]:
     """名字集合与磁盘实物的差异，以及 drop-in 树的内容。
 
@@ -1557,24 +1611,8 @@ def _tree_bad(path: Path, names: set[str]) -> list[str]:
     Returns:
         违约描述列表，逐条列出缺件与多件。
     """
-    errs = [f"missing unit {name}" for name in sorted(UNITS - names)]
-    errs.extend(
-        f"{name}: unexpected unit file" for name in sorted(names - UNITS)
-    )
-    nested = {
-        item.relative_to(path).as_posix()
-        for item in path.rglob("*")
-        if item.is_file() and item.parent != path
-    }
-    errs.extend(
-        f"missing drop-in {name}" for name in sorted(set(DROPINS) - nested)
-    )
-    errs.extend(
-        f"{name}: unexpected drop-in file"
-        for name in sorted(nested - set(DROPINS))
-    )
-    for name in sorted(nested & set(DROPINS)):
-        errs.extend(_dropin_bad(path / name, name))
+    nested = _nested(path)
+    errs = _names_bad(names) + _dropin_tree(path, nested)
     for rel in sorted(nested | names):
         errs.extend(_console_bad(rel, path / rel))
     return errs
