@@ -12,9 +12,10 @@
 # 中断状态判成失败，不会让它冒充就绪。
 #
 # 落位权限固定为可读：安装通常以 root 执行，服务以 airy 运行；若沿用
-# 0600 之类由 umask 决定的权限，服务会因读不到权重而失败。清单 runtime.path
-# 指向的那一件落在运行根内时是可执行文件，单独置可执行位——引擎与权重由
-# 同一份离线包交付，引擎来自系统包时该路径在运行根之外，本层不碰权限。
+# 0600 之类由 umask 决定的权限，服务会因读不到权重而失败；权限位不同也重写，
+# 旧副本以只读位落下时重跑即可自愈。引擎不在此落位：可执行文件放在系统路径，
+# 由系统包或运营方安装——SELinux 强制模式下 /var/lib 带 var_lib_t，init 域
+# 无权执行其中的文件，引擎若随资产落在这里，静态检查全过、一启动就 203。
 
 """AirymaxOS local model asset channel (K-21-01).
 
@@ -38,8 +39,6 @@ __all__ = ["apply"]
 
 FILE_MODE = 0o644
 
-RUN_MODE = 0o755
-
 DIR_MODE = 0o755
 
 
@@ -62,50 +61,32 @@ def apply(source: str | Path,
     entry = manifest.load(paths.manifest(src))
     verify.check(src, entry)
     home = paths.ensure(root)
-    engine = _engine(entry)
-    copied = sum(
-        _sync(src, home, asset,
-              RUN_MODE if asset.path == engine else FILE_MODE)
-        for asset in entry.assets)
+    copied = sum(_sync(src, home, asset) for asset in entry.assets)
     _file(paths.manifest(src), paths.manifest(home), FILE_MODE)
     verify.check(home, entry)
     return entry, copied
 
 
-def _engine(entry: model.Manifest) -> str:
-    """清单引擎在运行根内的相对路径；引擎在运行根之外时为空串。
-
-    离线包把引擎与权重一起交付，包内文件的相对位置与运行根一一对应，
-    落位后清单声明的绝对路径就真实可执行。引擎由系统包提供时路径不在
-    运行根内，这里返回空串，任何资产都不会被当作可执行文件。
-    """
-    try:
-        return str(Path(entry.runtime.path).relative_to(model.ROOT))
-    except ValueError:
-        return ""
-
-
-def _sync(src: Path, home: Path, asset: model.Asset, mode: int) -> bool:
+def _sync(src: Path, home: Path, asset: model.Asset) -> bool:
     """同步一件资产；返回是否真的写入。"""
     target = home / asset.path
-    if _same(target, asset, mode):
+    if _same(target, asset):
         return False
-    _file(src / asset.path, target, mode)
+    _file(src / asset.path, target, FILE_MODE)
     return True
 
 
-def _same(path: Path, asset: model.Asset, mode: int) -> bool:
+def _same(path: Path, asset: model.Asset) -> bool:
     """目标是否已是清单描述的那一件资产。
 
     符号链接一律视为不一致：只比较链接指向的内容，会让一次越界的旧
-    链接在摘要碰巧相同时被保留下来。权限位不同同样重写，旧副本以只读
-    位落下的引擎可在重跑后恢复可执行，不必先手工删除。
+    链接在摘要碰巧相同时被保留下来。
     """
     try:
         info = path.lstat()
         if not stat.S_ISREG(info.st_mode):
             return False
-        if info.st_size != asset.size or stat.S_IMODE(info.st_mode) != mode:
+        if info.st_size != asset.size or stat.S_IMODE(info.st_mode) != FILE_MODE:
             return False
         return verify.digest(path) == asset.sha256
     except OSError:
