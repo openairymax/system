@@ -181,6 +181,25 @@ class RenderTest(Case):
                         .startswith("manifest=fail reason=no-manifest"))
 
 
+class BannerTest(Case):
+    """冒烟结论取版本横幅，不取动态链接器的装配警告。"""
+
+    def smoke(self) -> str:
+        return self.rows().rows[4].detail
+
+    def test_loader_warning_skipped(self) -> None:
+        self.engine.write_text(
+            "#!/bin/sh\n"
+            "echo 'llama-server: libcurl.so.4: no version information' >&2\n"
+            f"echo '{BANNER}'\n",
+            encoding="utf-8")
+        self.assertEqual(self.smoke(), BANNER)
+
+    def test_silent_engine(self) -> None:
+        self.engine.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        self.assertEqual(self.smoke(), "exit 0")
+
+
 class CliTest(Case):
     """退出码与 status/verify 同源；探测结果由用例给定，避免机器相关。"""
 

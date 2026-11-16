@@ -42,6 +42,8 @@ PROBE = ".selftest"
 
 VERSION = "--version"
 
+BANNER = "version"
+
 
 @dataclass
 class Facts:
@@ -188,5 +190,14 @@ def _blocked(names: tuple[str, ...], cause: Result) -> tuple[Result, ...]:
 
 
 def _banner(done: subprocess.CompletedProcess) -> str:
-    lines = (done.stdout or done.stderr or "").strip().splitlines()
-    return lines[0][:DETAIL_MAX] if lines else "exit 0"
+    """取引擎报出的版本横幅。
+
+    引擎的输出来自两条流：动态链接器在装不上版本符号时往 stderr 写警告，
+    引擎自己把横幅写在其中一条。取「第一个非空行」会把这台机器上的装配
+    警告当成结论，看的人以为冒烟失败过；带版本字样的那行才是答案。
+    """
+    lines = [line.strip() for line in
+             f"{done.stdout or ''}{done.stderr or ''}".splitlines()
+             if line.strip()]
+    picked = next((line for line in lines if BANNER in line), "")
+    return (picked or (lines[0] if lines else "exit 0"))[:DETAIL_MAX]
