@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 import tempfile
 import unittest
@@ -65,6 +66,19 @@ class StoreTest(unittest.TestCase):
         leftovers = [p.name for p in self.dir.iterdir()
                      if p.name.startswith(".status-")]
         self.assertEqual(leftovers, [])
+
+    def test_unwritable_is_noop(self) -> None:
+        """缓存写不进去只失去复用，不得把 OSError 抛给只读查询。
+
+        普通用户查 status 时运行根属于 root，这是常态而非异常；若此处
+        抛出，用户看到的是一次 Python traceback 而不是手上的判定。
+        """
+        if os.geteuid() == 0:
+            self.skipTest("root 不受目录权限约束")
+        locked = Path(self.tmp.name) / "locked"
+        locked.mkdir(mode=0o500)
+        self.addCleanup(locked.chmod, 0o700)
+        self.assertIsNone(status.store(locked / "llm", ready()))
 
 
 class LoadTest(unittest.TestCase):

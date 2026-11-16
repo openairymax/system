@@ -54,12 +54,20 @@ def parse(payload: str) -> model.Manifest:
 
 
 def load(path: Path) -> model.Manifest:
-    """读文件并解析；读取失败与格式错误同样归为清单不可用。"""
+    """读文件并解析。
+
+    文件不存在归 :attr:`Reason.NO_MANIFEST`，存在但读不出来归
+    :attr:`Reason.MANIFEST_UNREADABLE`。两者此前同为 `no-manifest`，
+    而运行根 `/var/lib/airy-llm` 默认属 root 且不可遍历，普通用户查询
+    状态时会得到「没有清单」，按这个结论去补资产是查错了方向。
+    """
     try:
         text = path.read_text(encoding="utf-8")
+    except FileNotFoundError as exc:
+        raise Failure("清单不存在", model.Reason.NO_MANIFEST) from exc
     except OSError as exc:
         raise Failure(f"清单不可读: {exc.strerror}",
-                      model.Reason.NO_MANIFEST) from exc
+                      model.Reason.MANIFEST_UNREADABLE) from exc
     return parse(text)
 
 

@@ -93,6 +93,7 @@ class Reason(Enum):
     NO_RUNTIME = "no-runtime"
     NO_MODEL = "no-model"
     NO_MANIFEST = "no-manifest"
+    MANIFEST_UNREADABLE = "manifest-unreadable"
     DIGEST_MISMATCH = "digest-mismatch"
     ASSET_CORRUPT = "asset-corrupt"
     STATE_UNWRITABLE = "state-unwritable"

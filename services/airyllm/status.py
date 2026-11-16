@@ -46,20 +46,28 @@ def encode(entry: model.Status) -> dict:
     }
 
 
-def store(root: str | Path | None, entry: model.Status) -> Path:
+def store(root: str | Path | None, entry: model.Status) -> Path | None:
     """原子写入状态文件并返回其位置。
+
+    状态是缓存不是事实来源，写不进去时只失去复用能力，不影响本次判定：
+    普通用户查询 status 时运行根属于 root，目录不可建、文件不可写是常态，
+    此处若把 ``OSError`` 抛给调用方，一次只读查询会以 Python traceback 收场，
+    而用户真正要的判定已经在手上。因此写失败返回 ``None``，由调用方照常
+    输出结论。
 
     Args:
         root: 运行根；``None`` 时取契约根。
         entry: 待落盘的状态。
 
     Returns:
-        状态文件路径。
+        状态文件路径；缓存不可写时为 ``None``。
     """
-    home = paths.ensure(root)
-    target = paths.status(home)
-    text = json.dumps(encode(entry), sort_keys=True, indent=2) + "\n"
-    _write(target, text)
+    try:
+        home = paths.ensure(root)
+        target = paths.status(home)
+        _write(target, json.dumps(encode(entry), sort_keys=True, indent=2) + "\n")
+    except OSError:
+        return None
     return target
 
 
