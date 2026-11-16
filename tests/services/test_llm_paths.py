@@ -76,6 +76,12 @@ class EnsureTest(unittest.TestCase):
         self.assertEqual(mode & 0o700, 0o700)
         self.assertEqual(mode & 0o022, 0)
 
+    def test_mode_readable(self) -> None:
+        """桌面会话以非特权身份读清单，缺 other-read 就恒报 absent。"""
+        paths.ensure(self.home)
+        for path in (self.home, paths.models(self.home)):
+            self.assertTrue(path.stat().st_mode & 0o004, path)
+
     def test_idempotent(self) -> None:
         paths.ensure(self.home)
         paths.models(self.home).chmod(0o755)

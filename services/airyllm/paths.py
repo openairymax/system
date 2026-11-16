@@ -23,7 +23,7 @@ from . import model
 
 __all__ = ["base", "ensure", "manifest", "models", "status"]
 
-MODE = 0o750
+MODE = 0o755
 
 
 def base(root: str | Path | None = None) -> Path:
@@ -51,8 +51,12 @@ def ensure(root: str | Path | None = None) -> Path:
 
     装机后由单元文件交付目录，二者本就存在；这里只覆盖手工部署与
     测试环境。只建缺失的那一层，不改既有目录的属主与权限——它们归
-    systemd 的 StateDirectory 管，运行期改写会让下次启动的属主回收
-    失去基准。
+    systemd 的 StateDirectory 与配方的 tmpfiles 条目管，运行期改写会
+    让下次启动的属主回收失去基准。
+
+    新建目录取 0755：非特权的桌面会话要能读到清单与权重才能把模型
+    状态显示出来，而权重本身是公开资产；属主仍需是服务账户，否则
+    serve 落不下状态文件——这一条由 tmpfiles 条目保证，不由本函数猜。
     """
     home = base(root)
     for path in (home, models(home)):
