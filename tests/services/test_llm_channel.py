@@ -25,6 +25,14 @@ BODY = b"weight-bytes"
 
 ASSET = "weights/model.gguf"
 
+ENGINE = "bin/llama-server"
+
+ENGINE_BODY = b"elf-engine"
+
+MARK = "bin/ENGINE_VERSION"
+
+MARK_BODY = b"b4600\n"
+
 
 def sample(digest: str | None = None, size: int | None = None) -> dict:
     return {
@@ -62,6 +70,48 @@ class Case(unittest.TestCase):
     def write(self, payload: dict) -> None:
         text = json.dumps(payload)
         (self.src / "manifest.json").write_text(text, encoding="utf-8")
+
+    def engine_package(self) -> None:
+        """引擎与权重同包的形态：引擎路径落在运行根内。
+
+        包内文件的相对位置与运行根一一对应，落位后清单声明的绝对路径
+        就是真的可执行文件；版本标记与引擎同目录，由打包方写入。
+        """
+        payload = sample()
+        payload["runtime"]["path"] = f"{model.ROOT}/{ENGINE}"
+        files = {ENGINE: ENGINE_BODY, MARK: MARK_BODY, ASSET: BODY}
+        (self.src / "bin").mkdir(parents=True)
+        payload["assets"] = []
+        for path, body in files.items():
+            (self.src / path).write_bytes(body)
+            payload["assets"].append({
+                "path": path,
+                "size": len(body),
+                "sha256": hashlib.sha256(body).hexdigest(),
+            })
+        self.write(payload)
+
+    def test_engine_asset_is_executable(self) -> None:
+        self.engine_package()
+        _, copied = channel.apply(self.src, self.home)
+        self.assertEqual(copied, 3)
+        self.assertEqual((self.home / ASSET).stat().st_mode & 0o777, 0o644)
+        self.assertEqual((self.home / MARK).stat().st_mode & 0o777, 0o644)
+        self.assertEqual((self.home / ENGINE).stat().st_mode & 0o777,
+                         channel.RUN_MODE)
+
+    def test_engine_mode_is_repaired(self) -> None:
+        self.engine_package()
+        channel.apply(self.src, self.home)
+        (self.home / ENGINE).chmod(0o644)
+        _, copied = channel.apply(self.src, self.home)
+        self.assertEqual(copied, 1)
+        self.assertEqual((self.home / ENGINE).stat().st_mode & 0o777,
+                         channel.RUN_MODE)
+
+    def test_system_engine_keeps_assets_read_only(self) -> None:
+        channel.apply(self.src, self.home)
+        self.assertEqual((self.home / ASSET).stat().st_mode & 0o777, 0o644)
 
     def test_install_copies_nested_asset(self) -> None:
         entry, copied = channel.apply(self.src, self.home)
