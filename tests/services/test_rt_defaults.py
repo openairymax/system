@@ -12,6 +12,7 @@ from __future__ import annotations
 import contextlib
 import io
 import json
+import os
 import sys
 import unittest
 from pathlib import Path
@@ -319,6 +320,24 @@ class DefaultsCliTest(Base):
         code, out = run(argv)
         self.assertEqual(code, 0)
         self.assertIn("verdict=budgeted", out)
+
+    def test_shows_identity(self) -> None:
+        """rtprio 为 0 却判 budgeted 时必须交代身份。
+
+        第三道门禁对持 CAP_SYS_NICE 的进程不生效，只印裸读数值会让读者
+        以为判定自相矛盾。
+        """
+        mount = self.mount()
+        self.slice(mount, "user.slice", 190000)
+        argv = self.args("defaults") + [
+            "--group", "user.slice",
+            "--limits", self.limits(ZERO),
+        ]
+        code, out = run(argv)
+        root = os.geteuid() == 0
+        self.assertIn("rtprio 0 us", out)
+        self.assertIn("euid root" if root else "euid user", out)
+        self.assertEqual(code, 0 if root else cli.EXIT_PARTIAL)
 
     def test_new_group_exit_partial(self) -> None:
         self.mount()

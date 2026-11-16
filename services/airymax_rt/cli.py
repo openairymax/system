@@ -482,7 +482,7 @@ def _show_defaults(found: defaults.Defaults, as_json: bool) -> None:
     )
     print(
         f"group  {found.group or '-'}  fresh {found.fresh or '-'}"
-        f"  rtprio {_us(found.rtprio)}"
+        f"  rtprio {_us(found.rtprio)}  euid {_who(found.privileged)}"
     )
     if found.blocked:
         print("blocked " + " ".join(found.blocked))
@@ -496,6 +496,15 @@ def _us(value: int | None) -> str:
     if value < 0:
         return "unlimited"
     return f"{value} us"
+
+
+def _who(root: bool) -> str:
+    """判读所用的身份。root 持 CAP_SYS_NICE，RLIMIT_RTPRIO 门禁不参与判定。
+
+    ``rtprio`` 打印的是裸读数值，0 与 ``verdict=budgeted`` 并列时容易
+    被读成矛盾；把身份放在同一行，读者才能看出是第三道门禁未生效。
+    """
+    return "root" if root else "user"
 
 
 def _seedcode(steps: tuple[defaults.Seed, ...]) -> int:
