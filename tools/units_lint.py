@@ -33,6 +33,7 @@ __all__ = [
     "TARGETS",
     "TEMPLATES",
     "TIMERS",
+    "TMPFILES",
     "UNITS",
     "check_dir",
     "check_file",
@@ -750,7 +751,10 @@ LLM_PAIRS: dict[tuple[str, str], str] = {
     ("Service", "TasksMax"): "512",
     ("Service", "LimitNOFILE"): "65536",
     ("Service", "StateDirectory"): "airy-llm",
-    ("Service", "StateDirectoryMode"): "0750",
+    # 运行根同时住着服务账户与桌面面板的读者：0750 时非特权会话读不到
+    # 清单，面板只能报 absent，装机看起来一切正常而模型状态永远缺一项。
+    # 权重是公开资产，可读不构成泄漏；写权限仍只留给属主账户。
+    ("Service", "StateDirectoryMode"): "0755",
     ("Service", "ReadWritePaths"): "/var/lib/airy-llm",
     ("Service", "ProtectSystem"): "strict",
     ("Service", "ProtectHome"): "yes",
@@ -913,6 +917,14 @@ UNITS = frozenset(SERVICES) | frozenset(TARGETS) | frozenset(TEMPLATES) | {
     RT_BANDWIDTH,
     UPDATE_CHECK,
 } | frozenset(TIMERS)
+
+# 与单元同目录交付的声明式配置片段。tmpfiles 条目不解析成 INI，故单列一
+# 张表：条目行的每个字段都参与判定，改一个数字等于改运行根的属主与权限。
+# 目录本身归 systemd 的 StateDirectory 与服务账户，条目只负责把「root 先
+# 建、服务后写、桌面会话读」三种时序收敛到同一个结果。
+TMPFILES: dict[str, tuple[str, ...]] = {
+    "airymax-llm.conf": ("d /var/lib/airy-llm 0755 airy airy -",),
+}
 
 _SECTIONS = frozenset({"Unit", "Service", "Slice", "Timer", "Install"})
 _META = frozenset({
@@ -1548,7 +1560,7 @@ def check_script(path: Path = SCRIPT) -> list[str]:
 
 
 def _names_bad(names: set[str]) -> list[str]:
-    """顶层单元文件的缺件与多件。
+    """顶层文件的缺件与多件。
 
     Args:
         names: 目录下顶层文件名集合。
@@ -1558,7 +1570,40 @@ def _names_bad(names: set[str]) -> list[str]:
     """
     errs = [f"missing unit {name}" for name in sorted(UNITS - names)]
     errs.extend(
-        f"{name}: unexpected unit file" for name in sorted(names - UNITS)
+        f"missing tmpfiles {name}" for name in sorted(set(TMPFILES) - names)
+    )
+    errs.extend(
+        f"{name}: unexpected unit file"
+        for name in sorted(names - UNITS - set(TMPFILES))
+    )
+    return errs
+
+
+def _tmpfiles_bad(path: Path, want: tuple[str, ...]) -> list[str]:
+    """tmpfiles 片段的文件权限与条目行。
+
+    Args:
+        path: 片段路径。
+        want: 必须出现的条目行，按原样比对。
+
+    Returns:
+        违约描述列表，空列表表示通过。
+    """
+    errs = _file_bad(path)
+    text = path.read_text(encoding="utf-8")
+    lines = {
+        line.strip()
+        for line in text.splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    }
+    errs.extend(
+        f"{path.name}: missing entry: {entry}"
+        for entry in want
+        if entry not in lines
+    )
+    errs.extend(
+        f"{path.name}: unexpected entry: {entry}"
+        for entry in sorted(lines - set(want))
     )
     return errs
 
@@ -1681,6 +1726,9 @@ def check_dir(path: Path) -> list[str]:
     files = sorted(item for item in path.iterdir() if item.is_file())
     errs = _tree_bad(path, {item.name for item in files})
     units = [item for item in files if item.name in UNITS]
+    for item in files:
+        if item.name in TMPFILES:
+            errs.extend(_tmpfiles_bad(item, TMPFILES[item.name]))
     parsed, parse_errs = _parse_all(units)
     errs.extend(parse_errs)
     script = ui_path(path)

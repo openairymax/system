@@ -379,8 +379,8 @@ class LlmCase(UnitsCase):
         self.assert_bad("Restart")
 
     def test_llm_state_mode(self) -> None:
-        """运行根同时放模型资产，组外用户不应可读。"""
-        self.edit(LLM, "StateDirectoryMode=0750", "StateDirectoryMode=0755")
+        """运行根同时供桌面面板读取，收成 0750 会让状态恒报 absent。"""
+        self.edit(LLM, "StateDirectoryMode=0755", "StateDirectoryMode=0750")
         self.assert_bad("StateDirectoryMode")
 
     def test_llm_devices(self) -> None:
@@ -417,6 +417,52 @@ class LlmCase(UnitsCase):
         """准入拒绝与资产缺失是确定结论，不能被重启策略反复放大。"""
         self.edit(LLM, "RestartPreventExitStatus=75 78\n", "")
         self.assert_bad("RestartPreventExitStatus")
+
+
+class TmpfilesCase(UnitsCase):
+    """运行根的属主与权限契约。
+
+    目录的创建时序有三条：root 手工安装、服务首次启动、桌面会话读面板。
+    只有一条声明式条目能让三者收敛到同一结果，因此条目内容逐字段受判。
+    """
+
+    CONF = "airymax-llm.conf"
+    ENTRY = "d /var/lib/airy-llm 0755 airy airy -"
+
+    def test_entry_mode(self) -> None:
+        """收成 0750 时非特权会话读不到清单，面板恒报 absent。"""
+        self.edit(
+            self.CONF,
+            self.ENTRY,
+            "d /var/lib/airy-llm 0750 airy airy -",
+        )
+        self.assert_bad("missing entry")
+
+    def test_entry_owner(self) -> None:
+        """属主不是服务账户时 serve 落不下状态文件。"""
+        self.edit(
+            self.CONF,
+            self.ENTRY,
+            "d /var/lib/airy-llm 0755 root airy -",
+        )
+        self.assert_bad("missing entry")
+
+    def test_entry_extra(self) -> None:
+        """条目必须唯一，第二行会与第一条互相覆盖。"""
+        self.edit(
+            self.CONF,
+            self.ENTRY,
+            f"{self.ENTRY}\nf /var/lib/airy-llm/status.json 0644 airy airy -",
+        )
+        self.assert_bad("unexpected entry")
+
+    def test_missing(self) -> None:
+        (self.root / self.CONF).unlink()
+        self.assert_bad(f"missing tmpfiles {self.CONF}")
+
+    def test_file_mode(self) -> None:
+        (self.root / self.CONF).chmod(0o600)
+        self.assert_bad("mode must be 0644")
 
 
 class SliceCase(UnitsCase):
