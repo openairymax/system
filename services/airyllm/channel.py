@@ -12,7 +12,9 @@
 # 中断状态判成失败，不会让它冒充就绪。
 #
 # 落位权限固定为可读：安装通常以 root 执行，服务以 airy 运行；若沿用
-# 0600 之类由 umask 决定的权限，服务会因读不到权重而失败。
+# 0600 之类由 umask 决定的权限，服务会因读不到权重而失败。清单 runtime.path
+# 指向的那一件落在运行根内时是可执行文件，单独置可执行位——引擎与权重由
+# 同一份离线包交付，引擎来自系统包时该路径在运行根之外，本层不碰权限。
 
 """AirymaxOS local model asset channel (K-21-01).
 
@@ -25,6 +27,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import stat
 import tempfile
 from pathlib import Path
 
@@ -34,6 +37,8 @@ from .failure import Failure
 __all__ = ["apply"]
 
 FILE_MODE = 0o644
+
+RUN_MODE = 0o755
 
 DIR_MODE = 0o755
 
@@ -57,36 +62,57 @@ def apply(source: str | Path,
     entry = manifest.load(paths.manifest(src))
     verify.check(src, entry)
     home = paths.ensure(root)
-    copied = sum(_sync(src, home, asset) for asset in entry.assets)
-    _file(paths.manifest(src), paths.manifest(home))
+    engine = _engine(entry)
+    copied = sum(
+        _sync(src, home, asset,
+              RUN_MODE if asset.path == engine else FILE_MODE)
+        for asset in entry.assets)
+    _file(paths.manifest(src), paths.manifest(home), FILE_MODE)
     verify.check(home, entry)
     return entry, copied
 
 
-def _sync(src: Path, home: Path, asset: model.Asset) -> bool:
+def _engine(entry: model.Manifest) -> str:
+    """清单引擎在运行根内的相对路径；引擎在运行根之外时为空串。
+
+    离线包把引擎与权重一起交付，包内文件的相对位置与运行根一一对应，
+    落位后清单声明的绝对路径就真实可执行。引擎由系统包提供时路径不在
+    运行根内，这里返回空串，任何资产都不会被当作可执行文件。
+    """
+    try:
+        return str(Path(entry.runtime.path).relative_to(model.ROOT))
+    except ValueError:
+        return ""
+
+
+def _sync(src: Path, home: Path, asset: model.Asset, mode: int) -> bool:
     """同步一件资产；返回是否真的写入。"""
     target = home / asset.path
-    if _same(target, asset):
+    if _same(target, asset, mode):
         return False
-    _file(src / asset.path, target)
+    _file(src / asset.path, target, mode)
     return True
 
 
-def _same(path: Path, asset: model.Asset) -> bool:
+def _same(path: Path, asset: model.Asset, mode: int) -> bool:
     """目标是否已是清单描述的那一件资产。
 
     符号链接一律视为不一致：只比较链接指向的内容，会让一次越界的旧
-    链接在摘要碰巧相同时被保留下来。
+    链接在摘要碰巧相同时被保留下来。权限位不同同样重写，旧副本以只读
+    位落下的引擎可在重跑后恢复可执行，不必先手工删除。
     """
     try:
-        if path.is_symlink() or path.stat().st_size != asset.size:
+        info = path.lstat()
+        if not stat.S_ISREG(info.st_mode):
+            return False
+        if info.st_size != asset.size or stat.S_IMODE(info.st_mode) != mode:
             return False
         return verify.digest(path) == asset.sha256
     except OSError:
         return False
 
 
-def _file(origin: Path, target: Path) -> None:
+def _file(origin: Path, target: Path, mode: int) -> None:
     """以临时文件原子落位，避免目标出现半截内容。"""
     parent = target.parent
     parent.mkdir(parents=True, exist_ok=True, mode=DIR_MODE)
@@ -96,7 +122,7 @@ def _file(origin: Path, target: Path) -> None:
             shutil.copyfileobj(source, sink, verify.CHUNK)
             sink.flush()
             os.fsync(sink.fileno())
-        os.chmod(temp, FILE_MODE)
+        os.chmod(temp, mode)
         os.replace(temp, target)
     except BaseException:
         os.unlink(temp)
