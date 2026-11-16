@@ -42,6 +42,7 @@ class TokenTest(unittest.TestCase):
                 "no-runtime",
                 "no-model",
                 "no-manifest",
+                "manifest-unreadable",
                 "digest-mismatch",
                 "asset-corrupt",
                 "state-unwritable",

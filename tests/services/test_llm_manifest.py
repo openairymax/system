@@ -222,6 +222,17 @@ class LoadTest(unittest.TestCase):
             manifest.load(self.dir / "nope.json")
         self.assertIs(caught.exception.reason, model.Reason.NO_MANIFEST)
 
+    def test_unreadable(self) -> None:
+        """存在但读不出来与不存在要分开归因。
+
+        运行根默认 root 属主且不可遍历，普通用户查询会走到这条分支；
+        报「没有清单」会让运维去补资产，实际要做的是换权限。
+        """
+        with self.assertRaises(Failure) as caught:
+            manifest.load(self.dir)
+        self.assertIs(caught.exception.reason,
+                      model.Reason.MANIFEST_UNREADABLE)
+
 
 if __name__ == "__main__":
     unittest.main()
