@@ -191,7 +191,7 @@ class BannerTest(Case):
         self.engine.write_text(
             "#!/bin/sh\n"
             "echo 'llama-server: libcurl.so.4: no version information' >&2\n"
-            f"echo '{BANNER}'\n",
+            f"echo '{BANNER}' >&2\n",
             encoding="utf-8")
         self.assertEqual(self.smoke(), BANNER)
 

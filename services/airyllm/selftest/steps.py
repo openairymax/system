@@ -42,7 +42,7 @@ PROBE = ".selftest"
 
 VERSION = "--version"
 
-BANNER = "version"
+BANNER = "version:"
 
 
 @dataclass
