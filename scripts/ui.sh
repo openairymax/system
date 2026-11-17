@@ -182,14 +182,18 @@ _ui_fmt() {
 # 折叠必须按字节判定：UTF-8 locale 下 sed 的方括号区间走排序规则，
 # '[ -~]' 不再是 0x20..0x7E，标点之外的字母数字会被判为「非 ASCII」而
 # 整行替换成 '?'（run 42426433371 的九阶段行就是这样，[ ?/? ] ??????）。
-# 外壳正则与 sed 都只认 LC_ALL=C 的字节语义，因此 locale 钉在本函数内，
-# 不依赖调用方的 LANG。
+# 外壳正则由下方 local LC_ALL=C 钉住；sed 是子进程，local 不会把它导出，
+# 它继承的是调用方的 LANG——285H 上 LANG=zh_CN.UTF-8，于是整行连
+# '[ 2/9 ]' 与 token 一起退化成 '?'。因此 sed 调用点必须自带 LC_ALL=C
+# 前缀，function 内的 local 只够管 bash 自己的模式匹配。
+# 字节语义下一个汉字是三个字节，逐个换成 '?' 会把一个词拉成三个问号；
+# 折叠按连续段做，一段非 ASCII 只留一个 '?'，屏幕宽度不随编码膨胀。
 _ui_ascii() {
     local text="$1"
     local LC_ALL=C
 
     case "${text}" in
-        *[!-~]*) printf '%s' "${text}" | sed 's/[^ -~]/?/g' ;;
+        *[!-~]*) printf '%s' "${text}" | LC_ALL=C sed 's/[^ -~]\+/?/g' ;;
         *) printf '%s' "${text}" ;;
     esac
 }
