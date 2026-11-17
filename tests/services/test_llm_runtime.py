@@ -75,5 +75,23 @@ class CheckTest(unittest.TestCase):
         self.reject(str(self.exe))
 
 
+class LoaderTest(unittest.TestCase):
+    """引擎目录前置到加载路径，既有取值原样保留。"""
+
+    def test_prepend(self) -> None:
+        env = runtime.loader_env("/opt/eng/llama-server", {})
+        self.assertEqual(env[runtime.LIB_PATH], "/opt/eng")
+
+    def test_keep_existing(self) -> None:
+        env = runtime.loader_env("/opt/eng/llama-server",
+                                 {runtime.LIB_PATH: "/usr/lib"})
+        self.assertEqual(env[runtime.LIB_PATH], "/opt/eng:/usr/lib")
+
+    def test_base_untouched(self) -> None:
+        base = {runtime.LIB_PATH: "/usr/lib"}
+        runtime.loader_env("/opt/eng/llama-server", base)
+        self.assertEqual(base, {runtime.LIB_PATH: "/usr/lib"})
+
+
 if __name__ == "__main__":
     unittest.main()

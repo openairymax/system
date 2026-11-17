@@ -131,7 +131,7 @@ class RunTest(Base):
 
     def test_exec_argv(self) -> None:
         self.write(sample(str(self.exe)))
-        with mock.patch.object(launch.os, "execv") as called:
+        with mock.patch.object(launch.os, "execve") as called:
             code = launch.run(self.home, frozenset({model.Backend.CUDA}),
                               allow)
         self.assertEqual(code, launch.EXIT_UNAVAILABLE)
@@ -139,9 +139,18 @@ class RunTest(Base):
         self.assertEqual(called.call_args.args[0], argv[0])
         self.assertIn(str(self.exe), argv)
 
+    def test_exec_loader_path(self) -> None:
+        """引擎目录必须前置到加载路径，否则随行库在目标机上解析不到。"""
+        self.write(sample(str(self.exe)))
+        with mock.patch.object(launch.os, "execve") as called:
+            launch.run(self.home, frozenset({model.Backend.CUDA}), allow)
+        env = called.call_args.args[2]
+        self.assertEqual(env["LD_LIBRARY_PATH"].split(":")[0],
+                         str(self.home))
+
     def test_exec_error(self) -> None:
         self.write(sample(str(self.exe)))
-        with mock.patch.object(launch.os, "execv",
+        with mock.patch.object(launch.os, "execve",
                                side_effect=OSError("denied")):
             err = io.StringIO()
             with redirect_stderr(err):
@@ -152,7 +161,7 @@ class RunTest(Base):
 
     def test_degraded_notice(self) -> None:
         self.write(sample(str(self.exe)))
-        with mock.patch.object(launch.os, "execv"):
+        with mock.patch.object(launch.os, "execve"):
             err = io.StringIO()
             with redirect_stderr(err):
                 launch.run(self.home, frozenset(), allow)
@@ -161,7 +170,7 @@ class RunTest(Base):
     def test_decline_evidence(self) -> None:
         self.write(sample(str(self.exe)))
         with mock.patch.object(launch.accel, "probe", return_value=MISSING), \
-                mock.patch.object(launch.os, "execv"):
+                mock.patch.object(launch.os, "execve"):
             err = io.StringIO()
             with redirect_stderr(err):
                 launch.run(self.home, check=allow)
@@ -172,14 +181,14 @@ class RunTest(Base):
         self.write(sample(str(self.exe)))
         with mock.patch.object(launch.accel, "probe",
                                return_value=READY) as seen, \
-                mock.patch.object(launch.os, "execv"):
+                mock.patch.object(launch.os, "execve"):
             launch.run(self.home, check=allow)
         self.assertEqual(seen.call_count, 1)
 
     def test_ready_silent(self) -> None:
         self.write(sample(str(self.exe)))
         with mock.patch.object(launch.accel, "probe", return_value=READY), \
-                mock.patch.object(launch.os, "execv"):
+                mock.patch.object(launch.os, "execve"):
             err = io.StringIO()
             with redirect_stderr(err):
                 launch.run(self.home, check=allow)
@@ -191,7 +200,7 @@ class AdmitTest(Base):
 
     def test_refuse(self) -> None:
         self.write(sample(str(self.exe)))
-        with mock.patch.object(launch.os, "execv") as called:
+        with mock.patch.object(launch.os, "execve") as called:
             err = io.StringIO()
             with redirect_stderr(err):
                 code = launch.run(self.home,
@@ -206,14 +215,14 @@ class AdmitTest(Base):
         """判定拿到的需求量与清单一致，不是零点或固定值。"""
         self.write(sample(str(self.exe)))
         seen: list[int] = []
-        with mock.patch.object(launch.os, "execv"):
+        with mock.patch.object(launch.os, "execve"):
             launch.run(self.home, frozenset({model.Backend.CUDA}),
                        lambda need: (seen.append(need), verdict(admit.FIT))[1])
         self.assertEqual(seen, [len(BODY) + serve.FLOOR])
 
     def test_unknown_allows(self) -> None:
         self.write(sample(str(self.exe)))
-        with mock.patch.object(launch.os, "execv") as called:
+        with mock.patch.object(launch.os, "execve") as called:
             err = io.StringIO()
             with redirect_stderr(err):
                 code = launch.run(self.home,
@@ -226,7 +235,7 @@ class AdmitTest(Base):
     def test_refuse_before_degrade(self) -> None:
         """拒绝优先于降级提示：装不下时不该先报一句降级再退出。"""
         self.write(sample(str(self.exe)))
-        with mock.patch.object(launch.os, "execv"):
+        with mock.patch.object(launch.os, "execve"):
             err = io.StringIO()
             with redirect_stderr(err):
                 launch.run(self.home, frozenset(),

@@ -12,6 +12,12 @@
 # 系统包在构建期写，运营方自行安装的引擎随包提供——与二进制同生共死。
 #
 # 只做只读检查，不执行引擎。
+#
+# 引擎自带的库与二进制同目录，而上游构建把 RUNPATH 写成构建机的绝对路径，
+# 在目标机上解析不到 libllama/libggml；本机也没有一条指向该目录的全局加载
+# 路径。冒烟与启动因此都把引擎目录前置到 LD_LIBRARY_PATH：库跟着引擎走，
+# 系统配置不为一个可替换的交付物保留路径。fresh 安装后 selftest 曾在
+# smoke 一项以退出码 127 失败，根因即此。
 
 """AirymaxOS inference engine inspection (K-20-09).
 
@@ -22,17 +28,39 @@
 
 from __future__ import annotations
 
+import os
 import stat
+from collections.abc import Mapping
 from pathlib import Path
 
 from . import model
 from .failure import Failure
 
-__all__ = ["VERSION_FILE", "check"]
+__all__ = ["LIB_PATH", "VERSION_FILE", "check", "loader_env"]
 
 EXEC_BITS = 0o111
 
+LIB_PATH = "LD_LIBRARY_PATH"
+
 VERSION_FILE = "ENGINE_VERSION"
+
+
+def loader_env(path: str | Path, base: Mapping[str, str] | None = None
+               ) -> dict[str, str]:
+    """把引擎所在目录前置到动态加载路径。
+
+    Args:
+        path: 引擎可执行文件路径。
+        base: 起始环境；``None`` 时取当前进程环境。
+
+    Returns:
+        新的环境字典；``base`` 本身不被修改。
+    """
+    env = dict(os.environ if base is None else base)
+    home = str(Path(path).parent)
+    kept = env.get(LIB_PATH, "")
+    env[LIB_PATH] = home if not kept else f"{home}:{kept}"
+    return env
 
 
 def check(entry: model.Manifest) -> None:
