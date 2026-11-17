@@ -661,5 +661,76 @@ class TimerCase(UnitsCase):
         self.assert_bad("unexpected directive [Timer] Unit")
 
 
+class PayloadCase(UnitsCase):
+    """首启的载荷门控：缺载荷时不能拉起整栈。"""
+
+    def script(self) -> Path:
+        path = Path(self.tmp.name) / "firstboot.sh"
+        shutil.copy2(ROOT / "scripts" / "firstboot.sh", path)
+        return path
+
+    def test_payload_gate(self) -> None:
+        """门控被删后，缺载荷的机器会重演一屏 216/GROUP。"""
+        path = self.script()
+        text = path.read_text(encoding="utf-8")
+        gate = (
+            '    if [ ! -x "$PAYLOAD" ]; then\n'
+            '        STACK_SRC="absent"\n'
+            "        return 0\n"
+            "    fi\n"
+        )
+        self.assertIn(gate, text)
+        path.write_text(text.replace(gate, "", 1), encoding="utf-8")
+        errs = units_lint.check_firstboot(path)
+        self.assertTrue(any("PAYLOAD" in err for err in errs), errs)
+
+    def test_payload_decl(self) -> None:
+        """判据与失败模板同路径，声明被删即违约。"""
+        path = self.script()
+        text = path.read_text(encoding="utf-8")
+        decl = 'readonly PAYLOAD="${ROOT}/usr/sbin/airyctl"\n'
+        self.assertIn(decl, text)
+        path.write_text(text.replace(decl, "", 1), encoding="utf-8")
+        errs = units_lint.check_firstboot(path)
+        self.assertTrue(any("declare" in err for err in errs), errs)
+
+
+class GroupCase(UnitsCase):
+    """%pre 建组清单与单元契约一致。"""
+
+    def spec(self) -> Path:
+        path = Path(self.tmp.name) / "airymaxos-system.spec"
+        shutil.copy2(units_lint.SPEC, path)
+        return path
+
+    def test_group_missing(self) -> None:
+        """漏一个组就是装机后一个单元 216/GROUP。"""
+        path = self.spec()
+        text = path.read_text(encoding="utf-8")
+        self.assertIn(" airy-vfs \\\n", text)
+        path.write_text(
+            text.replace(" airy-vfs \\\n", "\n", 1), encoding="utf-8"
+        )
+        self.assertEqual(
+            units_lint.check_groups(path),
+            [f"{path.name}: %pre must create group airy-vfs"],
+        )
+
+    def test_group_loop(self) -> None:
+        """逐个 getent 的写法覆盖不到新组，必须保留循环。"""
+        path = self.spec()
+        text = path.read_text(encoding="utf-8")
+        start = text.index("for grp in ")
+        end = text.index("done\n", start) + len("done\n")
+        path.write_text(
+            text[:start]
+            + "getent group airy >/dev/null || exit 1\n"
+            + text[end:],
+            encoding="utf-8",
+        )
+        errs = units_lint.check_groups(path)
+        self.assertTrue(any("in a loop" in err for err in errs), errs)
+
+
 if __name__ == "__main__":
     unittest.main()
