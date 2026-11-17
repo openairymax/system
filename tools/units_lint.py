@@ -37,6 +37,8 @@ __all__ = [
     "UNITS",
     "check_dir",
     "check_file",
+    "check_firstboot",
+    "check_groups",
     "check_script",
     "main",
 ]
@@ -46,6 +48,13 @@ LOG = logging.getLogger("units_lint")
 ROOT = Path(__file__).resolve().parent.parent
 UNIT_DIR = ROOT / "units"
 SHEBANG = "#!/usr/bin/env bash"
+SPEC = ROOT.parent / "distro" / "specs" / "airymaxos-system.spec"
+
+# agentrt 载荷的在位判据。0.0.4 只交付单元与运行时脚本，12 个
+# /usr/sbin/*_d 与 airyctl 随 0.1.x 的 airymaxos-services 交付；失败模板的
+# ConditionPathExists 与首启脚本的启动门控必须用同一个路径，两处各写一份
+# 判据时，一边改了另一边不动，症状是「缺载荷时仍然拉整栈」。
+PAYLOAD = "/usr/sbin/airyctl"
 
 SYSTEM_UNITS = frozenset({
     "display-manager.service",
@@ -379,7 +388,7 @@ TEMPLATES: dict[str, tuple[tuple[str, str, str], ...]] = {
     "airy-incident@.service": (
         ("Unit", "Description", "Handle failure of %i"),
         ("Unit", "After", "%i"),
-        ("Unit", "ConditionPathExists", "/usr/sbin/airyctl"),
+        ("Unit", "ConditionPathExists", PAYLOAD),
         ("Service", "Type", "oneshot"),
         ("Service", "TimeoutStartSec", "20"),
         ("Service", "TimeoutStopSec", "10"),
@@ -1559,6 +1568,154 @@ def check_script(path: Path = SCRIPT) -> list[str]:
     return errs
 
 
+FIRSTBOOT_PAYLOAD = f'readonly PAYLOAD="${{ROOT}}{PAYLOAD}"'
+
+
+def _func(text: str, name: str) -> str | None:
+    """取出 shell 脚本中某个函数的正文。
+
+    Args:
+        text: 脚本全文。
+        name: 函数名。
+
+    Returns:
+        花括号之间的正文；函数不存在时为 None。
+    """
+    match = re.search(
+        rf"^{re.escape(name)}\(\)\n\{{(.*?)^\}}", text, re.M | re.S
+    )
+    return match.group(1) if match else None
+
+
+def _payload_bad(path: Path) -> list[str]:
+    """首启只能在载荷在位时拉起 agentrt.target。
+
+    285H 现场：装机后重启 airy-llm，其 Requires=agentrt-firstboot 把首启
+    重跑了一遍，首启无条件 start agentrt.target，13 个单元全部以
+    216/GROUP 失败；临时建组后再起仍是 203/EXEC——*_d 根本不在镜像内。
+    缺载荷时拉起整栈只会把「这一层还没装」写成一屏 failed，掩盖真正的
+    故障。判据与失败模板的 ConditionPathExists 是同一个路径，任一处改动
+    都必须同步另一处，因此在这里把两处钉在一起。
+
+    Args:
+        path: 首启脚本路径。
+
+    Returns:
+        违约描述列表，空列表表示通过。
+    """
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return [f"{path.name}: missing script"]
+    errs: list[str] = []
+    if FIRSTBOOT_PAYLOAD not in text:
+        errs.append(f"{path.name}: must declare {FIRSTBOOT_PAYLOAD}")
+    body = _func(text, "start_stack")
+    if body is None:
+        return errs + [f"{path.name}: missing start_stack()"]
+    gate = body.find('"$PAYLOAD"')
+    start = body.find('"$SYSTEMCTL"')
+    if gate < 0 or start < 0 or gate > start:
+        errs.append(
+            f"{path.name}: start_stack() must test PAYLOAD before"
+            " starting agentrt.target"
+        )
+    return errs
+
+
+def check_firstboot(path: Path = FIRSTBOOT_SCRIPT) -> list[str]:
+    """校验首启脚本的格式、权限与载荷门控。
+
+    Args:
+        path: 首启脚本路径。
+
+    Returns:
+        违约描述列表，空列表表示通过。
+    """
+    return check_script(path) + _payload_bad(path)
+
+
+def _pre_text(text: str) -> str:
+    """取 spec 的 %pre 段落正文。
+
+    Args:
+        text: spec 全文。
+
+    Returns:
+        %pre 到下一个段落指令之间的文本；段落缺失时为空串。
+    """
+    match = re.search(r"^%pre\b(.*?)(?=^%[a-z]+)", text, re.M | re.S)
+    return match.group(1) if match else ""
+
+
+def _need_groups() -> set[str]:
+    """单元契约要求存在的组集合。
+
+    服务单元的 User 与 Group 都是 airy，SupplementaryGroups 由
+    SERVICES[*].groups 声明；两者合起来就是 %pre 必须建立的组。
+
+    Returns:
+        组名集合。
+    """
+    names = {"airy"}
+    for spec in SERVICES.values():
+        names.update(spec.groups.split())
+    return names
+
+
+GROUP_LOOP = re.compile(r"^\s*for grp in (.*?);\s*do", re.M | re.S)
+
+
+def _pre_groups(text: str) -> set[str]:
+    """%pre 循环建组清单中的组名。
+
+    Args:
+        text: spec 全文。
+
+    Returns:
+        组名集合；没有建组循环时为空集。
+    """
+    match = GROUP_LOOP.search(_pre_text(text))
+    if match is None:
+        return set()
+    return {
+        token.strip("\\")
+        for token in match.group(1).split()
+        if token.strip("\\")
+    }
+
+
+def check_groups(path: Path = SPEC) -> list[str]:
+    """%pre 必须建立单元契约声明的全部组。
+
+    285H 现场：firstboot 拉起 agentrt.target 时 12 个单元以 216/GROUP
+    失败，%pre 只建了 airy 与 airy-cogn，其余 11 个组不存在。组清单是单元
+    契约的一部分，改单元而漏改组只会在装机后的 journal 里出现，装机当时
+    什么都看不出来，因此这里把 SERVICES[*].groups 的并集与 %pre 的建组
+    清单对起来，并以循环建组保证新增组不必再抄一行。
+
+    Args:
+        path: 系统编排包 spec 路径。
+
+    Returns:
+        违约描述列表，空列表表示通过。
+    """
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return [f"{path.name}: missing spec"]
+    if not _pre_text(text):
+        return [f"{path.name}: missing %pre section"]
+    have = _pre_groups(text)
+    errs = [
+        f"{path.name}: %pre must create group {name}"
+        for name in sorted(_need_groups() - have)
+    ]
+    if not have:
+        errs.append(f"{path.name}: %pre must create groups in a loop")
+    return errs
+
+
 def _names_bad(names: set[str]) -> list[str]:
     """顶层文件的缺件与多件。
 
@@ -1736,13 +1893,14 @@ def check_dir(path: Path) -> list[str]:
     errs.extend(_ui_table_bad(script))
     errs.extend(_unit_bad(units, parsed, rows))
     errs.extend(check_script())
+    errs.extend(check_firstboot())
     for extra in (
-        FIRSTBOOT_SCRIPT,
         BOOT_MOUNT_SCRIPT,
         BOOT_WATCH_SCRIPT,
         NET_DOCTOR_SCRIPT,
     ):
         errs.extend(check_script(extra))
+    errs.extend(check_groups())
     return errs
 
 

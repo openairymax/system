@@ -4,8 +4,8 @@
 #
 # 在临时根目录中构造 machine-id、sysctl 配置、LSM 探针与完成标记，
 # 并以 PATH 注入的假 sysctl、modprobe、systemctl 与
-# systemd-machine-id-setup 驱动脚本分支，验证五步初始化、幂等语义
-# 与六种退出码契约。
+# systemd-machine-id-setup 驱动脚本分支，验证五步初始化、幂等语义、
+# 六种退出码契约，以及「载荷不在位时不起整栈」的门控语义。
 
 from __future__ import annotations
 
@@ -96,6 +96,14 @@ class FirstbootCase(unittest.TestCase):
     def ready(self) -> None:
         self.probe.write_text("1\n", encoding="utf-8")
 
+    def payload(self) -> Path:
+        """构造 agentrt 载荷同位判据文件（/usr/sbin/airyctl）。"""
+        path = self.root / "usr" / "sbin" / "airyctl"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("#!/usr/bin/env bash\n", encoding="utf-8")
+        path.chmod(0o755)
+        return path
+
     def marker(self) -> Path:
         return self.state / ".firstboot-done"
 
@@ -131,6 +139,7 @@ class ExitCase(FirstbootCase):
     """退出码与完成标记生命周期。"""
 
     def test_pass(self) -> None:
+        self.payload()
         res = self.run_fb()
         self.assertEqual(res.returncode, 0, res.stderr)
         self.assertTrue(self.marker().exists())
@@ -142,6 +151,14 @@ class ExitCase(FirstbootCase):
             r"\[ 2/9 \] firstboot       ok   "
             r"mid=present sysctl=ok lsm=present target=queued\n$",
         )
+
+    def test_payload_absent(self) -> None:
+        """缺载荷时不起整栈，照常落标记，不让它变成一屏 failed。"""
+        res = self.run_fb()
+        self.assertEqual(res.returncode, 0, res.stderr)
+        self.assertTrue(self.marker().exists())
+        self.assertNotIn("agentrt.target", self.calls())
+        self.assertIn("target=absent", res.stdout)
 
     def test_idem(self) -> None:
         self.marker().write_text("done\n", encoding="utf-8")
@@ -206,6 +223,7 @@ class ExitCase(FirstbootCase):
         self.assertIn("modprobe airy_lsm", self.calls())
 
     def test_start_fail(self) -> None:
+        self.payload()
         res = self.run_fb(FAKE_SYSTEMCTL_RC="1")
         self.assertEqual(res.returncode, 4, res.stderr)
         self.assertFalse(self.marker().exists())
@@ -237,7 +255,7 @@ class LintCase(unittest.TestCase):
         )
 
     def test_lint_ok(self) -> None:
-        self.assertEqual(units_lint.check_script(self.path), [])
+        self.assertEqual(units_lint.check_firstboot(self.path), [])
 
     def test_lint_mode(self) -> None:
         self.path.chmod(0o644)

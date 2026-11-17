@@ -8,8 +8,16 @@
 #   1. 生成并校验 /etc/machine-id；
 #   2. 应用 /etc/sysctl.d 中的内核参数；
 #   3. 确认 Airy LSM 与 capability 子系统就绪；
-#   4. 触发 agentrt.target 拉起 12 个 daemon；
+#   4. 载荷在位时触发 agentrt.target 拉起 12 个 daemon；
 #   5. 写入完成标记，后续启动立即返回。
+#
+# 第 4 步以 airyctl 为载荷判据（与 airy-incident@.service 的
+# ConditionPathExists 同一个路径）：0.0.4 只交付单元与运行时脚本，12 个
+# /usr/sbin/*_d 随 0.1.x 的 airymaxos-services 交付。载荷不在位时启动
+# target 的后果是 13 个单元各记一条 216/GROUP 或 203/EXEC，target 连带
+# 失败，`systemctl --failed` 从此不再为零——而这台机器实际上什么都没坏，
+# 只是那一层还没装。因此缺载荷时按 note 报 target=absent 并照常落完成
+# 标记，由载荷包自己负责拉起 target，不以桩二进制冒充在位。
 #
 # 对外只打一行：本脚本是九阶段契约第 2 阶段「首启判定」的唯一实现，
 # 每台机器每次启动都出现该行（已完成时是 done=1 的 note），屏幕与
@@ -26,9 +34,11 @@
 #   1 machine-id 生成或校验失败
 #   2 sysctl 参数应用失败
 #   3 Airy LSM 未就绪（ENOTSUP）
-#   4 agentrt.target 无法拉起
+#   4 agentrt.target 无法拉起（载荷在位但启动事务失败）
 #   5 完成标记写入失败
 #   6 打印契约库 ui.sh 缺失
+#
+# 载荷不在位不是失败：第 4 步以 target=absent 上报后继续落标记并退 0。
 #
 # 环境变量：
 #   AIRY_FIRSTBOOT_ROOT       根前缀，默认 /（离线镜像校验用）
@@ -60,10 +70,12 @@ readonly STATE="${ROOT}/var/lib/airymaxos"
 readonly MARKER="${STATE}/.firstboot-done"
 readonly MID="${ROOT}/etc/machine-id"
 readonly PROBE="${ROOT}/proc/sys/agentrt/present"
+readonly PAYLOAD="${ROOT}/usr/sbin/airyctl"
 readonly MID_RE='^[0-9a-f]{32}$'
 
 MID_SRC=""
 LSM_SRC=""
+STACK_SRC=""
 
 valid_mid()
 {
@@ -143,10 +155,15 @@ load_lsm()
 
 start_stack()
 {
+    if [ ! -x "$PAYLOAD" ]; then
+        STACK_SRC="absent"
+        return 0
+    fi
     if ! "$SYSTEMCTL" start --no-block agentrt.target; then
         printf '[首启] agentrt.target 拉起失败\n' >&2
         return 4
     fi
+    STACK_SRC="queued"
 }
 
 mark_done()
@@ -187,7 +204,7 @@ main()
     load_lsm || { rc=$?; fail_step lsm "${rc}"; return "${rc}"; }
     start_stack || { rc=$?; fail_step target "${rc}"; return "${rc}"; }
     mark_done || { fail_step mark 5; return 5; }
-    ui_ok 首启判定 "mid=${MID_SRC} sysctl=ok lsm=${LSM_SRC} target=queued"
+    ui_ok 首启判定 "mid=${MID_SRC} sysctl=ok lsm=${LSM_SRC} target=${STACK_SRC}"
     return 0
 }
 
