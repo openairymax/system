@@ -125,7 +125,8 @@ def _smoke(facts: Facts) -> Result:
     argv = [facts.entry.runtime.path, VERSION]
     try:
         done = subprocess.run(argv, capture_output=True, text=True,
-                              timeout=SMOKE_TIMEOUT, check=False)
+                              timeout=SMOKE_TIMEOUT, check=False,
+                              env=runtime.loader_env(argv[0]))
     except OSError as exc:
         return Result("smoke", False, f"引擎无法执行: {exc}",
                       model.Reason.NO_RUNTIME)

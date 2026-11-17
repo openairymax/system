@@ -37,7 +37,7 @@ from pathlib import Path
 
 from airymax_rt import admit
 
-from . import accel, engine, model, paths, report, serve
+from . import accel, engine, model, paths, report, runtime, serve
 
 __all__ = ["EXIT_REFUSED", "EXIT_UNAVAILABLE", "plan", "run"]
 
@@ -93,7 +93,7 @@ def run(root: str | Path | None = None,
         print(f"airy-llm: {report.token(result)}", file=sys.stderr)
         _decline(rows)
     try:
-        os.execv(argv[0], argv)
+        os.execve(argv[0], argv, runtime.loader_env(argv[0]))
     except OSError as exc:
         print(f"airy-llm: exec: {exc}", file=sys.stderr)
     return EXIT_UNAVAILABLE

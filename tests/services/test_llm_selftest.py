@@ -86,6 +86,19 @@ class Case(unittest.TestCase):
         return [row.name for row in got.rows if not row.ok]
 
 
+class LoaderTest(Case):
+    """冒烟把引擎目录前置到加载路径，随行库不依赖全局配置。"""
+
+    def test_smoke_gets_engine_dir(self) -> None:
+        self.engine.write_text(
+            "#!/bin/sh\n"
+            f"case \"$LD_LIBRARY_PATH\" in\n"
+            f"  {self.engine.parent}*) echo '{BANNER}' ;;\n"
+            "esac\n", encoding="utf-8")
+        got = self.rows(frozenset({model.Backend.CUDA}))
+        self.assertIs(got.status.state, model.State.READY)
+
+
 class VerdictTest(Case):
     """就绪与降级都要求八项全过；差别只在后端与原因。"""
 
