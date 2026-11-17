@@ -393,6 +393,24 @@ class LocaleCase(Case):
         self.assertEqual(u.returncode, 0, u.stderr)
         self.assertEqual(u.stdout, c.stdout)
 
+    def test_fold_call_pins_the_child(self):
+        """折叠 sed 的 locale 必须写在命令行上，不能只写在函数里。
+
+        function 内的 local LC_ALL=C 只影响 bash 自己的模式匹配，不导出给
+        子进程；sed 继承调用方的 LANG（285H 上是 zh_CN.UTF-8），方括号区间
+        走排序规则后把 '[ 2/9 ]' 与 token 一并折成 '?'。这条判据不依赖测试
+        机装没装排序 locale，任何环境都能判。
+        """
+        files = (UI, ROOT.parent / "distro" / "desktop" / "boot_state.sh")
+        for path in files:
+            hits = 0
+            for no, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+                if "[^ -~]" not in line:
+                    continue
+                hits += 1
+                self.assertIn("LC_ALL=C sed", line, f"{path.name}:{no}")
+            self.assertGreater(hits, 0, f"{path.name} 缺少折叠调用")
+
 
 if __name__ == "__main__":
     sys.exit(unittest.main())
