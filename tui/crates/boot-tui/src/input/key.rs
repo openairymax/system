@@ -15,6 +15,7 @@ pub const KEY_ESC: u16 = 1;
 pub const KEY_TAB: u16 = 15;
 /// Q；会话层的退出键。
 pub const KEY_Q: u16 = 16;
+/// Up；命令面板向上选择。
 pub const KEY_UP: u16 = 103;
 /// PageUp；会话流向上翻页。
 pub const KEY_PAGEUP: u16 = 104;
@@ -22,6 +23,7 @@ pub const KEY_LEFT: u16 = 105;
 pub const KEY_RIGHT: u16 = 106;
 /// End；会话流回到最新一页。
 pub const KEY_END: u16 = 107;
+/// Down；命令面板向下选择。
 pub const KEY_DOWN: u16 = 108;
 /// PageDown；会话流向下翻页。
 pub const KEY_PAGEDOWN: u16 = 109;
@@ -29,6 +31,7 @@ pub const KEY_INSERT: u16 = 110;
 pub const KEY_DELETE: u16 = 111;
 /// Home；会话流回到最早一页。
 pub const KEY_HOME: u16 = 102;
+/// F1；打开或关闭命令面板。
 pub const KEY_F1: u16 = 59;
 pub const KEY_F2: u16 = 60;
 pub const KEY_F3: u16 = 61;
@@ -43,6 +46,7 @@ pub const KEY_F10: u16 = 68;
 pub const KEY_F11: u16 = 87;
 pub const KEY_F12: u16 = 88;
 pub const KEY_SPACE: u16 = 57;
+/// Enter；执行命令面板里选中的命令。
 pub const KEY_ENTER: u16 = 28;
 pub const KEY_BACKSPACE: u16 = 14;
 pub const KEY_MINUS: u16 = 12;

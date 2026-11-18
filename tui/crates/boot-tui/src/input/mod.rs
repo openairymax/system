@@ -25,7 +25,8 @@ pub use event::{
 };
 pub use intent::{FailKind, Refusal};
 pub use key::{
-    key_byte, KEY_C, KEY_END, KEY_ESC, KEY_F5, KEY_HOME, KEY_PAGEDOWN, KEY_PAGEUP, KEY_Q,
+    key_byte, KEY_C, KEY_DOWN, KEY_END, KEY_ENTER, KEY_ESC, KEY_F1, KEY_F5, KEY_HOME, KEY_PAGEDOWN,
+    KEY_PAGEUP, KEY_Q, KEY_UP,
 };
 pub use source::{trust_ok, InputSource};
 pub use term::{Keys, Term};

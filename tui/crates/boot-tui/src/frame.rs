@@ -14,19 +14,18 @@
 
 use std::time::Instant;
 
-use crate::input::{
-    KeyAction, KeyEvent, RawBody, RawEvent, KEY_C, KEY_END, KEY_ESC, KEY_F5, KEY_HOME,
-    KEY_PAGEDOWN, KEY_PAGEUP, KEY_Q,
-};
-use crate::layout::Layout;
+use crate::input::{RawBody, RawEvent};
+use crate::keymap::{self, Action};
+use crate::layout::{Layout, Rect};
 use crate::paint::Painter;
+use crate::palette::{Command, Palette};
 use crate::screen::{fits, CellGrid, Style};
 use crate::scrollback::Scroll;
 use crate::session::{Role, Session, Stamp};
 use crate::session_store::Record;
 use crate::status::Face;
 use crate::theme::Theme;
-use crate::wcwidth::clip_cols;
+use crate::wcwidth::{clip_cols, display_width};
 
 /// 单帧最多处理的输入事件，余下的留到下一帧。
 pub const MAX_BATCH: usize = 64;
@@ -47,10 +46,10 @@ const READY: &str = "会话层已就绪。";
 const INPUT: &str = "输入通道：键盘。";
 
 /// 按键提示。
-const KEYS: &str = "按键：q / Esc / Ctrl-C 退出，PgUp/PgDn 回看，F5 重绘。";
+const KEYS: &str = "按键：q / Esc / Ctrl-C 退出，PgUp/PgDn 回看，F5 重绘，F1 命令。";
 
 /// 常态状态栏。
-const FOOT: &str = "q 退出 · PgUp/PgDn 回看 · F5 重绘";
+const FOOT: &str = "q 退出 · PgUp/PgDn 回看 · F1 命令";
 
 /// 回看中的状态栏；位置必须可见，否则用户不知道自己在哪一页。
 const FOOT_BACK: &str = "PgDn/End 回底 · 回看 -";
@@ -69,6 +68,7 @@ pub struct App {
     out: Vec<u8>,
     scroll: Scroll,
     session: Session,
+    palette: Palette,
     started: Instant,
     quit: bool,
     slow: bool,
@@ -89,6 +89,7 @@ impl App {
             out: Vec::new(),
             scroll: Scroll::new(),
             session: Session::new(),
+            palette: Palette::new(),
             started: Instant::now(),
             quit: false,
             slow: false,
@@ -179,31 +180,52 @@ impl App {
         self.grid.touch(self.grid.rows().saturating_sub(1));
     }
 
-    /// 退出键：q、Esc 与 Ctrl-C；回看键只移动视口，F5 只重画。
-    fn on_key(&mut self, key: &KeyEvent) {
-        if key.action == KeyAction::Release {
+    /// 面板打开时按键先归面板；否则直接执行动作。
+    fn on_key(&mut self, key: &crate::input::KeyEvent) {
+        let Some(action) = keymap::lookup(key) else {
+            return;
+        };
+        if self.palette.is_open() {
+            self.on_menu(action);
             return;
         }
-        if key.code == KEY_F5 {
-            self.grid.touch_all();
-            self.painter.repaint();
-        } else if self.scroll_key(key.code) {
-            self.grid.touch_all();
-        } else if quit_key(key) {
-            self.quit = true;
-        }
+        self.perform(action);
     }
 
-    /// 回看键；返回是否已消费。
-    fn scroll_key(&mut self, code: u16) -> bool {
-        match code {
-            KEY_PAGEUP => self.scroll.page_up(),
-            KEY_PAGEDOWN => self.scroll.page_dn(),
-            KEY_HOME => self.scroll.home(),
-            KEY_END => self.scroll.tail(),
-            _ => return false,
+    /// 面板内的按键：上下选、回车执行、Esc 或 F1 关闭。
+    fn on_menu(&mut self, action: Action) {
+        match action {
+            Action::Cancel | Action::Menu | Action::Quit => self.palette.close(),
+            Action::Up => self.palette.up(),
+            Action::Down => self.palette.down(),
+            Action::Enter => {
+                let chosen = self.palette.chosen();
+                self.palette.close();
+                if let Some(command) = chosen {
+                    self.perform(command.action());
+                }
+            }
+            _ => return,
         }
-        true
+        self.grid.touch_all();
+    }
+
+    /// 执行一个动作；直接按键与面板选中走同一条路径。
+    fn perform(&mut self, action: Action) {
+        match action {
+            Action::Quit | Action::Cancel => self.quit = true,
+            Action::Redraw => {
+                self.grid.touch_all();
+                self.painter.repaint();
+            }
+            Action::PageUp => self.scroll.page_up(),
+            Action::PageDown => self.scroll.page_dn(),
+            Action::Top => self.scroll.home(),
+            Action::Bottom => self.scroll.tail(),
+            Action::Menu => self.palette.toggle(),
+            Action::Up | Action::Down | Action::Enter => return,
+        }
+        self.grid.touch_all();
     }
 
     /// 全屏重排：顶栏、会话流与状态栏；尺寸不足时只留一行提示。
@@ -236,6 +258,9 @@ impl App {
                 Style::DEFAULT,
             );
         }
+        if self.palette.is_open() {
+            self.paint_menu(area.body);
+        }
         if area.foot.is_empty() {
             return;
         }
@@ -259,22 +284,66 @@ impl App {
         }
         format!("{FOOT_BACK}{}", self.scroll.back())
     }
+
+    /// 在正文区域居中画出命令面板；放不下时宁可不画，也不压掉正文。
+    fn paint_menu(&mut self, body: Rect) {
+        let h = Command::ALL.len() as u16 + 2;
+        let w = body.w.min(34);
+        if w < 16 || body.h < h {
+            return;
+        }
+        let x = body.x + (body.w - w) / 2;
+        let y = body.y + (body.h - h) / 2;
+        let inner = w - 2;
+        self.grid.put(x, y, &top_rule(inner), Style::DEFAULT);
+        for (at, command) in Command::ALL.iter().enumerate() {
+            let style = if at == self.palette.at() {
+                self.theme.foot
+            } else {
+                Style::DEFAULT
+            };
+            let row = menu_row(*command, inner);
+            self.grid
+                .put(x, y + 1 + at as u16, &format!("│{row}│"), style);
+        }
+        self.grid
+            .put(x, y + h - 1, &bottom_rule(inner), Style::DEFAULT);
+    }
 }
 
-/// 是否是退出键。
-fn quit_key(key: &KeyEvent) -> bool {
-    match key.code {
-        KEY_ESC => true,
-        KEY_Q => !key.mods.ctrl && !key.mods.alt,
-        KEY_C => key.mods.ctrl,
-        _ => false,
+/// 面板上边框，带标题。
+fn top_rule(inner: u16) -> String {
+    let title = "─ 命令 ";
+    let rest = usize::from(inner).saturating_sub(display_width(title));
+    format!("┌{title}{}┐", "─".repeat(rest))
+}
+
+/// 面板下边框。
+fn bottom_rule(inner: u16) -> String {
+    format!("└{}┘", "─".repeat(usize::from(inner)))
+}
+
+/// 一行命令：左侧名称、右侧直接键；宽度不足时先截断再补空格。
+fn menu_row(command: Command, inner: u16) -> String {
+    let left = format!(" {}", command.label());
+    let right = format!("{} ", command.hint());
+    let used = display_width(&left) + display_width(&right);
+    if used <= usize::from(inner) {
+        return format!("{left}{}{right}", " ".repeat(usize::from(inner) - used));
     }
+    let text = format!(" {} {}", command.label(), command.hint());
+    let clipped = clip_cols(&text, inner).to_owned();
+    let pad = usize::from(inner).saturating_sub(display_width(&clipped));
+    format!("{clipped}{}", " ".repeat(pad))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::input::{Mods, MonoTime, SourceKind, TraceId, Trust};
+    use crate::input::{
+        KeyAction, KeyEvent, Mods, MonoTime, SourceKind, TraceId, Trust, KEY_C, KEY_DOWN, KEY_END,
+        KEY_ENTER, KEY_ESC, KEY_F1, KEY_F5, KEY_PAGEUP, KEY_Q,
+    };
     use crate::screen::{MIN_COLS, MIN_ROWS};
     use crate::session_store::{Record, State};
     use crate::status::Item;
@@ -403,6 +472,38 @@ mod tests {
         app.draw();
         assert!(text(&app).contains(FOOT));
         assert!(!text(&app).contains("回看 -"));
+    }
+
+    #[test]
+    fn f1_opens_the_command_menu() {
+        let mut app = app();
+        app.draw();
+        app.step(&[key(KEY_F1, false)]);
+        app.draw();
+        let screen = text(&app);
+        assert!(screen.contains("命令"));
+        assert!(screen.contains("退出会话"));
+    }
+
+    #[test]
+    fn escape_closes_the_menu_without_quitting() {
+        let mut app = app();
+        app.step(&[key(KEY_F1, false)]);
+        app.step(&[key(KEY_ESC, false)]);
+        assert!(!app.done());
+        app.draw();
+        assert!(!text(&app).contains("退出会话"));
+    }
+
+    #[test]
+    fn enter_runs_the_selected_command() {
+        let mut app = app();
+        app.step(&[key(KEY_F1, false)]);
+        for _ in 0..3 {
+            app.step(&[key(KEY_DOWN, false)]);
+        }
+        app.step(&[key(KEY_ENTER, false)]);
+        assert!(app.done());
     }
 
     #[test]
