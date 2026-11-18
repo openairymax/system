@@ -6,11 +6,14 @@
 // 这里定死。一个单元压进 8 字节，宽字符占两格（第二格记为宽度 0 的尾格），
 // 列宽只按东亚宽度计算，歧义宽度固定为 1 列。
 //
-// 本片只落单元编码与尺寸下限；网格与脏区在下一片填入，绘制与帧循环再往后。
+// 本片落单元编码、字符网格与尺寸下限；绘制与帧循环随后续片填入。
 // SSoT: 0.0.5 方案 §14.2、§14.4。
 // ===========================================================================
 
 //! 屏幕单元、样式与尺寸下限。
+
+use unicode_segmentation::UnicodeSegmentation;
+use unicode_width::UnicodeWidthStr;
 
 /// 可绘制的最小列数；小于此值只显示单行提示。
 pub const MIN_COLS: u16 = 40;
@@ -180,9 +183,183 @@ fn color_at(bits: u64) -> Color {
     }
 }
 
+/// 一帧的字符网格：写入时标脏，绘制时只遍历脏行。
+#[derive(Clone, Debug)]
+pub struct CellGrid {
+    cols: u16,
+    rows: u16,
+    cells: Vec<Cell>,
+    dirty: Vec<bool>,
+}
+
+impl CellGrid {
+    /// 建一张最小 1×1 的空网格；尺寸合法性由 [`fits`] 判断。
+    pub fn new(cols: u16, rows: u16) -> Self {
+        let cols = cols.max(1);
+        let rows = rows.max(1);
+        let blank = Cell::blank(Style::DEFAULT);
+        Self {
+            cols,
+            rows,
+            cells: vec![blank; usize::from(cols) * usize::from(rows)],
+            dirty: vec![true; usize::from(rows)],
+        }
+    }
+
+    /// 列数。
+    pub fn cols(&self) -> u16 {
+        self.cols
+    }
+
+    /// 行数。
+    pub fn rows(&self) -> u16 {
+        self.rows
+    }
+
+    /// 改尺寸；变化时整屏重画并返回 `true`。
+    pub fn resize(&mut self, cols: u16, rows: u16) -> bool {
+        if cols.max(1) == self.cols && rows.max(1) == self.rows {
+            return false;
+        }
+        *self = Self::new(cols, rows);
+        true
+    }
+
+    /// 整屏填成同一底色，用于每帧重排版面。
+    pub fn clear(&mut self, style: Style) {
+        for y in 0..self.rows {
+            self.fill_row(y, style);
+        }
+    }
+
+    /// 把一行填成空格；只有内容变化时标脏。
+    pub fn fill_row(&mut self, y: u16, style: Style) {
+        if y >= self.rows {
+            return;
+        }
+        let blank = Cell::blank(style);
+        let start = self.index(0, y);
+        let mut changed = false;
+        for cell in &mut self.cells[start..start + usize::from(self.cols)] {
+            if *cell != blank {
+                *cell = blank;
+                changed = true;
+            }
+        }
+        self.dirty[usize::from(y)] |= changed;
+    }
+
+    /// 从 `(x, y)` 起写一段文本，返回停下的列；宽字符按两列计。
+    pub fn put(&mut self, x: u16, y: u16, text: &str, style: Style) -> u16 {
+        if y >= self.rows {
+            return x;
+        }
+        let mut col = x;
+        for grapheme in text.graphemes(true) {
+            let span = width(grapheme);
+            if span == 0 {
+                continue;
+            }
+            let span = span as u16;
+            if col.saturating_add(span) > self.cols {
+                break;
+            }
+            self.stamp(col, y, grapheme, style, span as u8);
+            col += span;
+        }
+        col
+    }
+
+    /// 第 `y` 行的单元，供绘制与比对。
+    pub fn row(&self, y: u16) -> &[Cell] {
+        if y >= self.rows {
+            return &[];
+        }
+        let start = self.index(0, y);
+        &self.cells[start..start + usize::from(self.cols)]
+    }
+
+    /// 行是否要重画。
+    pub fn dirty(&self, y: u16) -> bool {
+        self.dirty.get(usize::from(y)).copied().unwrap_or(false)
+    }
+
+    /// 画完一行后清脏。
+    pub fn clean(&mut self, y: u16) {
+        if let Some(flag) = self.dirty.get_mut(usize::from(y)) {
+            *flag = false;
+        }
+    }
+
+    /// 全部标脏，用于整屏重画（首帧、尺寸变化、F5）。
+    pub fn touch_all(&mut self) {
+        self.dirty.fill(true);
+    }
+
+    /// 把已画出的行抄回本网格，供下一帧比对；尺寸不符时不抄。
+    pub fn sync_row(&mut self, y: u16, src: &[Cell]) {
+        if y >= self.rows || src.len() != usize::from(self.cols) {
+            return;
+        }
+        let start = self.index(0, y);
+        self.cells[start..start + src.len()].copy_from_slice(src);
+    }
+
+    /// 写入一个字形首格；宽字符同时写尾格。
+    fn stamp(&mut self, col: u16, y: u16, text: &str, style: Style, span: u8) {
+        let ch = text.chars().next().unwrap_or(' ');
+        let index = self.index(col, y);
+        self.assign(index, y, Cell::new(ch, style, span));
+        if span == 2 {
+            self.assign(index + 1, y, Cell::tail(style));
+        }
+    }
+
+    /// 单元有变化才落盘并标脏。
+    fn assign(&mut self, index: usize, y: u16, cell: Cell) {
+        if self.cells[index] == cell {
+            return;
+        }
+        self.cells[index] = cell;
+        self.dirty[usize::from(y)] = true;
+    }
+
+    /// 二维坐标折成单元下标。
+    fn index(&self, col: u16, y: u16) -> usize {
+        usize::from(y) * usize::from(self.cols) + usize::from(col)
+    }
+}
+
+/// 唯一的列宽入口：按东亚宽度计，歧义宽度固定为 1 列。
+pub fn width(text: &str) -> usize {
+    UnicodeWidthStr::width(text)
+}
+
+/// 截到 `limit` 列以内，切口落在字形边界上。
+pub fn clip(text: &str, limit: u16) -> &str {
+    let limit = usize::from(limit);
+    let mut used = 0;
+    for (at, grapheme) in text.grapheme_indices(true) {
+        let span = width(grapheme);
+        if used + span > limit {
+            return &text[..at];
+        }
+        used += span;
+    }
+    text
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn fresh() -> CellGrid {
+        let mut grid = CellGrid::new(MIN_COLS, MIN_ROWS);
+        for y in 0..grid.rows() {
+            grid.clean(y);
+        }
+        grid
+    }
 
     #[test]
     fn size_floor_is_enforced() {
@@ -232,5 +409,95 @@ mod tests {
         assert!(attr.has(Attr::REV));
         assert!(!attr.has(Attr::DIM));
         assert_eq!(attr.bits(), Attr::BOLD.bits() | Attr::REV.bits());
+    }
+
+    #[test]
+    fn a_wide_char_owns_a_tail_cell() {
+        let mut grid = fresh();
+        assert_eq!(grid.put(0, 0, "极", Style::DEFAULT), 2);
+        assert_eq!(grid.row(0)[0].width(), 2);
+        assert!(grid.row(0)[1].is_tail());
+    }
+
+    #[test]
+    fn a_wide_char_never_straddles_the_edge() {
+        let mut grid = fresh();
+        let last = MIN_COLS - 1;
+        assert_eq!(grid.put(last, 0, "极", Style::DEFAULT), last);
+        assert_eq!(grid.row(0)[usize::from(last)], Cell::blank(Style::DEFAULT));
+    }
+
+    #[test]
+    fn writing_stops_at_the_right_edge() {
+        let mut grid = fresh();
+        assert_eq!(grid.put(38, 0, "abc", Style::DEFAULT), MIN_COLS);
+        assert_eq!(grid.row(0)[39].ch(), 'b');
+    }
+
+    #[test]
+    fn a_write_marks_only_its_row_dirty() {
+        let mut grid = fresh();
+        grid.put(1, 2, "ok", Style::DEFAULT);
+        assert!(grid.dirty(2));
+        assert!(!grid.dirty(1));
+    }
+
+    #[test]
+    fn an_identical_write_keeps_the_row_clean() {
+        let mut grid = fresh();
+        grid.put(0, 0, "a", Style::DEFAULT);
+        grid.clean(0);
+        grid.put(0, 0, "a", Style::DEFAULT);
+        assert!(!grid.dirty(0));
+    }
+
+    #[test]
+    fn clearing_dirties_only_changed_rows() {
+        let mut grid = fresh();
+        grid.put(0, 0, "a", Style::DEFAULT);
+        grid.clean(0);
+        grid.clear(Style::DEFAULT);
+        assert!(grid.dirty(0));
+        assert!(!grid.dirty(1));
+    }
+
+    #[test]
+    fn resize_rebuilds_and_dirties_every_row() {
+        let mut grid = fresh();
+        assert!(!grid.resize(MIN_COLS, MIN_ROWS));
+        assert!(grid.resize(80, 24));
+        assert_eq!(grid.cols(), 80);
+        assert!(grid.dirty(23));
+    }
+
+    #[test]
+    fn sync_row_copies_a_painted_row() {
+        let mut src = fresh();
+        src.put(0, 0, "x", Style::DEFAULT);
+        let mut dst = CellGrid::new(MIN_COLS, MIN_ROWS);
+        let row = src.row(0).to_vec();
+        dst.sync_row(0, &row);
+        assert_eq!(dst.row(0), src.row(0));
+    }
+
+    #[test]
+    fn clip_cuts_on_grapheme_boundaries() {
+        assert_eq!(clip("极境OS", 3), "极");
+        assert_eq!(clip("极境OS", 4), "极境");
+        assert_eq!(clip("abc", 9), "abc");
+    }
+
+    #[test]
+    fn width_counts_east_asian_columns() {
+        assert_eq!(width("极"), 2);
+        assert_eq!(width("a"), 1);
+        assert_eq!(width("·"), 1);
+    }
+
+    #[test]
+    fn a_row_outside_the_grid_is_untouched() {
+        let mut grid = fresh();
+        assert_eq!(grid.put(3, MIN_ROWS, "x", Style::DEFAULT), 3);
+        assert!(grid.row(MIN_ROWS).is_empty());
     }
 }
