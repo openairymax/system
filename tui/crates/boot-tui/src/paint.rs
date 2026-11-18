@@ -17,17 +17,28 @@ use crate::screen::{Attr, CellGrid, Color, Style};
 /// 一帧的绘制器；`front` 是终端上已经呈现的那一帧。
 pub struct Painter {
     front: CellGrid,
+    full: bool,
 }
 
 impl Painter {
-    /// 以空屏作为上一帧。
+    /// 以空屏作为上一帧；首帧整屏写出。
     pub fn new(cols: u16, rows: u16) -> Self {
         Self {
             front: CellGrid::new(cols, rows),
+            full: true,
         }
     }
 
+    /// 下一帧整屏重画，用于自救或用户显式重绘。
+    pub fn repaint(&mut self) {
+        self.full = true;
+    }
+
     /// 画出脏行，返回写出的行数；尺寸变化时整屏重画。
+    ///
+    /// 脏标记只是提示：与上一帧逐格相同就不必写出。整屏重画时不做这层
+    /// 比较——屏幕上的旧内容未必与本进程记下的上一帧一致（改窗口大小
+    /// 后终端可能重排过），只有重写才能保证清干净。
     pub fn paint(&mut self, back: &mut CellGrid, out: &mut Vec<u8>) -> usize {
         self.sync_size(back);
         let mut painted = 0;
@@ -35,20 +46,26 @@ impl Painter {
             if !back.dirty(y) {
                 continue;
             }
+            if !self.full && back.row(y) == self.front.row(y) {
+                back.clean(y);
+                continue;
+            }
             self.write_row(back, y, out);
             self.front.sync_row(y, back.row(y));
             back.clean(y);
             painted += 1;
         }
+        self.full = false;
         painted
     }
 
-    /// 网格尺寸变了就换一张上一帧并整屏标脏。
+    /// 网格尺寸变了就换一张上一帧并整屏重画。
     fn sync_size(&mut self, back: &mut CellGrid) {
         if self.front.cols() == back.cols() && self.front.rows() == back.rows() {
             return;
         }
         self.front = CellGrid::new(back.cols(), back.rows());
+        self.full = true;
         back.touch_all();
     }
 
@@ -175,6 +192,24 @@ mod tests {
         grid.put(0, 3, "x", Style::DEFAULT);
         assert_eq!(painter.paint(&mut grid, &mut out), 1);
         assert!(out.windows(4).any(|win| win == b"4;1H"));
+    }
+
+    #[test]
+    fn a_row_that_returns_to_its_old_content_is_not_written() {
+        let (mut grid, mut painter) = pair();
+        let mut out = Vec::new();
+        painter.paint(&mut grid, &mut out);
+        out.clear();
+        grid.fill_row(
+            0,
+            Style {
+                bg: Color::Idx(17),
+                ..Style::DEFAULT
+            },
+        );
+        grid.fill_row(0, Style::DEFAULT);
+        assert_eq!(painter.paint(&mut grid, &mut out), 0);
+        assert!(out.is_empty());
     }
 
     #[test]

@@ -10,8 +10,11 @@
 
 use super::event::{KeyAction, KeyEvent, Mods};
 
+/// Esc。
 pub const KEY_ESC: u16 = 1;
 pub const KEY_TAB: u16 = 15;
+/// Q；会话层的退出键。
+pub const KEY_Q: u16 = 16;
 pub const KEY_UP: u16 = 103;
 pub const KEY_PAGEUP: u16 = 104;
 pub const KEY_LEFT: u16 = 105;
@@ -26,6 +29,7 @@ pub const KEY_F1: u16 = 59;
 pub const KEY_F2: u16 = 60;
 pub const KEY_F3: u16 = 61;
 pub const KEY_F4: u16 = 62;
+/// F5；整屏重画。
 pub const KEY_F5: u16 = 63;
 pub const KEY_F6: u16 = 64;
 pub const KEY_F7: u16 = 65;
@@ -43,6 +47,8 @@ pub const KEY_LEFTBRACE: u16 = 26;
 pub const KEY_RIGHTBRACE: u16 = 27;
 pub const KEY_BACKSLASH: u16 = 43;
 pub const KEY_SEMICOLON: u16 = 39;
+/// C；与 Ctrl 组合时是终端惯例的中断键。
+pub const KEY_C: u16 = 46;
 pub const KEY_APOSTROPHE: u16 = 40;
 pub const KEY_GRAVE: u16 = 41;
 pub const KEY_COMMA: u16 = 51;
