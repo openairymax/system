@@ -9,9 +9,11 @@
 
 //! 结构化意图模型的公共接口。
 
+mod route;
 mod schema;
 mod trust;
 
+pub use route::{decide, Reason, Verdict};
 pub use schema::{
     Approval, AudioRef, CheckError, Constraints, Expect, Intent, Payload, PayloadKind, Session,
     SessionMode, Source, Structured, TraceId, TraceIdError, TrustTag, SCHEMA,
