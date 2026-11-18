@@ -12,6 +12,8 @@
 
 pub mod disk;
 pub mod model;
+pub mod probe;
+pub mod rtcap;
 
 use intent::Refusal;
 use serde::de::DeserializeOwned;
