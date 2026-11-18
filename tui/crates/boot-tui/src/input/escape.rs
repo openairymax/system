@@ -92,6 +92,78 @@ pub fn lone() -> KeyEvent {
     }
 }
 
+/// 未完成序列的保留上限；超过即清空，避免没有终结字节的输入撑大缓冲。
+pub const MAX_PENDING: usize = 64;
+
+/// 字节流的增量解码器：跨读取保留未完成序列，把完整的键按顺序交出。
+#[derive(Default)]
+pub struct Decoder {
+    buf: Vec<u8>,
+}
+
+/// `Decoder::take` 的三种结局；`Wait` 表示要等更多字节。
+enum Taken {
+    Event(KeyEvent),
+    Skip,
+    Wait,
+}
+
+impl Decoder {
+    /// 新建空解码器。
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// 喂入一段字节，把已能定下来的键按到达顺序追加到 `out`。
+    pub fn feed(&mut self, bytes: &[u8], out: &mut Vec<KeyEvent>) {
+        self.buf.extend_from_slice(bytes);
+        loop {
+            match self.take() {
+                Taken::Event(event) => out.push(event),
+                Taken::Skip => {}
+                Taken::Wait => break,
+            }
+        }
+        if self.buf.len() > MAX_PENDING {
+            self.buf.clear();
+        }
+    }
+
+    /// 等待窗口结束后调用；缓冲只剩孤立 ESC 时把它定为 Esc 键。
+    pub fn flush(&mut self, out: &mut Vec<KeyEvent>) {
+        if self.buf.as_slice() == [0x1b] {
+            self.buf.clear();
+            out.push(lone());
+        }
+    }
+
+    /// 仍未定键的字节数；用于判断等待窗口是否该结束。
+    pub fn pending(&self) -> usize {
+        self.buf.len()
+    }
+
+    fn take(&mut self) -> Taken {
+        let Some(&first) = self.buf.first() else {
+            return Taken::Wait;
+        };
+        if first != 0x1b {
+            self.buf.remove(0);
+            return key::key_byte(first).map_or(Taken::Skip, Taken::Event);
+        }
+        match decode(&self.buf) {
+            Step::Key { event, used } => {
+                self.buf.drain(..used);
+                Taken::Event(event)
+            }
+            Step::Unknown { used } => {
+                self.buf.drain(..used);
+                Taken::Skip
+            }
+            Step::NeedMore => Taken::Wait,
+        }
+    }
+}
+
 fn after_esc(bytes: &[u8]) -> Step {
     match bytes.get(1) {
         None => Step::NeedMore,
@@ -102,12 +174,17 @@ fn after_esc(bytes: &[u8]) -> Step {
 }
 
 fn csi(bytes: &[u8]) -> Step {
+    let mut skip = false;
     for (pos, byte) in bytes.iter().enumerate().skip(2) {
         if (0x40..=0x7e).contains(byte) {
-            return final_key(bytes, pos);
+            return if skip {
+                Step::Unknown { used: pos + 1 }
+            } else {
+                final_key(bytes, pos)
+            };
         }
         if !byte.is_ascii_digit() && *byte != b';' {
-            return Step::Unknown { used: pos + 1 };
+            skip = true;
         }
     }
     Step::NeedMore
@@ -265,8 +342,67 @@ mod tests {
         assert_eq!(decode(b"\x1b[1;"), Step::NeedMore);
         assert_eq!(decode(b"\x1bx"), Step::Unknown { used: 2 });
         assert_eq!(decode(b"\x1b[99~"), Step::Unknown { used: 5 });
-        assert_eq!(decode(b"\x1b[?25h"), Step::Unknown { used: 3 });
+        assert_eq!(
+            decode(b"\x1b[?25h"),
+            Step::Unknown { used: 6 },
+            "私有模式整段跳过，避免残留的 25h 变成按键"
+        );
         assert_eq!(decode(b"a"), Step::Unknown { used: 1 });
+    }
+
+    #[test]
+    fn decoder_joins_split_sequences() {
+        let mut dec = Decoder::new();
+        let mut out = Vec::new();
+        dec.feed(b"\x1b[", &mut out);
+        assert!(out.is_empty(), "半条序列不得提前定键");
+        assert_eq!(dec.pending(), 2);
+        dec.feed(b"A", &mut out);
+        assert_eq!(out, [press(key::KEY_UP, Mods::default())]);
+        assert_eq!(dec.pending(), 0);
+    }
+
+    #[test]
+    fn decoder_keeps_arrival_order() {
+        let mut dec = Decoder::new();
+        let mut out = Vec::new();
+        dec.feed(b"a\x1b[1;5Cb", &mut out);
+        let ctrl = Mods {
+            shift: false,
+            ctrl: true,
+            alt: false,
+        };
+        assert_eq!(
+            out,
+            [
+                press(30, Mods::default()),
+                press(key::KEY_RIGHT, ctrl),
+                press(48, Mods::default())
+            ]
+        );
+    }
+
+    #[test]
+    fn decoder_drops_what_it_cannot_read() {
+        let mut dec = Decoder::new();
+        let mut out = Vec::new();
+        dec.feed(b"\x1b[?25h\xe4", &mut out);
+        assert!(out.is_empty(), "私有模式与非 ASCII 字节都不得产键");
+        assert_eq!(dec.pending(), 0);
+    }
+
+    #[test]
+    fn flush_only_settles_a_lone_escape() {
+        let mut dec = Decoder::new();
+        let mut out = Vec::new();
+        dec.feed(b"\x1b", &mut out);
+        dec.flush(&mut out);
+        assert_eq!(out, [lone()]);
+
+        dec.feed(b"\x1b[", &mut out);
+        dec.flush(&mut out);
+        assert_eq!(out, [lone()], "未完成的序列不因超时变成 Esc");
+        assert_eq!(dec.pending(), 2, "未完成的序列留待后续字节");
     }
 
     #[test]
