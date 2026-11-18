@@ -9,6 +9,9 @@ version = "0.1.0"
 [[package]]
 name = "airy-tui-exec"
 version = "0.1.0"
+dependencies = [
+ "intent",
+]
 
 [[package]]
 name = "asr-gateway"
