@@ -1,0 +1,17 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later OR Apache-2.0
+#
+# 引导期 TUI 会话层。承 U 模块：终端初始化、帧循环、版面与状态面。
+[package]
+name = "boot-tui"
+description = "Boot-time TUI session layer for AirymaxOS"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]

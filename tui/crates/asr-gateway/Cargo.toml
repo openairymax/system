@@ -1,0 +1,17 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later OR Apache-2.0
+#
+# 语音识别网关。承 N 模块的 C2 通路：模型发现、会话与失败降级。
+[package]
+name = "asr-gateway"
+description = "Speech recognition gateway for the AirymaxOS boot TUI"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]

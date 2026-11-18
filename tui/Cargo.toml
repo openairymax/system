@@ -1,0 +1,32 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later OR Apache-2.0
+# ===========================================================================
+# AirymaxOS TUI 工作区
+#
+# 六个 crate 同处一个 Cargo 工作区，共用一份 Cargo.lock：锁文件是整机
+# 可复现构建的最小单位，按 crate 分锁会让同一次发行里出现两套依赖树。
+# vendor 目录与离线构建由 R-02 建立；本文件不声明任何外部依赖，因此
+# 工作区在无网络条件下即可编译。
+# ===========================================================================
+[workspace]
+resolver = "2"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.90"
+license = "AGPL-3.0-or-later OR Apache-2.0"
+authors = ["SPHARX Ltd."]
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
+
+[workspace.lints.clippy]
+all = "deny"
+
+[profile.release]
+opt-level = "s"
+lto = "thin"
+codegen-units = 1
+strip = "symbols"

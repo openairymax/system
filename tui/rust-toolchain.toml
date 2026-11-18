@@ -1,0 +1,16 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later OR Apache-2.0
+# ===========================================================================
+# AirymaxOS TUI 工作区的 Rust 工具链钉
+#
+# 版本与 distro/lockfile/lang-policy.yaml 的 toolchain 字段一一对应；
+# openEuler 24.03 LTS SP3 的 update 仓提供同一版本（rust/cargo/rustfmt/
+# clippy 四包同源），因此宿主用发行版包、开发机用 rustup 都能落到同一套
+# 编译器上，不会出现「本地绿、流水线红」的版本漂移。
+#
+# 本文件只对 rustup 生效：发行版工具链不读它，构建容器的版本由
+# ci/container/build-packages.txt 决定，两处必须同版本。
+# ===========================================================================
+[toolchain]
+channel = "1.90.0"
+components = ["rustfmt", "clippy"]
+profile = "minimal"
