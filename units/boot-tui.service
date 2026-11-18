@@ -1,0 +1,32 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later OR Apache-2.0
+# ===========================================================================
+# boot-tui — 引导期 TUI 会话
+#
+# 由 airy-session-choice 在 tui 分支显式 start，没有 [Install]：它不该被
+# 固定拉起，否则选择器的结论就没有意义。
+#
+# TTYVTDisallocate=yes 让退出后的 VT 被回收，getty 回到干净的 tty1；
+# ExecStopPost 只做「把终端还给登录提示」，不判断退出原因——会话结局由
+# boot-tui 自己写进 /run 的状态文件。
+#
+# ExecStartPost 用 root 身份写 mode：单元本身以 amuser 运行，而 /run 下的
+# 会话目录归 root 所有，amuser 只读。
+#
+# SSoT: 0.0.5 方案 §14.1、§14.15。
+# ===========================================================================
+[Unit]
+Description=AirymaxOS boot TUI session
+Documentation=https://atomgit.com/openairymax/agent-linux
+After=airy-session-choice.service
+Conflicts=getty@tty1.service
+
+[Service]
+Type=notify
+User=amuser
+TTYPath=/dev/tty1
+TTYReset=yes
+TTYVTDisallocate=yes
+ExecStart=/usr/bin/boot-tui
+ExecStartPost=-+/usr/lib/airymaxos/desktop/airy-session-state tui
+ExecStopPost=+-/usr/bin/systemctl --no-block start getty@tty1.service
+Restart=no

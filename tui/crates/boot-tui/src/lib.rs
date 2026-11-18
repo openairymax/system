@@ -23,6 +23,7 @@ pub mod layout;
 pub mod nav;
 pub mod paint;
 pub mod palette;
+pub mod pick;
 pub mod recover;
 pub mod screen;
 pub mod scrollback;
