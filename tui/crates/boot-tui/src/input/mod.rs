@@ -18,7 +18,7 @@ mod key;
 mod source;
 mod term;
 
-pub use escape::{decode, lone, Step};
+pub use escape::{decode, lone, Decoder, Step, MAX_PENDING};
 pub use event::{
     AudioRef, KeyAction, KeyEvent, Mods, MonoTime, RawBody, RawEvent, SourceKind, TraceId, Trust,
 };
