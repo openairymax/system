@@ -16,6 +16,7 @@ use crate::input::{KeyAction, KeyEvent, RawBody, RawEvent, KEY_C, KEY_ESC, KEY_F
 use crate::layout::Layout;
 use crate::paint::Painter;
 use crate::screen::{fits, CellGrid, Style};
+use crate::status::Face;
 use crate::theme::Theme;
 use crate::wcwidth::clip_cols;
 
@@ -55,6 +56,7 @@ pub struct App {
     painter: Painter,
     theme: Theme,
     out: Vec<u8>,
+    face: Option<Face>,
     quit: bool,
     slow: bool,
 }
@@ -67,9 +69,37 @@ impl App {
             painter: Painter::new(cols, rows),
             theme: Theme::builtin(),
             out: Vec::new(),
+            face: None,
             quit: false,
             slow: false,
         }
+    }
+
+    /// 收下状态面并重排。
+    pub fn set_face(&mut self, face: Face) {
+        self.face = Some(face);
+        self.grid.touch_all();
+    }
+
+    /// 正文各行；状态面读到之前只有一行占位。
+    fn body_lines(&self) -> Vec<String> {
+        let mut lines = vec![
+            READY.to_owned(),
+            String::new(),
+            INPUT.to_owned(),
+            String::new(),
+        ];
+        match &self.face {
+            Some(face) => {
+                lines.push("状态面".to_owned());
+                lines.push(face.probe.line());
+                lines.push(face.rt.line());
+            }
+            None => lines.push("状态面读取中…".to_owned()),
+        }
+        lines.push(String::new());
+        lines.push(KEYS.to_owned());
+        lines
     }
 
     /// 尺寸变化后重排并整屏重画。
@@ -148,7 +178,7 @@ impl App {
             clip_cols(TITLE, area.head.w.saturating_sub(1)),
             self.theme.bar,
         );
-        for (at, line) in [READY, "", INPUT, "", KEYS].iter().enumerate() {
+        for (at, line) in self.body_lines().iter().enumerate() {
             let at = at as u16;
             if at >= area.body.h {
                 break;

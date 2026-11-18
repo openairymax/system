@@ -15,11 +15,14 @@
 //! 引导期 TUI 会话入口。
 
 use std::process::ExitCode;
+use std::sync::mpsc::{self, Receiver};
+use std::thread;
 use std::time::Instant;
 
 use boot_tui::display::{notify_ready, Display};
 use boot_tui::frame::{App, FRAME_MS, MAX_BATCH, SLOW_MS};
 use boot_tui::input::{InputSource, Keys, Refusal};
+use boot_tui::status::{self, Face};
 
 fn main() -> ExitCode {
     match run() {
@@ -36,10 +39,26 @@ fn run() -> Result<(), Refusal> {
     let mut keys = Keys::open()?;
     let mut display = Display::open()?;
     let mut app = start(&mut display)?;
+    let face = watch();
     while !app.done() {
-        frame(&mut app, &mut keys, &mut display)?;
+        frame(&mut app, &mut keys, &mut display, &face)?;
     }
     Ok(())
+}
+
+/// 在后台读状态面；结果经通道回传，读不到时写明原因。
+fn watch() -> Receiver<Face> {
+    let (tx, rx) = mpsc::channel();
+    let fallback = tx.clone();
+    let spawned = thread::Builder::new()
+        .name("face".to_owned())
+        .spawn(move || {
+            let _ = tx.send(status::read());
+        });
+    if spawned.is_err() {
+        let _ = fallback.send(status::failed("状态面线程未能启动"));
+    }
+    rx
 }
 
 /// 首帧：按终端尺寸建版面、上屏并上报就绪。
@@ -52,12 +71,20 @@ fn start(display: &mut Display) -> Result<App, Refusal> {
     Ok(app)
 }
 
-/// 一帧：等输入、重排版面、写出脏行，最后记下帧时。
-fn frame(app: &mut App, keys: &mut Keys, display: &mut Display) -> Result<(), Refusal> {
+/// 一帧：等输入、收状态、重排版面、写出脏行，最后记下帧时。
+fn frame(
+    app: &mut App,
+    keys: &mut Keys,
+    display: &mut Display,
+    face: &Receiver<Face>,
+) -> Result<(), Refusal> {
     let started = Instant::now();
     keys.wait(FRAME_MS)?;
     let events = keys.drain(MAX_BATCH)?;
     app.step(&events);
+    if let Ok(next) = face.try_recv() {
+        app.set_face(next);
+    }
     let (cols, rows) = display.size()?;
     app.resize(cols, rows);
     app.draw();

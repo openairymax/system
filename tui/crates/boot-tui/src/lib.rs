@@ -19,5 +19,6 @@ pub mod input;
 pub mod layout;
 pub mod paint;
 pub mod screen;
+pub mod status;
 pub mod theme;
 pub mod wcwidth;
