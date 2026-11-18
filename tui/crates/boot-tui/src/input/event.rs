@@ -34,9 +34,63 @@ pub enum Trust {
     T3,
 }
 
+impl Trust {
+    /// 契约 §4.2 的写法，用于日志与错误附加字段。
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::T0 => "T0",
+            Self::T1 => "T1",
+            Self::T2 => "T2",
+            Self::T3 => "T3",
+        }
+    }
+}
+
 /// 32 位十六进制的追踪号；重试必须复用，新请求不得复用。
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct TraceId(pub [u8; 16]);
+
+impl TraceId {
+    /// 十六进制字符数；等于底层字节数的两倍。
+    pub const HEX_LEN: usize = 32;
+
+    /// 从 32 位十六进制文本解析；长度与字符集不合法即拒绝。
+    pub fn parse(text: &str) -> Result<Self, super::SourceError> {
+        let bytes = text.as_bytes();
+        let bad = || super::SourceError::Invalid { field: "trace_id" };
+        if bytes.len() != Self::HEX_LEN {
+            return Err(bad());
+        }
+        let mut raw = [0u8; 16];
+        for (slot, pair) in raw.iter_mut().zip(bytes.chunks_exact(2)) {
+            let hi = hex_val(pair[0]).ok_or_else(bad)?;
+            let lo = hex_val(pair[1]).ok_or_else(bad)?;
+            *slot = (hi << 4) | lo;
+        }
+        Ok(Self(raw))
+    }
+
+    /// 输出小写十六进制文本，长度恒为 32。
+    pub fn to_hex(self) -> String {
+        const HEX: &[u8; 16] = b"0123456789abcdef";
+        let mut out = String::with_capacity(Self::HEX_LEN);
+        for byte in self.0 {
+            out.push(HEX[usize::from(byte >> 4)] as char);
+            out.push(HEX[usize::from(byte & 0x0f)] as char);
+        }
+        out
+    }
+}
+
+/// 单个十六进制字符的数值；非十六进制返回 `None`。
+fn hex_val(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    }
+}
 
 /// 单调时钟读数，单位纳秒，用于乱序与超时判定。
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -119,4 +173,42 @@ pub struct RawEvent {
     pub at: MonoTime,
     /// 来源载荷。
     pub body: RawBody,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const TEXT: &str = "9f2c1b7e4d6a4c0e8b3f5a1d2c7e9b40";
+
+    #[test]
+    fn trace_id_roundtrip() {
+        let id = TraceId::parse(TEXT).expect("合法十六进制");
+        assert_eq!(id.to_hex(), TEXT);
+        assert_eq!(id.to_hex().len(), TraceId::HEX_LEN);
+    }
+
+    #[test]
+    fn trace_id_accepts_uppercase() {
+        let upper = TEXT.to_uppercase();
+        let id = TraceId::parse(&upper).expect("大写同样合法");
+        assert_eq!(id.to_hex(), TEXT, "输出统一为小写");
+    }
+
+    #[test]
+    fn trace_id_rejects_malformed() {
+        let cases = [
+            "",
+            "9f2c",
+            "9f2c1b7e4d6a4c0e8b3f5a1d2c7e9b4",
+            "9f2c1b7e4d6a4c0e8b3f5a1d2c7e9b400",
+            "9f2c1b7e4d6a4c0e8b3f5a1d2c7e9b4g",
+            "9f2c1b7e4d6a4c0e8b3f5a1d2c7e9b4 ",
+        ];
+        for text in cases {
+            let err = TraceId::parse(text).expect_err("必须拒绝");
+            assert_eq!(err.status(), "invalid", "{text:?}");
+            assert_eq!(err.detail(), "trace_id", "{text:?}");
+        }
+    }
 }
