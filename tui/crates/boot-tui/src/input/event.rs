@@ -11,6 +11,8 @@
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 pub use intent::{AudioRef, SourceKind, TraceId, Trust};
+use intent::{CheckError, Refusal};
+use serde_json::Value;
 
 /// 事件时钟：单调时刻与追踪号都从这里取。
 ///
@@ -46,6 +48,32 @@ impl Clock {
         raw[..8].copy_from_slice(&self.seed.to_be_bytes());
         raw[8..].copy_from_slice(&self.seq.to_be_bytes());
         TraceId(raw)
+    }
+}
+
+/// 一条被拒的输入：关联键与失败三列之一。
+///
+/// 逐行处理的来源（socket、批处理）共用这一载体：状态串、附加字段与建议
+/// 都取自统一的失败表，适配器只登记证据，不另造一套错误文案。
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Reject {
+    trace: TraceId,
+    refusal: Refusal,
+}
+
+impl Reject {
+    pub(crate) fn new(trace: TraceId, refusal: Refusal) -> Self {
+        Self { trace, refusal }
+    }
+
+    /// 关联键；语法坏到取不到原值时由适配器生成。
+    pub fn trace(&self) -> TraceId {
+        self.trace
+    }
+
+    /// 失败记录：状态串、附加字段与可执行建议。
+    pub fn refusal(&self) -> &Refusal {
+        &self.refusal
     }
 }
 
@@ -119,4 +147,56 @@ pub struct RawEvent {
     pub at: MonoTime,
     /// 来源载荷。
     pub body: RawBody,
+}
+
+/// 语法错误写解析位置，与 §7 的 `invalid` 附加字段一致。
+pub(crate) fn syntax(err: &serde_json::Error) -> Refusal {
+    Refusal::invalid(format!("第{}行第{}列", err.line(), err.column()))
+}
+
+/// 字段错误优先写字段名；其余退回 serde 的原文。
+pub(crate) fn shape(err: &serde_json::Error) -> Refusal {
+    let text = err.to_string();
+    if let Some(field) = text
+        .strip_prefix("missing field `")
+        .and_then(|rest| rest.split('`').next())
+    {
+        return Refusal::invalid(field);
+    }
+    Refusal::invalid(text)
+}
+
+/// 从原文抢救 `trace_id`；取不到时由调用方生成。
+pub(crate) fn trace_in(value: &Value) -> Option<TraceId> {
+    let raw = value.get("trace_id")?.clone();
+    serde_json::from_value(raw).ok()
+}
+
+/// 接入侧预检的失败语义按 §7 换成统一的失败记录。
+pub(crate) fn refusal_of(err: CheckError, kind: SourceKind) -> Refusal {
+    match err {
+        CheckError::Invalid(field) => Refusal::invalid(field),
+        CheckError::Denied(_) => Refusal::denied(kind.need().label()),
+    }
+}
+
+/// 坏行（语法或字段）：能从原文取到 trace_id 就复用，否则新配一个。
+pub(crate) fn bad_line(clock: &mut Clock, value: Option<&Value>, refusal: Refusal) -> Reject {
+    let trace = value.and_then(trace_in).unwrap_or_else(|| clock.next());
+    Reject::new(trace, refusal)
+}
+
+/// 从积压里取走至多 `max` 条事件；两个逐行适配器共用这段出队逻辑。
+pub(crate) fn take_events(
+    queue: &mut std::collections::VecDeque<RawEvent>,
+    max: usize,
+) -> Vec<RawEvent> {
+    let mut batch = Vec::new();
+    while batch.len() < max {
+        let Some(event) = queue.pop_front() else {
+            break;
+        };
+        batch.push(event);
+    }
+    batch
 }

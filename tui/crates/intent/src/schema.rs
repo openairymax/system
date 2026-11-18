@@ -35,7 +35,7 @@ impl core::fmt::Display for TraceIdError {
 }
 
 /// 32 位十六进制的追踪号；重试必须复用，新请求不得复用。
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct TraceId(pub [u8; 16]);
 
 impl TraceId {
