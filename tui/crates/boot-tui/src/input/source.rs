@@ -3,7 +3,11 @@
 // L1 适配器接口与错误码
 //
 // 适配器只负责产事件与关闭；组合、审批与执行都不在适配器内。错误码与
-// 接入契约 §7 的稳定状态串一一对应，每个变体只表达一种失败语义。
+// 接入契约 §7 的稳定状态串一一对应，每个类别只表达一种失败语义。
+//
+// 状态串、errno 与建议三列放在同一张表里，按类别索引。此前它们是三段
+// 各自独立的 match，新增一个错误类别要同步改三处，漏一处就是日志与返回值
+// 对不上；现在一列一列摆在同一行，核对契约时看表即可。
 //
 // SSoT: 30-interfaces/11-input-ingress.md §7、§10.2。
 // ===========================================================================
@@ -29,58 +33,52 @@ pub fn trust_ok(kind: SourceKind, trust: Trust) -> Result<(), SourceError> {
     if kind.allows(trust) {
         Ok(())
     } else {
-        Err(SourceError::Denied { need: kind.need() })
+        Err(SourceError::denied(kind.need()))
     }
 }
 
-/// 适配器错误；一个变体只对应契约里的一条失败语义。
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum SourceError {
+/// 失败类别；一个类别只对应契约里的一条失败语义。
+///
+/// 判别值就是元数据表的行号，新增类别时两处必须一起改；文件末尾的常量
+/// 断言会在漏行时直接让编译失败。
+#[repr(usize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum FailKind {
     /// 语法或必填字段不通过，`status=invalid`。
-    Invalid {
-        /// 首个不通过的字段名。
-        field: &'static str,
-    },
+    Invalid = 0,
     /// 动作未注册，`status=unsupported`。
-    Unsupported {
-        /// 未注册的动作名。
-        action: String,
-    },
+    Unsupported = 1,
     /// 信任级别不足，`status=denied`。
-    Denied {
-        /// 所需的最低级别。
-        need: Trust,
-    },
+    Denied = 2,
     /// 白名单未命中或黑名单命中，`status=denied`。
-    Forbidden {
-        /// 命中的动作类别。
-        item: String,
-    },
+    Forbidden = 3,
     /// 审批缺失或已过期，`status=approval-required`。
-    Approval {
-        /// 需要审批的动作类别。
-        action: String,
-    },
+    Approval = 4,
     /// 端到端预算耗尽，`status=timeout`。
-    Timeout {
-        /// 预算毫秒数。
-        budget_ms: u32,
-    },
+    Timeout = 5,
     /// 未完成请求达到上限，`status=busy`。
-    Busy {
-        /// 当前未完成数。
-        pending: usize,
-    },
+    Busy = 6,
     /// 依赖组件不可用，`status=unavailable`。
-    Unavailable {
-        /// 组件名，如 `ime`、`asr`。
-        component: &'static str,
-    },
+    Unavailable = 7,
     /// 结果不可序列化，`status=internal`。
-    Internal {
-        /// 出错的事件序号。
-        seq: u64,
-    },
+    Internal = 8,
+}
+
+/// 契约 §7 的一行：稳定状态串、返回码与可执行建议。
+struct Meta {
+    status: &'static str,
+    errno: i32,
+    advice: &'static str,
+}
+
+impl Meta {
+    const fn new(status: &'static str, errno: i32, advice: &'static str) -> Self {
+        Self {
+            status,
+            errno,
+            advice,
+        }
+    }
 }
 
 /// 契约 §7 用到的 errno 值；Linux 通用编号，x86、ARM、RISC-V 一致。
@@ -93,61 +91,109 @@ const EINVAL: i32 = 22;
 const ENOTSUP: i32 = 95;
 const ETIMEDOUT: i32 = 110;
 
+/// 按 `FailKind` 的判别值排列；一行对应契约表的一行。
+const META: [Meta; 9] = [
+    Meta::new("invalid", -EINVAL, "检查字段与语法后重试"),
+    Meta::new("unsupported", -EINVAL, "改用已注册的动作"),
+    Meta::new("denied", -EACCES, "提升级别或改用允许的通道"),
+    Meta::new("denied", -EPERM, "从 deny 移除该动作"),
+    Meta::new("approval-required", -EACCES, "完成本地审批后重试"),
+    Meta::new("timeout", -ETIMEDOUT, "放宽预算或缩小范围"),
+    Meta::new("busy", -EAGAIN, "等待在途请求返回后重试"),
+    Meta::new("unavailable", -ENOTSUP, "确认依赖组件已启动"),
+    Meta::new("internal", -EIO, "记录 trace_id 并上报缺陷"),
+];
+
+/// 表长必须覆盖最后一个类别的行号；新增类别漏行时在此编译失败。
+const _: () = assert!(META.len() == FailKind::Internal as usize + 1);
+
+/// 适配器错误；类别决定状态串与返回码，附加字段只放具体证据。
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SourceError {
+    kind: FailKind,
+    detail: String,
+}
+
 impl SourceError {
+    /// 语法或必填字段不通过；`field` 是首个不通过的字段名。
+    pub fn invalid(field: &str) -> Self {
+        Self::new(FailKind::Invalid, field)
+    }
+
+    /// 动作未注册。
+    pub fn unsupported(action: &str) -> Self {
+        Self::new(FailKind::Unsupported, action)
+    }
+
+    /// 信任级别不足；附加字段写所需的最低级别。
+    pub fn denied(need: Trust) -> Self {
+        Self::new(FailKind::Denied, need.label())
+    }
+
+    /// 白名单未命中或黑名单命中；附加字段写命中的动作类别。
+    pub fn forbidden(item: &str) -> Self {
+        Self::new(FailKind::Forbidden, item)
+    }
+
+    /// 审批缺失或过期。
+    pub fn approval(action: &str) -> Self {
+        Self::new(FailKind::Approval, action)
+    }
+
+    /// 端到端预算耗尽。
+    pub fn timeout(budget_ms: u32) -> Self {
+        Self::new(FailKind::Timeout, budget_ms)
+    }
+
+    /// 未完成请求达到上限。
+    pub fn busy(pending: usize) -> Self {
+        Self::new(FailKind::Busy, pending)
+    }
+
+    /// 依赖组件不可用。
+    pub fn unavailable(component: &str) -> Self {
+        Self::new(FailKind::Unavailable, component)
+    }
+
+    /// 结果不可序列化；附加字段写事件序号。
+    pub fn internal(seq: u64) -> Self {
+        Self::new(FailKind::Internal, seq)
+    }
+
+    /// 所属类别，供调用方按语义分支。
+    pub fn kind(&self) -> FailKind {
+        self.kind
+    }
+
     /// 契约 §7 的返回码，统一取负值。
     pub fn errno(&self) -> i32 {
-        match self {
-            Self::Invalid { .. } | Self::Unsupported { .. } => -EINVAL,
-            Self::Denied { .. } | Self::Approval { .. } => -EACCES,
-            Self::Forbidden { .. } => -EPERM,
-            Self::Timeout { .. } => -ETIMEDOUT,
-            Self::Busy { .. } => -EAGAIN,
-            Self::Unavailable { .. } => -ENOTSUP,
-            Self::Internal { .. } => -EIO,
-        }
+        self.meta().errno
     }
 
     /// 稳定的状态串，可直接写进日志与状态栏。
     pub fn status(&self) -> &'static str {
-        match self {
-            Self::Invalid { .. } => "invalid",
-            Self::Unsupported { .. } => "unsupported",
-            Self::Denied { .. } | Self::Forbidden { .. } => "denied",
-            Self::Approval { .. } => "approval-required",
-            Self::Timeout { .. } => "timeout",
-            Self::Busy { .. } => "busy",
-            Self::Unavailable { .. } => "unavailable",
-            Self::Internal { .. } => "internal",
-        }
+        self.meta().status
     }
 
     /// 契约 §7 的「附加」字段：解析位置、字段名、动作名等具体证据。
     pub fn detail(&self) -> String {
-        match self {
-            Self::Invalid { field } => (*field).to_string(),
-            Self::Unsupported { action } | Self::Approval { action } => action.clone(),
-            Self::Denied { need } => need.label().to_string(),
-            Self::Forbidden { item } => item.clone(),
-            Self::Timeout { budget_ms } => budget_ms.to_string(),
-            Self::Busy { pending } => pending.to_string(),
-            Self::Unavailable { component } => (*component).to_string(),
-            Self::Internal { seq } => seq.to_string(),
-        }
+        self.detail.clone()
     }
 
     /// 可执行建议；不含推测，只给本机能做的一步。
     pub fn advice(&self) -> &'static str {
-        match self {
-            Self::Invalid { .. } => "检查 JSON 语法与必填字段后重试",
-            Self::Unsupported { .. } => "改用执行侧已注册的动作",
-            Self::Denied { .. } => "提升信任级别或改用允许的来源通道",
-            Self::Forbidden { .. } => "从 deny 列表移除该动作或改用允许的动作",
-            Self::Approval { .. } => "在本地确认对话框完成审批后重试",
-            Self::Timeout { .. } => "提高 deadline_ms 或缩小请求范围",
-            Self::Busy { .. } => "等待未完成请求返回后重试",
-            Self::Unavailable { .. } => "确认依赖组件已启动后重试",
-            Self::Internal { .. } => "记录 trace_id 并上报缺陷",
+        self.meta().advice
+    }
+
+    fn new(kind: FailKind, detail: impl core::fmt::Display) -> Self {
+        Self {
+            kind,
+            detail: detail.to_string(),
         }
+    }
+
+    fn meta(&self) -> &'static Meta {
+        &META[self.kind as usize]
     }
 }
 
@@ -157,37 +203,19 @@ mod tests {
 
     fn cases() -> Vec<(SourceError, i32, &'static str)> {
         vec![
-            (SourceError::Invalid { field: "schema" }, -22, "invalid"),
+            (SourceError::invalid("schema"), -22, "invalid"),
+            (SourceError::unsupported("disk.wipe"), -22, "unsupported"),
+            (SourceError::denied(Trust::T2), -13, "denied"),
+            (SourceError::forbidden("disk.format"), -1, "denied"),
             (
-                SourceError::Unsupported {
-                    action: "disk.wipe".to_string(),
-                },
-                -22,
-                "unsupported",
-            ),
-            (SourceError::Denied { need: Trust::T2 }, -13, "denied"),
-            (
-                SourceError::Forbidden {
-                    item: "disk.format".to_string(),
-                },
-                -1,
-                "denied",
-            ),
-            (
-                SourceError::Approval {
-                    action: "disk.format".to_string(),
-                },
+                SourceError::approval("disk.format"),
                 -13,
                 "approval-required",
             ),
-            (SourceError::Timeout { budget_ms: 5000 }, -110, "timeout"),
-            (SourceError::Busy { pending: 8 }, -11, "busy"),
-            (
-                SourceError::Unavailable { component: "ime" },
-                -95,
-                "unavailable",
-            ),
-            (SourceError::Internal { seq: 7 }, -5, "internal"),
+            (SourceError::timeout(5000), -110, "timeout"),
+            (SourceError::busy(8), -11, "busy"),
+            (SourceError::unavailable("ime"), -95, "unavailable"),
+            (SourceError::internal(7), -5, "internal"),
         ]
     }
 
@@ -205,12 +233,12 @@ mod tests {
             assert!(!err.detail().is_empty(), "{err:?}");
         }
         assert_eq!(
-            SourceError::Denied { need: Trust::T2 }.detail(),
+            SourceError::denied(Trust::T2).detail(),
             "T2",
             "所需级别要写进附加字段"
         );
         assert_eq!(
-            SourceError::Timeout { budget_ms: 5000 }.detail(),
+            SourceError::timeout(5000).detail(),
             "5000",
             "预算毫秒要写进附加字段"
         );
@@ -241,6 +269,14 @@ mod tests {
     fn every_variant_has_advice() {
         for (err, _, _) in cases() {
             assert!(!err.advice().is_empty(), "{err:?}");
+        }
+    }
+
+    #[test]
+    fn kinds_are_distinct() {
+        let seen: Vec<FailKind> = cases().into_iter().map(|(err, _, _)| err.kind()).collect();
+        for (index, kind) in seen.iter().enumerate() {
+            assert_eq!(*kind as usize, index, "类别顺序必须与元数据表一致");
         }
     }
 }
