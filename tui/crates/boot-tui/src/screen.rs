@@ -296,6 +296,13 @@ impl CellGrid {
         self.dirty.fill(true);
     }
 
+    /// 只标脏一行，用于局部状态变化。
+    pub fn touch(&mut self, y: u16) {
+        if let Some(flag) = self.dirty.get_mut(usize::from(y)) {
+            *flag = true;
+        }
+    }
+
     /// 把已画出的行抄回本网格，供下一帧比对；尺寸不符时不抄。
     pub fn sync_row(&mut self, y: u16, src: &[Cell]) {
         if y >= self.rows || src.len() != usize::from(self.cols) {
@@ -449,6 +456,14 @@ mod tests {
         grid.clean(0);
         grid.put(0, 0, "a", Style::DEFAULT);
         assert!(!grid.dirty(0));
+    }
+
+    #[test]
+    fn touching_one_row_leaves_the_rest_clean() {
+        let mut grid = fresh();
+        grid.touch(5);
+        assert!(grid.dirty(5));
+        assert!(!grid.dirty(4));
     }
 
     #[test]
