@@ -16,6 +16,7 @@ mod escape;
 mod event;
 mod key;
 mod source;
+mod term;
 
 pub use escape::{decode, lone, Step};
 pub use event::{
@@ -23,3 +24,4 @@ pub use event::{
 };
 pub use key::key_byte;
 pub use source::{trust_ok, InputSource, SourceError};
+pub use term::Term;
