@@ -217,6 +217,11 @@ impl CellGrid {
         self.rows
     }
 
+    /// 这张网格占用的常驻堆字节数，供帧预算门禁读数。
+    pub fn heap(&self) -> usize {
+        self.cells.capacity() * std::mem::size_of::<Cell>() + self.dirty.capacity()
+    }
+
     /// 改尺寸；变化时整屏重画并返回 `true`。
     pub fn resize(&mut self, cols: u16, rows: u16) -> bool {
         if cols.max(1) == self.cols && rows.max(1) == self.rows {

@@ -18,6 +18,14 @@ workspace = true
 name = "degrade"
 path = "tests/degrade/main.rs"
 
+[[test]]
+name = "frame_budget"
+path = "tests/frame_budget.rs"
+
+[[bench]]
+name = "frame"
+harness = false
+
 [dependencies]
 airy-adapters = { path = "../airy-adapters" }
 intent = { path = "../intent" }

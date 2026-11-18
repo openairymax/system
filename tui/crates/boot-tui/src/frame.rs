@@ -166,6 +166,14 @@ impl App {
         &self.out
     }
 
+    /// 帧缓冲的常驻堆字节数：输出缓冲、前后两张网格与脏标记。
+    ///
+    /// 每帧的临时字符串不进这个数——它们在同一帧内分配并释放，容量
+    /// 不随帧数增长；QG-08 判的是这份常驻堆不超标、帧间不增长。
+    pub fn heap_bytes(&self) -> usize {
+        self.out.capacity() + self.grid.heap() + self.painter.heap()
+    }
+
     /// 用户是否已要求退出。
     pub fn done(&self) -> bool {
         self.quit
