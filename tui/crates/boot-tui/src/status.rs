@@ -25,6 +25,8 @@ use airy_adapters::probe::{Report, State};
 use airy_adapters::rtcap::{Flag, Grade, Matrix};
 use intent::Refusal;
 
+use crate::trace_view::View;
+
 /// 一个状态项。
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Item {
@@ -48,13 +50,17 @@ pub struct Face {
     pub probe: Item,
     /// 实时能力。
     pub rt: Item,
+    /// 追踪事件的逐条轨迹。
+    pub trace: View,
 }
 
-/// 读取两条状态；各自失败互不影响。
+/// 读取两条状态与轨迹；各自失败互不影响。
 pub fn read() -> Face {
+    let (probe, trace) = probe_face();
     Face {
-        probe: item("探针", probe_text()),
+        probe,
         rt: item("实时", rt_text()),
+        trace,
     }
 }
 
@@ -67,8 +73,10 @@ pub fn failed(why: &str) -> Face {
             text: text.clone(),
         },
         rt: Item {
-            name: "实时", text
+            name: "实时",
+            text: text.clone(),
         },
+        trace: View::failed(&text),
     }
 }
 
@@ -83,11 +91,30 @@ fn item(name: &'static str, outcome: Result<String, Refusal>) -> Item {
     }
 }
 
+/// 取证面摘要与轨迹；一次解析同时喂给两者。
+fn probe_face() -> (Item, View) {
+    match run("airy-probe", &["status", "--json"]).and_then(|raw| Report::parse(&raw)) {
+        Ok(report) => (
+            Item {
+                name: "探针",
+                text: probe_text(&report),
+            },
+            View::of(&report.events),
+        ),
+        Err(err) => (
+            Item {
+                name: "探针",
+                text: err.detail().to_owned(),
+            },
+            View::failed(err.detail()),
+        ),
+    }
+}
+
 /// 取证面摘要。
-fn probe_text() -> Result<String, Refusal> {
-    let report = Report::parse(&run("airy-probe", &["status", "--json"])?)?;
+fn probe_text(report: &Report) -> String {
     let open = report.channels.iter().filter(|chan| chan.writable).count();
-    Ok(format!(
+    format!(
         "{} · 事件 {}/{} · 通道 {}/{} · 见证{}",
         probe_word(report.state),
         report.readable,
@@ -95,7 +122,7 @@ fn probe_text() -> Result<String, Refusal> {
         open,
         report.channels.len(),
         yes_no(report.witnessed),
-    ))
+    )
 }
 
 /// 实时能力摘要。
