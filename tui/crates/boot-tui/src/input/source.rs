@@ -26,25 +26,10 @@ pub trait InputSource: Send {
 ///
 /// 适配器在把事件交给组合层之前调用一次；组合层不再复核，也不得改写级别。
 pub fn trust_ok(kind: SourceKind, trust: Trust) -> Result<(), SourceError> {
-    let ok = match kind {
-        SourceKind::Key | SourceKind::Voice => trust == Trust::T0,
-        SourceKind::Api => matches!(trust, Trust::T1 | Trust::T2),
-        SourceKind::Batch => trust == Trust::T3,
-    };
-    if ok {
+    if kind.allows(trust) {
         Ok(())
     } else {
-        Err(SourceError::Denied {
-            need: need_of(kind),
-        })
-    }
-}
-
-fn need_of(kind: SourceKind) -> Trust {
-    match kind {
-        SourceKind::Key | SourceKind::Voice => Trust::T0,
-        SourceKind::Api => Trust::T1,
-        SourceKind::Batch => Trust::T3,
+        Err(SourceError::Denied { need: kind.need() })
     }
 }
 
