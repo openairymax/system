@@ -9,13 +9,16 @@
 
 //! 结构化意图模型的公共接口。
 
+mod cancel;
 mod refuse;
 mod route;
 mod schema;
 mod session;
 mod status;
+mod timeout;
 mod trust;
 
+pub use cancel::{Cancel, Cause};
 pub use refuse::Refusal;
 pub use route::{decide, Reason, Verdict};
 pub use schema::{
@@ -24,4 +27,5 @@ pub use schema::{
 };
 pub use session::{Ledger, Refuse, SessionState, Unmatched, SEEN};
 pub use status::FailKind;
+pub use timeout::{Answer, Budget, Deadline};
 pub use trust::{SourceKind, Trust};
