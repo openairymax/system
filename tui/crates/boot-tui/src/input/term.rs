@@ -18,7 +18,6 @@ use std::collections::VecDeque;
 use std::fs::File;
 use std::io::Read;
 use std::path::Path;
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use intent::Refusal;
 use rustix::event::{poll, PollFd, PollFlags, Timespec};
@@ -29,7 +28,7 @@ use rustix::termios::{
 };
 
 use super::escape::Decoder;
-use super::event::{KeyEvent, MonoTime, RawBody, RawEvent, SourceKind, TraceId, Trust};
+use super::event::{Clock, KeyEvent, RawBody, RawEvent, SourceKind, Trust};
 use super::source::InputSource;
 
 /// 控制终端路径；引导期没有别处能读到键盘。
@@ -116,42 +115,6 @@ fn lost() -> Refusal {
     Refusal::unavailable("tty")
 }
 
-/// 事件时钟：单调时刻与追踪号都从这里取。
-///
-/// 追踪号由启动时刻与自增序号拼成 16 字节：同一引导内唯一，重启后也不
-/// 复用；它只用于关联，不承担不可预测性。
-struct Ticks {
-    base: Instant,
-    seed: u64,
-    seq: u64,
-}
-
-impl Ticks {
-    fn new() -> Self {
-        let seed = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|since| since.as_nanos() as u64)
-            .unwrap_or_default();
-        Self {
-            base: Instant::now(),
-            seed,
-            seq: 0,
-        }
-    }
-
-    fn now(&self) -> MonoTime {
-        MonoTime(self.base.elapsed().as_nanos() as u64)
-    }
-
-    fn next(&mut self) -> TraceId {
-        self.seq = self.seq.wrapping_add(1);
-        let mut raw = [0u8; 16];
-        raw[..8].copy_from_slice(&self.seed.to_be_bytes());
-        raw[8..].copy_from_slice(&self.seq.to_be_bytes());
-        TraceId(raw)
-    }
-}
-
 /// 解码与配号：把字节流变成带元数据的按键事件。
 ///
 /// 与终端解耦，超时定键与跨读取拼接都只依赖已到达的字节，因而可逐段
@@ -159,7 +122,7 @@ impl Ticks {
 struct Pump {
     dec: Decoder,
     queue: VecDeque<KeyEvent>,
-    ticks: Ticks,
+    ticks: Clock,
 }
 
 impl Pump {
@@ -167,7 +130,7 @@ impl Pump {
         Self {
             dec: Decoder::new(),
             queue: VecDeque::new(),
-            ticks: Ticks::new(),
+            ticks: Clock::new(),
         }
     }
 
@@ -261,6 +224,8 @@ impl InputSource for Keys {
 
 #[cfg(test)]
 mod tests {
+    use intent::TraceId;
+
     use super::*;
 
     #[test]

@@ -8,7 +8,46 @@
 // SSoT: 30-interfaces/11-input-ingress.md §2.1、§4.1、§10.2。
 // ===========================================================================
 
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
+
 pub use intent::{AudioRef, SourceKind, TraceId, Trust};
+
+/// 事件时钟：单调时刻与追踪号都从这里取。
+///
+/// 追踪号由启动时刻与自增序号拼成 16 字节：同一引导内唯一，重启后也不
+/// 复用；它只用于关联，不承担不可预测性。多个来源共用一个实现，避免每
+/// 个适配器各抄一份种子与序号逻辑。
+pub(crate) struct Clock {
+    base: Instant,
+    seed: u64,
+    seq: u64,
+}
+
+impl Clock {
+    pub(crate) fn new() -> Self {
+        let seed = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|since| since.as_nanos() as u64)
+            .unwrap_or_default();
+        Self {
+            base: Instant::now(),
+            seed,
+            seq: 0,
+        }
+    }
+
+    pub(crate) fn now(&self) -> MonoTime {
+        MonoTime(self.base.elapsed().as_nanos() as u64)
+    }
+
+    pub(crate) fn next(&mut self) -> TraceId {
+        self.seq = self.seq.wrapping_add(1);
+        let mut raw = [0u8; 16];
+        raw[..8].copy_from_slice(&self.seed.to_be_bytes());
+        raw[8..].copy_from_slice(&self.seq.to_be_bytes());
+        TraceId(raw)
+    }
+}
 
 /// 单调时钟读数，单位纳秒，用于乱序与超时判定。
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
