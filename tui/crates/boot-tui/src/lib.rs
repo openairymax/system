@@ -13,6 +13,7 @@
 
 //! 引导期 TUI 会话层的公共接口。
 
+pub mod degrade;
 pub mod dialog;
 pub mod display;
 pub mod frame;

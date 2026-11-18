@@ -19,6 +19,7 @@ use std::sync::mpsc::{self, Receiver};
 use std::thread;
 use std::time::Instant;
 
+use boot_tui::degrade;
 use boot_tui::display::{notify_ready, Display};
 use boot_tui::frame::{App, FRAME_MS, MAX_BATCH, SLOW_MS};
 use boot_tui::input::{InputSource, Keys, Refusal};
@@ -102,7 +103,8 @@ fn watch() -> Receiver<Face> {
 /// 首帧：按终端尺寸建版面、上屏并上报就绪。
 fn start(display: &mut Display) -> Result<App, Refusal> {
     let (cols, rows) = display.size()?;
-    let mut app = App::new(cols, rows);
+    let term = std::env::var("TERM").ok();
+    let mut app = App::with(cols, rows, degrade::theme(term.as_deref()));
     app.draw();
     display.present(app.bytes())?;
     notify_ready();

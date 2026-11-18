@@ -21,7 +21,7 @@ use std::os::unix::net::UnixDatagram;
 use std::path::Path;
 
 use intent::Refusal;
-use rustix::termios::tcgetwinsize;
+use rustix::termios::{isatty, tcgetwinsize};
 
 /// 控制终端路径。
 const TTY: &str = "/dev/tty";
@@ -66,6 +66,9 @@ impl Display {
 
     fn at(path: &Path) -> Result<Self, Refusal> {
         let mut tty = File::options().write(true).open(path).map_err(|_| lost())?;
+        if !isatty(&tty) {
+            return Err(lost());
+        }
         tty.write_all(ENTER).map_err(|_| lost())?;
         Ok(Self { tty })
     }
@@ -124,12 +127,11 @@ mod tests {
     }
 
     #[test]
-    fn a_plain_file_reports_no_terminal_size() {
-        let display = Display::at(Path::new("/dev/null")).expect("可写即可进入");
-        assert_eq!(
-            display.size().err().map(|err| err.status().to_owned()),
-            Some("unavailable".to_owned())
-        );
+    fn a_plain_file_is_refused_before_any_escape() {
+        let err = Display::at(Path::new("/dev/null"))
+            .err()
+            .expect("非 tty 必须拒绝");
+        assert_eq!(err.status(), "unavailable");
     }
 
     #[test]
