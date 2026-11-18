@@ -22,6 +22,11 @@ dependencies = [
 [[package]]
 name = "asr-gateway"
 version = "0.1.0"
+dependencies = [
+ "intent",
+ "serde",
+ "serde_json",
+]
 
 [[package]]
 name = "bitflags"
