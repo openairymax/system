@@ -94,6 +94,9 @@ impl App {
                 lines.push("状态面".to_owned());
                 lines.push(face.probe.line());
                 lines.push(face.rt.line());
+                lines.push(String::new());
+                lines.push("追踪".to_owned());
+                lines.extend(face.trace.lines());
             }
             None => lines.push("状态面读取中…".to_owned()),
         }

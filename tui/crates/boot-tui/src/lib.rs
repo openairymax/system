@@ -21,4 +21,5 @@ pub mod paint;
 pub mod screen;
 pub mod status;
 pub mod theme;
+pub mod trace_view;
 pub mod wcwidth;
