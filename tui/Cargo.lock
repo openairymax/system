@@ -37,6 +37,7 @@ version = "0.1.0"
 name = "boot-tui"
 version = "0.1.0"
 dependencies = [
+ "airy-adapters",
  "intent",
  "rustix",
  "serde_json",
