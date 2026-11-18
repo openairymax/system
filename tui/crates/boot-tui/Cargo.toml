@@ -14,6 +14,10 @@ publish = false
 [lints]
 workspace = true
 
+[[test]]
+name = "degrade"
+path = "tests/degrade/main.rs"
+
 [dependencies]
 airy-adapters = { path = "../airy-adapters" }
 intent = { path = "../intent" }

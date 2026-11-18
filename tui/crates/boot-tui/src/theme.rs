@@ -49,6 +49,20 @@ impl Theme {
         Self::parse(BUILTIN).expect("内置主题必须可解析")
     }
 
+    /// 基础档主题：只用默认前景背景，保留加粗与反显。
+    pub fn plain() -> Self {
+        Self {
+            bar: Style {
+                attr: Attr::BOLD,
+                ..Style::DEFAULT
+            },
+            foot: Style {
+                attr: Attr::REV,
+                ..Style::DEFAULT
+            },
+        }
+    }
+
     /// 解析主题正文；行号从 1 起。
     pub fn parse(text: &str) -> Result<Self, Refusal> {
         let mut theme = Self::default();

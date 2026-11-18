@@ -75,12 +75,17 @@ pub struct App {
 }
 
 impl App {
-    /// 按终端尺寸建版面。
+    /// 按终端尺寸建版面，使用内置主题。
     pub fn new(cols: u16, rows: u16) -> Self {
+        Self::with(cols, rows, Theme::builtin())
+    }
+
+    /// 按终端尺寸与主题建版面。
+    pub fn with(cols: u16, rows: u16, theme: Theme) -> Self {
         let mut app = Self {
             grid: CellGrid::new(cols, rows),
             painter: Painter::new(cols, rows),
-            theme: Theme::builtin(),
+            theme,
             out: Vec::new(),
             scroll: Scroll::new(),
             session: Session::new(),
