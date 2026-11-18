@@ -17,7 +17,7 @@
 
 use intent::{FailKind, TraceId};
 
-use crate::approval::Refusal;
+use crate::approve::Refusal;
 
 /// 单条管道最多保留的字节数；超出即截断并标记，不再增长。
 pub const PIPE_LIMIT: usize = 1 << 20;
