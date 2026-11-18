@@ -11,8 +11,9 @@
 
 use airy_adapters::disk::{
     Bus, Fs, Health, HealthState, InstallState, Layout, LayoutKind, LayoutState, Role, Status,
-    Table, Topo, Verdict,
+    Table, Topo, Verdict, SCHEMA_VERSION,
 };
+use intent::FailKind;
 
 fn read<T: serde::de::DeserializeOwned>(name: &str) -> T {
     let text = match name {
@@ -83,4 +84,36 @@ fn health_fixture() {
     assert_eq!(health.part, "");
     assert_eq!((health.total, health.free, health.used), (0, 0, 0));
     assert!(health.advice.contains("/data"));
+}
+
+#[test]
+fn parse_follows_the_samples() {
+    let status = Status::parse(include_str!("golden/disk-status.json").as_bytes())
+        .expect("status 样张可解析");
+    assert_eq!(status.schema, SCHEMA_VERSION);
+    let layout = Layout::parse(include_str!("golden/disk-layout.json").as_bytes())
+        .expect("layout 样张可解析");
+    assert_eq!(layout.verdict, LayoutState::NoRoot);
+    let health = Health::parse(include_str!("golden/disk-health.json").as_bytes())
+        .expect("health 样张可解析");
+    assert_eq!(health.verdict, HealthState::NoData);
+}
+
+#[test]
+fn parse_rejects_schema() {
+    let text = include_str!("golden/disk-status.json").replace("\"schema\": 1", "\"schema\": 2");
+    let err = Status::parse(text.as_bytes()).expect_err("2 不是本版契约");
+    assert_eq!(err.kind(), FailKind::Unsupported);
+    assert_eq!(err.status(), "unsupported");
+    assert_eq!(err.errno(), -22);
+    assert_eq!(err.detail(), "2");
+}
+
+#[test]
+fn parse_rejects_garbage() {
+    let err = Status::parse(b"{}").expect_err("缺字段必须拒绝");
+    assert_eq!(err.kind(), FailKind::Invalid);
+    assert_eq!(err.status(), "invalid");
+    assert!(err.detail().contains("schema"), "附加字段要指出首个缺项");
+    assert!(!err.advice().is_empty());
 }

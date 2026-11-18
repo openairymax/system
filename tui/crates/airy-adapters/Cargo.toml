@@ -15,7 +15,6 @@ publish = false
 workspace = true
 
 [dependencies]
+intent = { path = "../intent" }
 serde.workspace = true
-
-[dev-dependencies]
 serde_json.workspace = true
