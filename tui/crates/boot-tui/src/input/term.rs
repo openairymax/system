@@ -18,12 +18,13 @@ use std::io::Read;
 use std::path::Path;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
+use intent::Refusal;
 use rustix::event::{poll, PollFd, PollFlags, Timespec};
 use rustix::termios::{tcgetattr, tcsetattr, OptionalActions, SpecialCodeIndex, Termios};
 
 use super::escape::Decoder;
 use super::event::{KeyEvent, MonoTime, RawBody, RawEvent, SourceKind, TraceId, Trust};
-use super::source::{InputSource, SourceError};
+use super::source::InputSource;
 
 /// 控制终端路径；引导期没有别处能读到键盘。
 const TTY: &str = "/dev/tty";
@@ -39,12 +40,12 @@ pub struct Term {
 
 impl Term {
     /// 打开控制终端并切到 raw 模式。
-    pub fn open() -> Result<Self, SourceError> {
+    pub fn open() -> Result<Self, Refusal> {
         Self::at(Path::new(TTY))
     }
 
     /// 最多等待 `wait_ms` 毫秒，返回是否有字节可读；负值表示无限等待。
-    pub fn wait(&mut self, wait_ms: i32) -> Result<bool, SourceError> {
+    pub fn wait(&mut self, wait_ms: i32) -> Result<bool, Refusal> {
         let mut fds = [PollFd::new(&self.tty, PollFlags::IN)];
         let timeout = (wait_ms >= 0).then(|| Timespec {
             tv_sec: i64::from(wait_ms / 1000),
@@ -55,11 +56,11 @@ impl Term {
     }
 
     /// 读取当前可用字节；`VMIN=0` 使无数据时立即返回 0，不阻塞。
-    pub fn read(&mut self, buf: &mut [u8]) -> Result<usize, SourceError> {
+    pub fn read(&mut self, buf: &mut [u8]) -> Result<usize, Refusal> {
         self.tty.read(buf).map_err(|_| lost())
     }
 
-    fn at(path: &Path) -> Result<Self, SourceError> {
+    fn at(path: &Path) -> Result<Self, Refusal> {
         let tty = File::open(path).map_err(|_| lost())?;
         let saved = tcgetattr(&tty).map_err(|_| lost())?;
         let mut raw = saved.clone();
@@ -76,8 +77,8 @@ impl Drop for Term {
     }
 }
 
-fn lost() -> SourceError {
-    SourceError::unavailable("tty")
+fn lost() -> Refusal {
+    Refusal::unavailable("tty")
 }
 
 /// 事件时钟：单调时刻与追踪号都从这里取。
@@ -174,7 +175,7 @@ pub struct Keys {
 
 impl Keys {
     /// 打开控制终端；失败即无可用的键盘来源。
-    pub fn open() -> Result<Self, SourceError> {
+    pub fn open() -> Result<Self, Refusal> {
         Ok(Self {
             term: Some(Term::open()?),
             pump: Pump::new(),
@@ -182,7 +183,7 @@ impl Keys {
     }
 
     /// 最多等 `wait_ms` 毫秒；超时后把孤立 ESC 定键并返回 false。
-    pub fn wait(&mut self, wait_ms: i32) -> Result<bool, SourceError> {
+    pub fn wait(&mut self, wait_ms: i32) -> Result<bool, Refusal> {
         let ready = self.term_mut()?.wait(wait_ms)?;
         if !ready {
             self.pump.flush();
@@ -191,7 +192,7 @@ impl Keys {
     }
 
     /// 读取当前可用字节；终端已关闭时什么也不做。
-    fn fill(&mut self) -> Result<(), SourceError> {
+    fn fill(&mut self) -> Result<(), Refusal> {
         let Some(term) = self.term.as_mut() else {
             return Ok(());
         };
@@ -201,7 +202,7 @@ impl Keys {
         Ok(())
     }
 
-    fn term_mut(&mut self) -> Result<&mut Term, SourceError> {
+    fn term_mut(&mut self) -> Result<&mut Term, Refusal> {
         self.term.as_mut().ok_or_else(lost)
     }
 }
@@ -211,12 +212,12 @@ impl InputSource for Keys {
         SourceKind::Key
     }
 
-    fn drain(&mut self, max: usize) -> Result<Vec<RawEvent>, SourceError> {
+    fn drain(&mut self, max: usize) -> Result<Vec<RawEvent>, Refusal> {
         self.fill()?;
         Ok(self.pump.take(max))
     }
 
-    fn close(&mut self) -> Result<(), SourceError> {
+    fn close(&mut self) -> Result<(), Refusal> {
         self.term = None;
         self.pump.queue.clear();
         Ok(())
