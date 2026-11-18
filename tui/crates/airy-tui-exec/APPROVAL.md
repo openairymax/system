@@ -52,7 +52,7 @@ sha256("airy-disk" "\0" "grow" "\0" "/dev/sda")
 3. `expires` 已过 → `approval_expired`。
 4. 以上都通过才放行，并在结果里带回命中的文件名。
 
-三种拒绝都映射为状态 `approval-required`、返回码 `-13`（`EPERM`），
+三种拒绝都映射为状态 `approval-required`、返回码 `-13`（`EACCES`），
 `reason` 列区分具体原因，供审计行记录。任何解析错误都归入
 `approval_insecure`——**宁可否决，不可放宽**。
 
