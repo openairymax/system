@@ -72,6 +72,7 @@ pub struct App {
     started: Instant,
     quit: bool,
     slow: bool,
+    asr: Option<String>,
 }
 
 impl App {
@@ -93,6 +94,7 @@ impl App {
             started: Instant::now(),
             quit: false,
             slow: false,
+            asr: None,
         };
         app.record(Role::System, READY);
         app.scroll.push(String::new());
@@ -185,6 +187,19 @@ impl App {
             return;
         }
         self.slow = slow;
+        self.grid.touch(self.grid.rows().saturating_sub(1));
+    }
+
+    /// 收下语音通道的降级状态；就绪传 `None`。
+    ///
+    /// 取值是网关给出的三个词之一（`unavailable` / `busy` / `empty`）。
+    /// 降级必须出现在状态栏：静默掉它，用户只会觉得「按了没反应」，
+    /// 而真正的原因（没有模型、设备被别的实例占着）再也查不到。
+    pub fn set_asr(&mut self, status: Option<String>) {
+        if status == self.asr {
+            return;
+        }
+        self.asr = status;
         self.grid.touch(self.grid.rows().saturating_sub(1));
     }
 
@@ -282,15 +297,19 @@ impl App {
         );
     }
 
-    /// 状态栏文字随慢帧与回看位置切换。
+    /// 状态栏文字随慢帧与回看位置切换，语音降级时追加 `asr=<状态>`。
     fn footer(&self) -> String {
-        if self.slow {
-            return FOOT_SLOW.to_owned();
+        let base = if self.slow {
+            FOOT_SLOW.to_owned()
+        } else if self.scroll.is_tail() {
+            FOOT.to_owned()
+        } else {
+            format!("{FOOT_BACK}{}", self.scroll.back())
+        };
+        match &self.asr {
+            Some(status) => format!("{base} · asr={status}"),
+            None => base,
         }
-        if self.scroll.is_tail() {
-            return FOOT.to_owned();
-        }
-        format!("{FOOT_BACK}{}", self.scroll.back())
     }
 
     /// 在正文区域居中画出命令面板；放不下时宁可不画，也不压掉正文。
@@ -446,6 +465,21 @@ mod tests {
         app.mark(true);
         app.draw();
         assert!(text(&app).contains(FOOT_SLOW));
+    }
+
+    #[test]
+    fn a_degraded_voice_channel_is_visible_and_clearable() {
+        let mut app = App::new(80, 24);
+        app.draw();
+        app.set_asr(Some("busy".to_owned()));
+        app.draw();
+        assert!(text(&app).contains("asr=busy"));
+        app.set_asr(Some("busy".to_owned()));
+        app.draw();
+        assert!(app.bytes().is_empty(), "同一状态不该重画");
+        app.set_asr(None);
+        app.draw();
+        assert!(!text(&app).contains("asr="));
     }
 
     #[test]
