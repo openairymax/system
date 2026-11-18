@@ -20,12 +20,11 @@ use std::process::{Child, Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use intent::{FailKind, TraceId};
+use intent::{sha256, FailKind, TraceId};
 
 use crate::approve;
 use crate::normalize::{Captured, Outcome, PIPE_LIMIT};
 use crate::sandbox;
-use crate::sha256;
 
 /// 入口的安装目录；子进程拉起的绝对路径由它与入口名拼成。
 pub const BIN_DIR: &str = "/usr/bin";

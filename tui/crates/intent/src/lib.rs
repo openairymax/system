@@ -14,6 +14,7 @@ mod refuse;
 mod route;
 mod schema;
 mod session;
+pub mod sha256;
 mod status;
 mod timeout;
 mod trust;

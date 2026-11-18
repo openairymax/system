@@ -13,4 +13,3 @@ pub mod approve;
 pub mod exec;
 pub mod normalize;
 pub mod sandbox;
-pub mod sha256;
