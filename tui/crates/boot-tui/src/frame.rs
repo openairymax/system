@@ -16,6 +16,7 @@ use crate::input::{KeyAction, KeyEvent, RawBody, RawEvent, KEY_C, KEY_ESC, KEY_F
 use crate::layout::Layout;
 use crate::paint::Painter;
 use crate::screen::{fits, CellGrid, Style};
+use crate::session_store::Record;
 use crate::status::Face;
 use crate::theme::Theme;
 use crate::wcwidth::clip_cols;
@@ -57,6 +58,7 @@ pub struct App {
     theme: Theme,
     out: Vec<u8>,
     face: Option<Face>,
+    recovery: Option<String>,
     quit: bool,
     slow: bool,
 }
@@ -70,6 +72,7 @@ impl App {
             theme: Theme::builtin(),
             out: Vec::new(),
             face: None,
+            recovery: None,
             quit: false,
             slow: false,
         }
@@ -81,10 +84,21 @@ impl App {
         self.grid.touch_all();
     }
 
+    /// 上次会话未正常结束时，把结论放在就绪行下方。
+    pub fn show_recovery(&mut self, record: &Record) {
+        self.recovery = Some(format!(
+            "上次会话未正常结束：{}（{}）",
+            record.state.word(),
+            record.note
+        ));
+        self.grid.touch_all();
+    }
+
     /// 正文各行；状态面读到之前只有一行占位。
     fn body_lines(&self) -> Vec<String> {
         let mut lines = vec![
             READY.to_owned(),
+            self.recovery.clone().unwrap_or_default(),
             String::new(),
             INPUT.to_owned(),
             String::new(),
@@ -230,6 +244,7 @@ mod tests {
     use super::*;
     use crate::input::{Mods, MonoTime, SourceKind, TraceId, Trust};
     use crate::screen::{MIN_COLS, MIN_ROWS};
+    use crate::session_store::{Record, State};
 
     fn event(key: KeyEvent) -> RawEvent {
         RawEvent {
@@ -327,6 +342,19 @@ mod tests {
         let mut app = App::new(MIN_COLS - 4, MIN_ROWS - 2);
         app.draw();
         assert!(text(&app).contains("终端过小"));
+    }
+
+    #[test]
+    fn a_previous_bad_session_is_named_on_screen() {
+        let mut app = app();
+        app.show_recovery(&Record {
+            state: State::Fallback,
+            note: "panic: gone".to_owned(),
+        });
+        app.draw();
+        let screen = text(&app);
+        assert!(screen.contains("上次会话未正常结束"));
+        assert!(screen.contains("fallback"));
     }
 
     #[test]

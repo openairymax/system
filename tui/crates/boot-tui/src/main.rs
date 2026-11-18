@@ -22,28 +22,66 @@ use std::time::Instant;
 use boot_tui::display::{notify_ready, Display};
 use boot_tui::frame::{App, FRAME_MS, MAX_BATCH, SLOW_MS};
 use boot_tui::input::{InputSource, Keys, Refusal};
+use boot_tui::recover::{self, Exit};
+use boot_tui::session_store::{Record, State, Store};
 use boot_tui::status::{self, Face};
 
 fn main() -> ExitCode {
-    match run() {
+    match recover::guard(run) {
         Ok(()) => ExitCode::SUCCESS,
-        Err(err) => {
-            eprintln!("boot-tui: {} ({})", err.status(), err.detail());
-            ExitCode::FAILURE
+        Err(exit) => report(exit),
+    }
+}
+
+/// 失败只写一行；panic 先补记结局再报原因。
+fn report(exit: Exit) -> ExitCode {
+    match exit {
+        Exit::Refused(err) => eprintln!("boot-tui: {} ({})", err.status(), err.detail()),
+        Exit::Panicked(why) => {
+            save(&Store::system(), State::Fallback, &format!("panic: {why}"));
+            eprintln!("boot-tui: fallback (panic: {why})");
         }
     }
+    ExitCode::FAILURE
 }
 
 /// 一次会话从首帧走到用户退出。
 fn run() -> Result<(), Refusal> {
+    let store = Store::system();
+    let prior = store.load();
+    let stop = recover::Stop::arm()?;
     let mut keys = Keys::open()?;
     let mut display = Display::open()?;
     let mut app = start(&mut display)?;
+    if let Some(gone) = prior.filter(|record| record.state != State::Done) {
+        app.show_recovery(&gone);
+    }
+    save(&store, State::Ready, "first frame");
     let face = watch();
     while !app.done() {
+        if let Some(sig) = stop.taken() {
+            save(
+                &store,
+                State::Fallback,
+                &format!("signal {}", recover::name(sig)),
+            );
+            return Ok(());
+        }
         frame(&mut app, &mut keys, &mut display, &face)?;
     }
+    save(&store, State::Done, "quit");
     Ok(())
+}
+
+/// 写一条会话结局；写不进去也不能影响退出。
+fn save(store: &Store, state: State, note: &str) {
+    let record = Record {
+        state,
+        note: note.to_owned(),
+    };
+    if let Err(err) = store.save(&record) {
+        eprintln!("boot-tui: session store ({err})");
+    }
 }
 
 /// 在后台读状态面；结果经通道回传，读不到时写明原因。
