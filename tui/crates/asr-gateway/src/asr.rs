@@ -60,6 +60,19 @@ impl Availability {
     pub fn usable(&self) -> bool {
         matches!(self, Self::Ready)
     }
+
+    /// 不可采集时的具体错误；就绪返回 `None`。
+    ///
+    /// 会话建立时固定下来的状态必须原样回显：设备被占用时若报「模型不可
+    /// 用」，状态栏就会把 busy 说成 unavailable，两个故障再也分不开。
+    pub fn refusal(&self) -> Option<AsrError> {
+        match self {
+            Self::Ready => None,
+            Self::Unavailable => Some(AsrError::NoModel),
+            Self::Busy => Some(AsrError::Busy),
+            Self::Empty => Some(AsrError::Empty),
+        }
+    }
 }
 
 /// 音频引用；只描述本地受管文件，接入侧不解析路径。
@@ -245,5 +258,18 @@ mod tests {
         }
         assert_eq!(Availability::from_status("unknown"), None);
         assert_eq!(Availability::from_status(""), None);
+    }
+
+    #[test]
+    fn refusal_keeps_the_visible_token() {
+        assert_eq!(Availability::Ready.refusal(), None);
+        for state in [
+            Availability::Unavailable,
+            Availability::Busy,
+            Availability::Empty,
+        ] {
+            let error = state.refusal().expect("不可采集");
+            assert_eq!(error.availability(), state);
+        }
     }
 }

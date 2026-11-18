@@ -439,8 +439,8 @@ impl Session {
 
     /// 开始采集；模型不可用与设备占用都回显式失败。
     fn start(&mut self) -> Reply {
-        if !self.gate.usable() {
-            return Reply::Fail(Failure::of(AsrError::NoModel));
+        if let Some(error) = self.gate.refusal() {
+            return Reply::Fail(Failure::of(error));
         }
         if self.phase == Phase::Recording {
             return Reply::Fail(Failure::of(AsrError::Busy));
@@ -725,6 +725,17 @@ mod tests {
         };
         assert_eq!(fail.status(), Availability::Unavailable);
         assert_eq!(session.phase(), Phase::Idle);
+    }
+
+    #[test]
+    fn a_held_device_fails_start_as_busy() {
+        let mut session = Session::open("s-1", Availability::Busy).expect("可建立");
+        let step = session.apply(&frame(Request::Start)).expect("可处理");
+        let Step::Reply(Reply::Fail(fail)) = step else {
+            panic!("应回显式失败: {step:?}");
+        };
+        assert_eq!(fail.status(), Availability::Busy);
+        assert!(fail.detail().contains("设备忙"), "{}", fail.detail());
     }
 
     #[test]
