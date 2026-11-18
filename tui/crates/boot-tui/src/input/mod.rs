@@ -6,7 +6,8 @@
 // 层转成 airy.intent/1。抽象单位是事件而不是文本：文本只是 Key 源经过
 // IME 之后的产物，语音与结构化载荷不得被塞回「文本 → 输入法」管线。
 //
-// 本片（N-01）声明 L1 的类型、trait 与错误码；N-02 起补键序列解码。
+// 本片（N-01）声明 L1 的类型、trait 与错误码；N-02 起补键序列解码与
+// 键盘事件源。
 // SSoT: 30-interfaces/11-input-ingress.md §10.1-§10.3。
 // ===========================================================================
 
@@ -25,4 +26,4 @@ pub use event::{
 pub use intent::FailKind;
 pub use key::key_byte;
 pub use source::{trust_ok, InputSource, SourceError};
-pub use term::Term;
+pub use term::{Keys, Term};
