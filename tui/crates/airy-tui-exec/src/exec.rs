@@ -127,6 +127,66 @@ pub struct Request {
     pub risk: Risk,
 }
 
+/// 已注册动作：固定入口、固定实参与风险级别。
+///
+/// 动作名与实参写在同一行，发起方无法追加、改写或替换参数；这既收窄了
+/// 注入面，也让「同一条命令」与「同一个批准摘要」一一对应。
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct Action {
+    /// 动作名，形如 `disk.status`。
+    pub name: &'static str,
+    /// 白名单入口。
+    pub prog: Prog,
+    /// 固定实参，按 argv 原样传给入口。
+    pub argv: &'static [&'static str],
+    /// 风险级别；只读动作均为普通级别。
+    pub risk: Risk,
+}
+
+/// 只读动作的行构造：入口与实参成对写死，风险恒为普通。
+const fn readonly(name: &'static str, prog: Prog, argv: &'static [&'static str]) -> Action {
+    Action {
+        name,
+        prog,
+        argv,
+        risk: Risk::Normal,
+    }
+}
+
+/// 注册表：只登记实测跑通的只读动作。
+///
+/// 未知动作一律拒绝（契约 §7 判 `unsupported`），不按前缀或相似度猜一个
+/// 相近动作。会改状态的动作需要先有逐动作的参数校验与审批路径，故不在
+/// 本表内登记。
+pub const ACTIONS: [Action; 8] = [
+    readonly("bright.status", Prog::Bright, &["status", "--json"]),
+    readonly("disk.status", Prog::Disk, &["status", "--json"]),
+    readonly("disk.layout", Prog::Disk, &["layout", "--json"]),
+    readonly("disk.health", Prog::Disk, &["health", "--json"]),
+    readonly("model.status", Prog::Model, &["status", "--json"]),
+    readonly("power.status", Prog::Power, &["status", "--json"]),
+    readonly("probe.status", Prog::Probe, &["status", "--json"]),
+    readonly("rtcap.matrix", Prog::RtCap, &["matrix", "--json"]),
+];
+
+impl Action {
+    /// 按动作名精确匹配；不在表内返回 `None`。
+    pub fn find(name: &str) -> Option<&'static Self> {
+        ACTIONS.iter().find(|item| item.name == name)
+    }
+
+    /// 以固定实参构造执行请求；追踪号随行，动作名即批准文件名的主干。
+    pub fn request(&self, trace: TraceId) -> Request {
+        Request {
+            prog: self.prog,
+            args: self.argv.iter().map(|arg| (*arg).to_string()).collect(),
+            trace,
+            action: self.name,
+            risk: self.risk,
+        }
+    }
+}
+
 /// 审批与审计共用的摘要：入口名与实参按 NUL 连接后取 SHA-256。
 pub fn digest(req: &Request) -> String {
     let mut bytes = req.prog.name().as_bytes().to_vec();
@@ -311,6 +371,52 @@ mod tests {
             digest(&req),
             "bd59c37587ac7c73673722b0044c4c6b2527684c937fccfe2ac6a7e876790667"
         );
+    }
+
+    #[test]
+    fn registered_actions_form_a_closed_read_only_table() {
+        let mut seen = Vec::new();
+        for action in &ACTIONS {
+            assert!(!action.argv.is_empty(), "{}", action.name);
+            assert_eq!(
+                action.argv.last(),
+                Some(&"--json"),
+                "{}：状态面只消费 JSON 输出",
+                action.name
+            );
+            assert_eq!(action.risk, Risk::Normal, "{}", action.name);
+            assert_eq!(Prog::parse(action.prog.name()), Some(action.prog));
+            assert!(
+                seen.iter().all(|name| *name != action.name),
+                "{}",
+                action.name
+            );
+            seen.push(action.name);
+        }
+    }
+
+    #[test]
+    fn actions_resolve_by_exact_name_only() {
+        for action in &ACTIONS {
+            assert_eq!(
+                Action::find(action.name).map(|item| item.name),
+                Some(action.name)
+            );
+        }
+        for name in ["disk", "disk.stat", "disk.status ", "Disk.status", ""] {
+            assert!(Action::find(name).is_none(), "{name:?}");
+        }
+    }
+
+    #[test]
+    fn request_carries_the_registered_argv() {
+        let action = Action::find("disk.status").expect("已注册");
+        let req = action.request(trace());
+        assert_eq!(req.prog, Prog::Disk);
+        assert_eq!(req.args, ["status", "--json"]);
+        assert_eq!(req.action, "disk.status");
+        assert_eq!(req.risk, Risk::Normal);
+        assert_eq!(req.trace, trace());
     }
 
     #[test]
