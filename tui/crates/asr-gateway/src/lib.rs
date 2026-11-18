@@ -3,8 +3,9 @@
 // AirymaxOS 语音识别网关（asr-gateway）
 //
 // 承载模型可用性探测、识别会话与「模型缺失即显式 unavailable」的降级
-// 语义。N-04 分三层落地：模型清单决定通道是否可用，识别结果决定能否进入
-// 可编辑缓冲区，socket 协议把两者接到 boot-tui 的 VoiceSource 上。
+// 语义。N-04 分四层落地：模型清单决定通道是否可用，设备租约决定能不能
+// 独占采集，识别结果决定能否进入可编辑缓冲区，socket 协议把两者接到
+// boot-tui 的 VoiceSource 上。
 // ===========================================================================
 
 //! 引导期 TUI 语音通路的公共接口。
@@ -12,6 +13,7 @@
 mod asr;
 mod capture;
 mod ipc;
+mod lease;
 
 use core::fmt;
 
@@ -21,6 +23,7 @@ pub use ipc::{
     read_frame, write_answer, Answer, Failure, Frame, IpcError, Phase, Reply, Request, Session,
     Step, MAX_FRAME, SOCKET,
 };
+pub use lease::Lease;
 
 /// 网关错误；每一种都对应状态栏上的确定取值。
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
