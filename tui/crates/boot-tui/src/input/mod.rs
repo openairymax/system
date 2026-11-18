@@ -14,16 +14,19 @@
 //! L1 输入事件层：四类来源归一到 [`RawEvent`]。
 
 mod api;
+mod batch;
 mod escape;
 mod event;
 mod key;
 mod source;
 mod term;
 
-pub use api::{Api, Reject, MAX_FRAME, PENDING, SOCKET};
+pub use api::{Api, MAX_FRAME, PENDING, SOCKET};
+pub use batch::{Batch, Summary, MAX_LINE};
 pub use escape::{decode, lone, Decoder, Step, MAX_PENDING};
 pub use event::{
-    AudioRef, KeyAction, KeyEvent, Mods, MonoTime, RawBody, RawEvent, SourceKind, TraceId, Trust,
+    AudioRef, KeyAction, KeyEvent, Mods, MonoTime, RawBody, RawEvent, Reject, SourceKind, TraceId,
+    Trust,
 };
 pub use intent::{FailKind, Refusal};
 pub use key::{

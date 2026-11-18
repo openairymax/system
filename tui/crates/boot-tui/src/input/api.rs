@@ -26,12 +26,14 @@ use std::io::{ErrorKind, Read};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 
-use intent::{CheckError, Intent, Refusal, SourceKind, TraceId, Trust, SEEN};
+use intent::{Intent, Refusal, SourceKind, TraceId, Trust, SEEN};
 use rustix::net::sockopt::socket_peercred;
 use rustix::net::UCred;
 use serde_json::Value;
 
-use super::event::{Clock, RawBody, RawEvent};
+use super::event::{
+    bad_line, refusal_of, shape, syntax, take_events, Clock, RawBody, RawEvent, Reject,
+};
 use super::source::InputSource;
 
 /// 意图入口的 socket 路径；契约未命名，本版统一约定在此。
@@ -45,25 +47,6 @@ pub const PENDING: usize = 8;
 
 /// 单次读取的字节上限；按键量级的突发远小于此值。
 const READ_MAX: usize = 4096;
-
-/// 一条被拒的请求：关联键与失败三列之一。
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct Reject {
-    trace: TraceId,
-    refusal: Refusal,
-}
-
-impl Reject {
-    /// 关联键；语法坏到取不到原值时由适配器生成。
-    pub fn trace(&self) -> TraceId {
-        self.trace
-    }
-
-    /// 失败记录：状态串、附加字段与可执行建议。
-    pub fn refusal(&self) -> &Refusal {
-        &self.refusal
-    }
-}
 
 /// 对端凭据：只从内核取，消息里的身份字段不参与判定。
 #[derive(Clone, Copy, Debug)]
@@ -280,7 +263,7 @@ impl Api {
             Err(refusal) => return Err(self.reject(intent.trace_id, refusal)),
         };
         if let Err(err) = intent.check() {
-            return Err(self.reject(intent.trace_id, refusal_of(err)));
+            return Err(self.reject(intent.trace_id, refusal_of(err, SourceKind::Api)));
         }
         if !self.mark(intent.trace_id) {
             return Ok(None);
@@ -308,14 +291,11 @@ impl Api {
 
     /// 坏行（语法或字段）：能从原文取到 trace_id 就复用，否则新配一个。
     fn bad(&mut self, value: Option<&Value>, refusal: Refusal) -> Reject {
-        let trace = value
-            .and_then(trace_in)
-            .unwrap_or_else(|| self.clock.next());
-        self.reject(trace, refusal)
+        bad_line(&mut self.clock, value, refusal)
     }
 
     fn reject(&self, trace: TraceId, refusal: Refusal) -> Reject {
-        Reject { trace, refusal }
+        Reject::new(trace, refusal)
     }
 
     /// 拒绝记录同样有界：最早的记录让位给新记录，不排队到无限。
@@ -330,7 +310,7 @@ impl Api {
     fn drop_client(&mut self, refusal: Refusal) {
         self.client = None;
         let trace = self.clock.next();
-        self.keep(Reject { trace, refusal });
+        self.keep(Reject::new(trace, refusal));
     }
 
     fn shutdown(&mut self) {
@@ -350,14 +330,7 @@ impl InputSource for Api {
     fn drain(&mut self, max: usize) -> Result<Vec<RawEvent>, Refusal> {
         self.accept_peer();
         self.fill();
-        let mut batch = Vec::new();
-        while batch.len() < max {
-            let Some(event) = self.pending.pop_front() else {
-                break;
-            };
-            batch.push(event);
-        }
-        Ok(batch)
+        Ok(take_events(&mut self.pending, max))
     }
 
     fn close(&mut self) -> Result<(), Refusal> {
@@ -378,37 +351,6 @@ fn level_of(uid: u32, declared: Trust) -> Result<Trust, Refusal> {
         return Err(Refusal::denied(Trust::T2.label()));
     }
     Ok(declared)
-}
-
-/// 接入侧预检的失败语义按 §7 换成统一的失败记录。
-fn refusal_of(err: CheckError) -> Refusal {
-    match err {
-        CheckError::Invalid(field) => Refusal::invalid(field),
-        CheckError::Denied(_) => Refusal::denied(SourceKind::Api.need().label()),
-    }
-}
-
-/// 语法错误写解析位置，与 §7 的 `invalid` 附加字段一致。
-fn syntax(err: &serde_json::Error) -> Refusal {
-    Refusal::invalid(format!("第{}行第{}列", err.line(), err.column()))
-}
-
-/// 字段错误优先写字段名；其余退回 serde 的原文。
-fn shape(err: &serde_json::Error) -> Refusal {
-    let text = err.to_string();
-    if let Some(field) = text
-        .strip_prefix("missing field `")
-        .and_then(|rest| rest.split('`').next())
-    {
-        return Refusal::invalid(field);
-    }
-    Refusal::invalid(text)
-}
-
-/// 从原文抢救 `trace_id`；取不到时由调用方生成。
-fn trace_in(value: &Value) -> Option<TraceId> {
-    let raw = value.get("trace_id")?.clone();
-    serde_json::from_value(raw).ok()
 }
 
 #[cfg(test)]
