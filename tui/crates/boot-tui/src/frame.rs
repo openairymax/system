@@ -15,7 +15,8 @@
 use crate::input::{KeyAction, KeyEvent, RawBody, RawEvent, KEY_C, KEY_ESC, KEY_F5, KEY_Q};
 use crate::layout::Layout;
 use crate::paint::Painter;
-use crate::screen::{fits, Attr, CellGrid, Color, Style};
+use crate::screen::{fits, CellGrid, Style};
+use crate::theme::Theme;
 use crate::wcwidth::clip_cols;
 
 /// 单帧最多处理的输入事件，余下的留到下一帧。
@@ -48,24 +49,11 @@ const FOOT_SLOW: &str = "render=slow · q 退出";
 /// 终端小于最小尺寸时的单行提示。
 const SMALL: &str = "终端过小（最小 40×12），请调整窗口后按 F5";
 
-/// 顶栏底色；256 色里的深蓝，保证浅色与深色主题下都压得住。
-const BAR: Style = Style {
-    fg: Color::Default,
-    bg: Color::Idx(17),
-    attr: Attr::BOLD,
-};
-
-/// 状态栏样式。
-const FOOT_STYLE: Style = Style {
-    fg: Color::Default,
-    bg: Color::Default,
-    attr: Attr::REV,
-};
-
 /// 引导期会话的状态与版面。
 pub struct App {
     grid: CellGrid,
     painter: Painter,
+    theme: Theme,
     out: Vec<u8>,
     quit: bool,
     slow: bool,
@@ -77,6 +65,7 @@ impl App {
         Self {
             grid: CellGrid::new(cols, rows),
             painter: Painter::new(cols, rows),
+            theme: Theme::builtin(),
             out: Vec::new(),
             quit: false,
             slow: false,
@@ -152,12 +141,12 @@ impl App {
             return;
         }
         let area = Layout::of(cols, rows);
-        self.grid.fill_row(area.head.y, BAR);
+        self.grid.fill_row(area.head.y, self.theme.bar);
         self.grid.put(
             area.head.x + 1,
             area.head.y,
             clip_cols(TITLE, area.head.w.saturating_sub(1)),
-            BAR,
+            self.theme.bar,
         );
         for (at, line) in [READY, "", INPUT, "", KEYS].iter().enumerate() {
             let at = at as u16;
@@ -174,12 +163,12 @@ impl App {
         if area.foot.is_empty() {
             return;
         }
-        self.grid.fill_row(area.foot.y, FOOT_STYLE);
+        self.grid.fill_row(area.foot.y, self.theme.foot);
         self.grid.put(
             area.foot.x + 1,
             area.foot.y,
             clip_cols(self.footer(), area.foot.w.saturating_sub(2)),
-            FOOT_STYLE,
+            self.theme.foot,
         );
     }
 
