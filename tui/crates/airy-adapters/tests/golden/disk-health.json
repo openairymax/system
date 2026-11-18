@@ -1,0 +1,1 @@
+{"verdict": "no-data", "part": "", "total": 0, "free": 0, "used": 0, "advice": "未发现挂载在 /data 的数据分区：按 03-installer-design.md §3.6 的布局创建后，用 airy-disk status 复核"}
