@@ -7,7 +7,9 @@
 // 解码交给 escape/key，事件组装由本模块的 `Pump` 完成。
 //
 // raw 属性在 Drop 里恢复：会话异常退出也不能把控制台留在无回显状态。
-// SSoT: 30-interfaces/11-input-ingress.md §10.2。
+// 属性逐项设置而不是整段 `cfmakeraw`，输出侧的后处理必须留着（§14.3）。
+// 被信号打断的等待按「本轮无输入」处理，窗口变化由此在下一帧重算。
+// SSoT: 30-interfaces/11-input-ingress.md §10.2、0.0.5 方案 §14.3。
 // ===========================================================================
 
 //! `/dev/tty` 的 raw 模式读取与按键事件源。
@@ -20,7 +22,11 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use intent::Refusal;
 use rustix::event::{poll, PollFd, PollFlags, Timespec};
-use rustix::termios::{tcgetattr, tcsetattr, OptionalActions, SpecialCodeIndex, Termios};
+use rustix::io::Errno;
+use rustix::termios::{
+    tcgetattr, tcsetattr, ControlModes, InputModes, LocalModes, OptionalActions, OutputModes,
+    SpecialCodeIndex, Termios,
+};
 
 use super::escape::Decoder;
 use super::event::{KeyEvent, MonoTime, RawBody, RawEvent, SourceKind, TraceId, Trust};
@@ -51,24 +57,53 @@ impl Term {
             tv_sec: i64::from(wait_ms / 1000),
             tv_nsec: i64::from(wait_ms % 1000) * 1_000_000,
         });
-        let ready = poll(&mut fds, timeout.as_ref()).map_err(|_| lost())?;
+        let ready = match poll(&mut fds, timeout.as_ref()) {
+            Ok(ready) => ready,
+            Err(Errno::INTR) => return Ok(false),
+            Err(_) => return Err(lost()),
+        };
         Ok(ready > 0 && fds[0].revents().contains(PollFlags::IN))
     }
 
     /// 读取当前可用字节；`VMIN=0` 使无数据时立即返回 0，不阻塞。
     pub fn read(&mut self, buf: &mut [u8]) -> Result<usize, Refusal> {
-        self.tty.read(buf).map_err(|_| lost())
+        match self.tty.read(buf) {
+            Ok(got) => Ok(got),
+            Err(err) if err.kind() == std::io::ErrorKind::Interrupted => Ok(0),
+            Err(_) => Err(lost()),
+        }
     }
 
     fn at(path: &Path) -> Result<Self, Refusal> {
         let tty = File::open(path).map_err(|_| lost())?;
         let saved = tcgetattr(&tty).map_err(|_| lost())?;
-        let mut raw = saved.clone();
-        raw.make_raw();
-        raw.special_codes[SpecialCodeIndex::VMIN] = 0;
-        tcsetattr(&tty, OptionalActions::Now, &raw).map_err(|_| lost())?;
+        tcsetattr(&tty, OptionalActions::Now, &raw_of(&saved)).map_err(|_| lost())?;
         Ok(Self { tty, saved })
     }
+}
+
+/// raw 属性逐项设置，不用 `cfmakeraw`：它会把 `OPOST` 一起关掉，正常输出
+/// 路径的换行就不再做回车，退出后 agetty 的提示会逐行右移。
+fn raw_of(saved: &Termios) -> Termios {
+    let mut raw = saved.clone();
+    raw.input_modes.remove(
+        InputModes::ICRNL
+            | InputModes::IXON
+            | InputModes::BRKINT
+            | InputModes::ISTRIP
+            | InputModes::INLCR
+            | InputModes::IGNCR
+            | InputModes::PARMRK,
+    );
+    raw.output_modes.insert(OutputModes::OPOST);
+    raw.local_modes
+        .remove(LocalModes::ICANON | LocalModes::ECHO | LocalModes::ISIG | LocalModes::IEXTEN);
+    raw.control_modes
+        .remove(ControlModes::CSIZE | ControlModes::PARENB);
+    raw.control_modes.insert(ControlModes::CS8);
+    raw.special_codes[SpecialCodeIndex::VMIN] = 0;
+    raw.special_codes[SpecialCodeIndex::VTIME] = 0;
+    raw
 }
 
 impl Drop for Term {
