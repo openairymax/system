@@ -3,8 +3,8 @@
 // 执行面的入口白名单与请求模型
 //
 // 意图只能落到打包清单里的 9 个入口：名字不在表内即拒绝，不猜相近动作。
-// 实参按 argv 原样传递，不经 shell，也不做任何字符串拼接。本片（A-02-01）
-// 只钉住名单与请求形状；子进程建立、管道限长与审计留给后续片。
+// 实参按 argv 原样传递，不经 shell，也不做任何字符串拼接。审批与资源
+// 边界分别见 `approve` 与 `sandbox`，本模块只负责拉起、读取与归约。
 //
 // 名字与入口放在同一张表的一行里，解析与反查都只读这张表，不另设一份
 // 名字清单去对齐。
@@ -12,7 +12,7 @@
 // SSoT: 30-interfaces/11-input-ingress.md §5.1；0.0.5 §14.9（F-04b）。
 // ===========================================================================
 
-//! 白名单入口与一次执行请求的形状。
+//! 白名单入口、一次执行请求的形状与结果归约。
 
 use std::io::Read;
 use std::path::Path;
@@ -21,10 +21,10 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use intent::{FailKind, TraceId};
-use rustix::process::{prlimit, Pid, Resource, Rlimit};
 
-use crate::approval;
+use crate::approve;
 use crate::normalize::{Captured, Outcome, PIPE_LIMIT};
+use crate::sandbox;
 use crate::sha256;
 
 /// 入口的安装目录；子进程拉起的绝对路径由它与入口名拼成。
@@ -44,12 +44,6 @@ pub const BUDGET: Duration = Duration::from_secs(10);
 
 /// 等待子进程的轮询间隔；只影响超时的判定粒度。
 const POLL: Duration = Duration::from_millis(20);
-
-/// 单个子进程的 CPU 秒数上限；与端到端预算同量级，兜住死循环。
-const CPU_SECS: u64 = 10;
-
-/// 单个子进程可打开的文件数；入口只需少量文件与两条管道。
-const FILE_MAX: u64 = 64;
 
 /// 单个实参的字节上限；超过即拒绝，参数不是数据通道。
 pub const ARG_MAX: usize = 64 << 10;
@@ -171,17 +165,17 @@ pub fn run(req: &Request) -> Outcome {
 }
 
 /// 高危动作过审批链；普通动作直接放行，返回命中的批准文件名。
-fn permit_of(req: &Request) -> Result<Option<String>, approval::Refusal> {
+fn permit_of(req: &Request) -> Result<Option<String>, approve::Refusal> {
     if req.risk == Risk::Normal {
         return Ok(None);
     }
-    approval::check(req.action, &digest(req)).map(|permit| Some(permit.file))
+    approve::check(req.action, &digest(req)).map(|permit| Some(permit.file))
 }
 
 /// 拉起子进程并收集结果；调用前实参与审批均已通过。
 fn launch(req: &Request) -> Outcome {
     match start(&path_of(req.prog), &req.args) {
-        Ok(mut child) => match limit(&child) {
+        Ok(mut child) => match sandbox::apply(&child) {
             Ok(()) => collect(req.trace, child, BUDGET),
             Err(err) => {
                 let _ = child.kill();
@@ -203,23 +197,6 @@ fn check_args(req: &Request) -> Option<Outcome> {
         .iter()
         .any(|arg| arg.len() > ARG_MAX || arg.as_bytes().contains(&0));
     bad.then(|| Outcome::failed(FailKind::Invalid, req.trace))
-}
-
-/// 给子进程设资源上限；降限不需要特权，失败说明进程已不可控，直接放弃。
-fn limit(child: &Child) -> std::io::Result<()> {
-    let pid =
-        Pid::from_raw(child.id() as i32).ok_or_else(|| std::io::Error::from_raw_os_error(EIO))?;
-    prlimit(Some(pid), Resource::Cpu, cap(CPU_SECS))?;
-    prlimit(Some(pid), Resource::Nofile, cap(FILE_MAX))?;
-    Ok(())
-}
-
-/// 软硬上限同值：子进程既不能越过，也不能自己调高。
-fn cap(value: u64) -> Rlimit {
-    Rlimit {
-        current: Some(value),
-        maximum: Some(value),
-    }
 }
 
 /// 拉起或约束失败的结果：状态列由调用方指定，返回码保留内核给出的具体值。
@@ -380,32 +357,6 @@ mod tests {
             check_args(&request(vec!["x".repeat(ARG_MAX)])).is_none(),
             "上限本身允许"
         );
-    }
-
-    #[test]
-    fn limits_reach_the_child() {
-        let path = Path::new("/bin/cat");
-        if !path.exists() {
-            return;
-        }
-        let mut child = start(path, &[]).expect("cat 可拉起");
-        limit(&child).expect("降限不需要特权");
-        let text = std::fs::read_to_string(format!("/proc/{}/limits", child.id()));
-        let _ = child.kill();
-        let _ = child.wait();
-        let text = text.expect("procfs 可读");
-        assert_eq!(soft(&text, "Max cpu time"), CPU_SECS);
-        assert_eq!(soft(&text, "Max open files"), FILE_MAX);
-    }
-
-    /// 取 `/proc/<pid>/limits` 一行里的软限数字：`Max cpu time <软> <硬> 单位`。
-    fn soft(text: &str, prefix: &str) -> u64 {
-        let line = text
-            .lines()
-            .find(|line| line.starts_with(prefix))
-            .unwrap_or_else(|| panic!("缺少 {prefix}"));
-        let field = line.split_whitespace().nth(3).expect("软限字段");
-        field.parse().expect("软限是数字")
     }
 
     #[test]
