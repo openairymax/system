@@ -69,7 +69,7 @@ impl Drop for Term {
 }
 
 fn lost() -> SourceError {
-    SourceError::Unavailable { component: "tty" }
+    SourceError::unavailable("tty")
 }
 
 #[cfg(test)]
