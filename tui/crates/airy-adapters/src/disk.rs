@@ -12,7 +12,12 @@
 
 //! `airy-disk --json` 三个子命令的消费侧类型。
 
+use intent::Refusal;
+use serde::de::DeserializeOwned;
 use serde::Deserialize;
+
+/// 本版支持的契约版本；与 0.0.4 的 `model.SCHEMA_VERSION` 一致。
+pub const SCHEMA_VERSION: u32 = 1;
 
 /// `airy-disk status --json` 的顶层对象。
 #[derive(Debug, Deserialize)]
@@ -284,4 +289,34 @@ pub enum HealthState {
     LowSpace,
     /// 拓扑认为已挂载而内核未挂载。
     Unavailable,
+}
+
+impl Status {
+    /// 解析 status 载荷；schema 不是 [`SCHEMA_VERSION`] 即拒绝。
+    pub fn parse(bytes: &[u8]) -> Result<Self, Refusal> {
+        let status: Self = decode(bytes)?;
+        if status.schema == SCHEMA_VERSION {
+            Ok(status)
+        } else {
+            Err(Refusal::unsupported(status.schema))
+        }
+    }
+}
+
+impl Layout {
+    /// 解析 layout 载荷；字段与枚举不受支持即拒绝。
+    pub fn parse(bytes: &[u8]) -> Result<Self, Refusal> {
+        decode(bytes)
+    }
+}
+
+impl Health {
+    /// 解析 health 载荷；字段与枚举不受支持即拒绝。
+    pub fn parse(bytes: &[u8]) -> Result<Self, Refusal> {
+        decode(bytes)
+    }
+}
+
+fn decode<T: DeserializeOwned>(bytes: &[u8]) -> Result<T, Refusal> {
+    serde_json::from_slice(bytes).map_err(Refusal::invalid)
 }
