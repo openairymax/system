@@ -22,6 +22,32 @@ pub trait InputSource: Send {
     fn close(&mut self) -> Result<(), SourceError>;
 }
 
+/// 契约 §4.1：来源与信任级别的合法组合。
+///
+/// 适配器在把事件交给组合层之前调用一次；组合层不再复核，也不得改写级别。
+pub fn trust_ok(kind: SourceKind, trust: Trust) -> Result<(), SourceError> {
+    let ok = match kind {
+        SourceKind::Key | SourceKind::Voice => trust == Trust::T0,
+        SourceKind::Api => matches!(trust, Trust::T1 | Trust::T2),
+        SourceKind::Batch => trust == Trust::T3,
+    };
+    if ok {
+        Ok(())
+    } else {
+        Err(SourceError::Denied {
+            need: need_of(kind),
+        })
+    }
+}
+
+fn need_of(kind: SourceKind) -> Trust {
+    match kind {
+        SourceKind::Key | SourceKind::Voice => Trust::T0,
+        SourceKind::Api => Trust::T1,
+        SourceKind::Batch => Trust::T3,
+    }
+}
+
 /// 适配器错误；一个变体只对应契约里的一条失败语义。
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum SourceError {
@@ -203,6 +229,27 @@ mod tests {
             "5000",
             "预算毫秒要写进附加字段"
         );
+    }
+
+    #[test]
+    fn trust_pairs_match_the_contract() {
+        let levels = [Trust::T0, Trust::T1, Trust::T2, Trust::T3];
+        for kind in [SourceKind::Key, SourceKind::Voice] {
+            for level in levels {
+                assert_eq!(trust_ok(kind, level).is_ok(), level == Trust::T0);
+            }
+        }
+        for level in levels {
+            let api = trust_ok(SourceKind::Api, level);
+            assert_eq!(api.is_ok(), matches!(level, Trust::T1 | Trust::T2));
+            if let Err(err) = api {
+                assert_eq!(err.detail(), "T1", "API 的最低级别是 T1");
+            }
+            assert_eq!(
+                trust_ok(SourceKind::Batch, level).is_ok(),
+                level == Trust::T3
+            );
+        }
     }
 
     #[test]
