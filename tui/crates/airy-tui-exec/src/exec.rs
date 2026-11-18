@@ -23,7 +23,9 @@ use std::time::{Duration, Instant};
 use intent::{FailKind, TraceId};
 use rustix::process::{prlimit, Pid, Resource, Rlimit};
 
+use crate::approval;
 use crate::normalize::{Captured, Outcome, PIPE_LIMIT};
+use crate::sha256;
 
 /// 入口的安装目录；子进程拉起的绝对路径由它与入口名拼成。
 pub const BIN_DIR: &str = "/usr/bin";
@@ -107,6 +109,15 @@ impl Prog {
     }
 }
 
+/// 动作的风险级别；高危动作必须有 root 预置的批准文件。
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Risk {
+    /// 只读或可回退的动作。
+    Normal,
+    /// 改变系统状态、执行前必须命中批准文件。
+    High,
+}
+
 /// 一次执行请求；实参已由路由层按动作定义生成，执行面不再解释语义。
 #[derive(Clone, Debug)]
 pub struct Request {
@@ -116,6 +127,20 @@ pub struct Request {
     pub args: Vec<String>,
     /// 追踪号；失败与审计行都要带它。
     pub trace: TraceId,
+    /// 动作名；批准文件按 `<action>.conf` 命名。
+    pub action: &'static str,
+    /// 风险级别；决定是否必须过审批链。
+    pub risk: Risk,
+}
+
+/// 审批与审计共用的摘要：入口名与实参按 NUL 连接后取 SHA-256。
+pub fn digest(req: &Request) -> String {
+    let mut bytes = req.prog.name().as_bytes().to_vec();
+    for arg in &req.args {
+        bytes.push(0);
+        bytes.extend_from_slice(arg.as_bytes());
+    }
+    sha256::hex(&bytes)
 }
 
 /// 子进程的结束方式；与结果里的状态列一一对应。
@@ -136,6 +161,25 @@ pub fn run(req: &Request) -> Outcome {
     if let Some(refused) = check_args(req) {
         return refused;
     }
+    let permit = match permit_of(req) {
+        Ok(permit) => permit,
+        Err(reason) => return Outcome::refused(reason, req.trace),
+    };
+    let mut outcome = launch(req);
+    outcome.approval = permit;
+    outcome
+}
+
+/// 高危动作过审批链；普通动作直接放行，返回命中的批准文件名。
+fn permit_of(req: &Request) -> Result<Option<String>, approval::Refusal> {
+    if req.risk == Risk::Normal {
+        return Ok(None);
+    }
+    approval::check(req.action, &digest(req)).map(|permit| Some(permit.file))
+}
+
+/// 拉起子进程并收集结果；调用前实参与审批均已通过。
+fn launch(req: &Request) -> Outcome {
     match start(&path_of(req.prog), &req.args) {
         Ok(mut child) => match limit(&child) {
             Ok(()) => collect(req.trace, child, BUDGET),
@@ -277,7 +321,19 @@ mod tests {
             prog: Prog::Disk,
             args,
             trace: trace(),
+            action: "test.action",
+            risk: Risk::Normal,
         }
+    }
+
+    #[test]
+    fn digest_covers_the_program_and_every_argument() {
+        let mut req = request(vec!["grow".into(), "/dev/sda".into()]);
+        req.action = "disk.grow";
+        assert_eq!(
+            digest(&req),
+            "bd59c37587ac7c73673722b0044c4c6b2527684c937fccfe2ac6a7e876790667"
+        );
     }
 
     #[test]
