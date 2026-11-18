@@ -17,6 +17,8 @@
 
 use intent::{FailKind, TraceId};
 
+use crate::approval::Refusal;
+
 /// 单条管道最多保留的字节数；超出即截断并标记，不再增长。
 pub const PIPE_LIMIT: usize = 1 << 20;
 
@@ -42,6 +44,10 @@ pub struct Outcome {
     pub advice: &'static str,
     /// 追踪号；失败时必须有。
     pub trace: TraceId,
+    /// 审批拒绝原因；非审批失败为 `None`。
+    pub reason: Option<&'static str>,
+    /// 命中的批准文件名；未过审批链或未命中为 `None`。
+    pub approval: Option<String>,
     /// 标准输出。
     pub stdout: Captured,
     /// 标准错误。
@@ -65,6 +71,8 @@ impl Outcome {
             errno: 0,
             advice: "",
             trace,
+            reason: None,
+            approval: None,
             stdout: Captured::default(),
             stderr: Captured::default(),
         }
@@ -78,9 +86,18 @@ impl Outcome {
             errno: kind.errno(),
             advice: kind.advice(),
             trace,
+            reason: None,
+            approval: None,
             stdout: Captured::default(),
             stderr: Captured::default(),
         }
+    }
+
+    /// 审批链拒绝；三列取「需要批准」，并记下具体原因供审计行使用。
+    pub fn refused(reason: Refusal, trace: TraceId) -> Self {
+        let mut outcome = Self::failed(FailKind::Approval, trace);
+        outcome.reason = Some(reason.reason());
+        outcome
     }
 }
 
