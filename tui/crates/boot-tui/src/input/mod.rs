@@ -22,6 +22,7 @@ pub use escape::{decode, lone, Decoder, Step, MAX_PENDING};
 pub use event::{
     AudioRef, KeyAction, KeyEvent, Mods, MonoTime, RawBody, RawEvent, SourceKind, TraceId, Trust,
 };
+pub use intent::FailKind;
 pub use key::key_byte;
-pub use source::{trust_ok, FailKind, InputSource, SourceError};
+pub use source::{trust_ok, InputSource, SourceError};
 pub use term::Term;

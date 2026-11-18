@@ -18,6 +18,7 @@
 use serde::Deserialize;
 use serde_json::Value;
 
+use crate::status::FailKind;
 use crate::trust::{SourceKind, Trust};
 
 /// 契约 §2.1 的固定 schema 值；MAJOR 变更才改此值。
@@ -302,11 +303,19 @@ impl CheckError {
         }
     }
 
-    /// 契约 §7 的稳定状态串。
+    /// 契约 §7 的稳定状态串，取自统一的失败语义表。
     pub fn status(self) -> &'static str {
         match self {
-            Self::Invalid(_) => "invalid",
-            Self::Denied(_) => "denied",
+            Self::Invalid(_) => FailKind::Invalid.status(),
+            Self::Denied(_) => FailKind::Denied.status(),
+        }
+    }
+
+    /// 契约 §7 的返回码，取自统一的失败语义表。
+    pub fn errno(self) -> i32 {
+        match self {
+            Self::Invalid(_) => FailKind::Invalid.errno(),
+            Self::Denied(_) => FailKind::Denied.errno(),
         }
     }
 }
