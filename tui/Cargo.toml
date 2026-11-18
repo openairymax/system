@@ -13,6 +13,10 @@
 #                       linux-raw-sys 的原始常量，依赖面更窄。
 #   unicode-width       §14.4 明确要求 vendored 并钉版本，列宽只此一处算法。
 #   unicode-segmentation §14.4 明确要求 vendored 并钉版本，截断落在字素簇边界。
+#   serde_json         §10.2 的 Structured 载荷按契约是 JSON 值，接入侧只做
+#                       语法校验、不解释动作语义；手写解析器无法承担转义与
+#                       数值边界，故用经过审计的现成实现。serde 与派生实现
+#                       随它进入锁，等到有 crate 真正需要时再单独声明。
 #
 # vendor 目录是离线构建的唯一来源，`.cargo/config.toml` 指向它并置
 # offline，任何绕过白名单的依赖在无网环境里直接构建失败。
@@ -29,6 +33,7 @@ rustix = { version = "1.1.6", default-features = false, features = [
 ] }
 unicode-segmentation = "1.13.3"
 unicode-width = "0.2.3"
+serde_json = { version = "1.0.151", default-features = false, features = ["std"] }
 
 [workspace.package]
 version = "0.1.0"

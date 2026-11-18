@@ -22,11 +22,15 @@ yanked = "deny"
 [licenses]
 version = 2
 # 表达式按 OR 取支、AND 全取；允许集之外的任何一支都不通过。
+# Unicode-3.0 是 unicode-ident 的 conjunct（其表达式为
+# "(MIT OR Apache-2.0) AND Unicode-3.0"）。该 crate 只提供码点分类表，
+# 由 proc-macro2 引入，无法替换；Unicode 许可证是 MIT 风格的宽松许可。
 allow = [
     "MIT",
     "Apache-2.0",
     "Apache-2.0 WITH LLVM-exception",
     "AGPL-3.0-or-later",
+    "Unicode-3.0",
 ]
 
 [bans]
