@@ -11,6 +11,7 @@ name = "airy-tui-exec"
 version = "0.1.0"
 dependencies = [
  "intent",
+ "rustix",
 ]
 
 [[package]]

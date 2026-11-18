@@ -21,6 +21,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use intent::{FailKind, TraceId};
+use rustix::process::{prlimit, Pid, Resource, Rlimit};
 
 use crate::normalize::{Captured, Outcome, PIPE_LIMIT};
 
@@ -41,6 +42,15 @@ pub const BUDGET: Duration = Duration::from_secs(10);
 
 /// 等待子进程的轮询间隔；只影响超时的判定粒度。
 const POLL: Duration = Duration::from_millis(20);
+
+/// 单个子进程的 CPU 秒数上限；与端到端预算同量级，兜住死循环。
+const CPU_SECS: u64 = 10;
+
+/// 单个子进程可打开的文件数；入口只需少量文件与两条管道。
+const FILE_MAX: u64 = 64;
+
+/// 单个实参的字节上限；超过即拒绝，参数不是数据通道。
+pub const ARG_MAX: usize = 64 << 10;
 
 /// 取不到具体 errno 时的兜底返回码。
 const EIO: i32 = 5;
@@ -123,15 +133,55 @@ enum End {
 /// 进程没跑起来时不会伪造结果：状态列取 `unavailable`，返回码保留内核
 /// 给出的具体 errno，调用方据此区分「程序缺失」与「权限不足」。
 pub fn run(req: &Request) -> Outcome {
+    if let Err(refused) = check_args(req) {
+        return refused;
+    }
     match start(&path_of(req.prog), &req.args) {
-        Ok(child) => collect(req.trace, child, BUDGET),
-        Err(err) => failed_spawn(req.trace, &err),
+        Ok(mut child) => match limit(&child) {
+            Ok(()) => collect(req.trace, child, BUDGET),
+            Err(err) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                failed_spawn(req.trace, FailKind::Internal, &err)
+            }
+        },
+        Err(err) => failed_spawn(req.trace, FailKind::Unavailable, &err),
     }
 }
 
-/// 拉起失败的结果：状态列取 `unavailable`，返回码保留内核给出的具体值。
-fn failed_spawn(trace: TraceId, err: &std::io::Error) -> Outcome {
-    let mut outcome = Outcome::failed(FailKind::Unavailable, trace);
+/// 实参边界：单条不超过 [`ARG_MAX`]，且不含 NUL。
+///
+/// 两者都会让内核截断或拒绝参数，等到 execve 再报错就分不清是入口的
+/// 问题还是参数的问题；在这里挡下，状态列仍是 `invalid`。
+fn check_args(req: &Request) -> Result<(), Outcome> {
+    for arg in &req.args {
+        if arg.len() > ARG_MAX || arg.as_bytes().contains(&0) {
+            return Err(Outcome::failed(FailKind::Invalid, req.trace));
+        }
+    }
+    Ok(())
+}
+
+/// 给子进程设资源上限；降限不需要特权，失败说明进程已不可控，直接放弃。
+fn limit(child: &Child) -> std::io::Result<()> {
+    let pid =
+        Pid::from_raw(child.id() as i32).ok_or_else(|| std::io::Error::from_raw_os_error(EIO))?;
+    prlimit(Some(pid), Resource::Cpu, cap(CPU_SECS))?;
+    prlimit(Some(pid), Resource::Nofile, cap(FILE_MAX))?;
+    Ok(())
+}
+
+/// 软硬上限同值：子进程既不能越过，也不能自己调高。
+fn cap(value: u64) -> Rlimit {
+    Rlimit {
+        current: Some(value),
+        maximum: Some(value),
+    }
+}
+
+/// 拉起或约束失败的结果：状态列由调用方指定，返回码保留内核给出的具体值。
+fn failed_spawn(trace: TraceId, kind: FailKind, err: &std::io::Error) -> Outcome {
+    let mut outcome = Outcome::failed(kind, trace);
     outcome.errno = -err.raw_os_error().unwrap_or(EIO);
     outcome
 }
@@ -223,6 +273,14 @@ mod tests {
         TraceId::parse("9f2c1b7e4d6a4c0e8b3f5a1d2c7e9b40").expect("合法追踪号")
     }
 
+    fn request(args: Vec<String>) -> Request {
+        Request {
+            prog: Prog::Disk,
+            args,
+            trace: trace(),
+        }
+    }
+
     #[test]
     fn table_rows_match_their_discriminants() {
         for (row, (_, prog)) in PROGRAMS.iter().enumerate() {
@@ -247,10 +305,52 @@ mod tests {
 
     #[test]
     fn spawn_failure_keeps_the_kernel_errno() {
-        let out = failed_spawn(trace(), &std::io::Error::from_raw_os_error(2));
+        let out = failed_spawn(
+            trace(),
+            FailKind::Unavailable,
+            &std::io::Error::from_raw_os_error(2),
+        );
         assert_eq!(out.status, "unavailable");
         assert_eq!(out.errno, -2, "程序缺失要报 ENOENT，不折叠成通用码");
         assert!(!out.is_ok());
+    }
+
+    #[test]
+    fn nul_and_oversized_arguments_are_refused() {
+        let nul = check_args(&request(vec!["a\0b".into()])).expect_err("NUL 必须拒绝");
+        assert_eq!(nul.status, "invalid");
+        let big = check_args(&request(vec!["x".repeat(ARG_MAX + 1)])).expect_err("超长必须拒绝");
+        assert_eq!(big.errno, -22);
+        assert!(
+            check_args(&request(vec!["x".repeat(ARG_MAX)])).is_ok(),
+            "上限本身允许"
+        );
+    }
+
+    #[test]
+    fn limits_reach_the_child() {
+        let path = Path::new("/bin/cat");
+        if !path.exists() {
+            return;
+        }
+        let mut child = start(path, &[]).expect("cat 可拉起");
+        limit(&child).expect("降限不需要特权");
+        let text = std::fs::read_to_string(format!("/proc/{}/limits", child.id()));
+        let _ = child.kill();
+        let _ = child.wait();
+        let text = text.expect("procfs 可读");
+        assert_eq!(soft(&text, "Max cpu time"), CPU_SECS);
+        assert_eq!(soft(&text, "Max open files"), FILE_MAX);
+    }
+
+    /// 取 `/proc/<pid>/limits` 一行里的软限数字：`Max cpu time <软> <硬> 单位`。
+    fn soft(text: &str, prefix: &str) -> u64 {
+        let line = text
+            .lines()
+            .find(|line| line.starts_with(prefix))
+            .unwrap_or_else(|| panic!("缺少 {prefix}"));
+        let field = line.split_whitespace().nth(3).expect("软限字段");
+        field.parse().expect("软限是数字")
     }
 
     #[test]

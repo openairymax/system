@@ -16,3 +16,4 @@ workspace = true
 
 [dependencies]
 intent = { path = "../intent" }
+rustix = { workspace = true }
