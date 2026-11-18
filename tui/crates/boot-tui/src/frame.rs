@@ -12,10 +12,14 @@
 
 //! 版面、事件处理与单帧绘制。
 
-use crate::input::{KeyAction, KeyEvent, RawBody, RawEvent, KEY_C, KEY_ESC, KEY_F5, KEY_Q};
+use crate::input::{
+    KeyAction, KeyEvent, RawBody, RawEvent, KEY_C, KEY_END, KEY_ESC, KEY_F5, KEY_HOME,
+    KEY_PAGEDOWN, KEY_PAGEUP, KEY_Q,
+};
 use crate::layout::Layout;
 use crate::paint::Painter;
 use crate::screen::{fits, CellGrid, Style};
+use crate::scrollback::Scroll;
 use crate::session_store::Record;
 use crate::status::Face;
 use crate::theme::Theme;
@@ -40,10 +44,13 @@ const READY: &str = "会话层已就绪。";
 const INPUT: &str = "输入通道：键盘。";
 
 /// 按键提示。
-const KEYS: &str = "按键：q / Esc / Ctrl-C 退出，F5 重绘。";
+const KEYS: &str = "按键：q / Esc / Ctrl-C 退出，PgUp/PgDn 回看，F5 重绘。";
 
 /// 常态状态栏。
-const FOOT: &str = "q 退出 · F5 重绘";
+const FOOT: &str = "q 退出 · PgUp/PgDn 回看 · F5 重绘";
+
+/// 回看中的状态栏；位置必须可见，否则用户不知道自己在哪一页。
+const FOOT_BACK: &str = "PgDn/End 回底 · 回看 -";
 
 /// 慢帧状态栏；降级必须可见，不得静默丢帧。
 const FOOT_SLOW: &str = "render=slow · q 退出";
@@ -57,8 +64,7 @@ pub struct App {
     painter: Painter,
     theme: Theme,
     out: Vec<u8>,
-    face: Option<Face>,
-    recovery: Option<String>,
+    scroll: Scroll,
     quit: bool,
     slow: bool,
 }
@@ -66,13 +72,17 @@ pub struct App {
 impl App {
     /// 按终端尺寸建版面。
     pub fn new(cols: u16, rows: u16) -> Self {
+        let mut scroll = Scroll::new();
+        scroll.push(READY);
+        scroll.push(String::new());
+        scroll.push(INPUT);
+        scroll.push(KEYS);
         Self {
             grid: CellGrid::new(cols, rows),
             painter: Painter::new(cols, rows),
             theme: Theme::builtin(),
             out: Vec::new(),
-            face: None,
-            recovery: None,
+            scroll,
             quit: false,
             slow: false,
         }
@@ -80,43 +90,26 @@ impl App {
 
     /// 收下状态面并重排。
     pub fn set_face(&mut self, face: Face) {
-        self.face = Some(face);
+        self.scroll.push(String::new());
+        self.scroll.push("状态面");
+        self.scroll.push(face.probe.line());
+        self.scroll.push(face.rt.line());
+        self.scroll.push(String::new());
+        self.scroll.push("追踪");
+        for line in face.trace.lines() {
+            self.scroll.push(line);
+        }
         self.grid.touch_all();
     }
 
-    /// 上次会话未正常结束时，把结论放在就绪行下方。
+    /// 上次会话未正常结束时，把结论写进会话流。
     pub fn show_recovery(&mut self, record: &Record) {
-        self.recovery = Some(format!(
+        self.scroll.push(format!(
             "上次会话未正常结束：{}（{}）",
             record.state.word(),
             record.note
         ));
         self.grid.touch_all();
-    }
-
-    /// 正文各行；状态面读到之前只有一行占位。
-    fn body_lines(&self) -> Vec<String> {
-        let mut lines = vec![
-            READY.to_owned(),
-            self.recovery.clone().unwrap_or_default(),
-            String::new(),
-            INPUT.to_owned(),
-            String::new(),
-        ];
-        match &self.face {
-            Some(face) => {
-                lines.push("状态面".to_owned());
-                lines.push(face.probe.line());
-                lines.push(face.rt.line());
-                lines.push(String::new());
-                lines.push("追踪".to_owned());
-                lines.extend(face.trace.lines());
-            }
-            None => lines.push("状态面读取中…".to_owned()),
-        }
-        lines.push(String::new());
-        lines.push(KEYS.to_owned());
-        lines
     }
 
     /// 尺寸变化后重排并整屏重画。
@@ -163,7 +156,7 @@ impl App {
         self.grid.touch(self.grid.rows().saturating_sub(1));
     }
 
-    /// 退出键：q、Esc 与 Ctrl-C；F5 只重画。
+    /// 退出键：q、Esc 与 Ctrl-C；回看键只移动视口，F5 只重画。
     fn on_key(&mut self, key: &KeyEvent) {
         if key.action == KeyAction::Release {
             return;
@@ -171,14 +164,26 @@ impl App {
         if key.code == KEY_F5 {
             self.grid.touch_all();
             self.painter.repaint();
-            return;
-        }
-        if quit_key(key) {
+        } else if self.scroll_key(key.code) {
+            self.grid.touch_all();
+        } else if quit_key(key) {
             self.quit = true;
         }
     }
 
-    /// 全屏重排：顶栏、正文与状态栏；尺寸不足时只留一行提示。
+    /// 回看键；返回是否已消费。
+    fn scroll_key(&mut self, code: u16) -> bool {
+        match code {
+            KEY_PAGEUP => self.scroll.page_up(),
+            KEY_PAGEDOWN => self.scroll.page_dn(),
+            KEY_HOME => self.scroll.home(),
+            KEY_END => self.scroll.tail(),
+            _ => return false,
+        }
+        true
+    }
+
+    /// 全屏重排：顶栏、会话流与状态栏；尺寸不足时只留一行提示。
     fn compose(&mut self) {
         let cols = self.grid.cols();
         let rows = self.grid.rows();
@@ -195,7 +200,8 @@ impl App {
             clip_cols(TITLE, area.head.w.saturating_sub(1)),
             self.theme.bar,
         );
-        for (at, line) in self.body_lines().iter().enumerate() {
+        let lines = self.scroll.view(area.body.w, area.body.h);
+        for (at, line) in lines.iter().enumerate() {
             let at = at as u16;
             if at >= area.body.h {
                 break;
@@ -211,21 +217,24 @@ impl App {
             return;
         }
         self.grid.fill_row(area.foot.y, self.theme.foot);
+        let foot = self.footer();
         self.grid.put(
             area.foot.x + 1,
             area.foot.y,
-            clip_cols(self.footer(), area.foot.w.saturating_sub(2)),
+            clip_cols(&foot, area.foot.w.saturating_sub(2)),
             self.theme.foot,
         );
     }
 
-    /// 状态栏文字随慢帧标记切换。
-    fn footer(&self) -> &'static str {
+    /// 状态栏文字随慢帧与回看位置切换。
+    fn footer(&self) -> String {
         if self.slow {
-            FOOT_SLOW
-        } else {
-            FOOT
+            return FOOT_SLOW.to_owned();
         }
+        if self.scroll.is_tail() {
+            return FOOT.to_owned();
+        }
+        format!("{FOOT_BACK}{}", self.scroll.back())
     }
 }
 
@@ -245,6 +254,8 @@ mod tests {
     use crate::input::{Mods, MonoTime, SourceKind, TraceId, Trust};
     use crate::screen::{MIN_COLS, MIN_ROWS};
     use crate::session_store::{Record, State};
+    use crate::status::Item;
+    use crate::trace_view::View;
 
     fn event(key: KeyEvent) -> RawEvent {
         RawEvent {
@@ -342,6 +353,33 @@ mod tests {
         let mut app = App::new(MIN_COLS - 4, MIN_ROWS - 2);
         app.draw();
         assert!(text(&app).contains("终端过小"));
+    }
+
+    #[test]
+    fn paging_up_and_end_move_the_view() {
+        let mut app = app();
+        let face = || Face {
+            probe: Item {
+                name: "探针",
+                text: "ok".to_owned(),
+            },
+            rt: Item {
+                name: "实时",
+                text: "ok".to_owned(),
+            },
+            trace: View::failed("未安装"),
+        };
+        for _ in 0..5 {
+            app.set_face(face());
+        }
+        app.draw();
+        app.step(&[key(KEY_PAGEUP, false)]);
+        app.draw();
+        assert!(text(&app).contains("回看 -"));
+        app.step(&[key(KEY_END, false)]);
+        app.draw();
+        assert!(text(&app).contains(FOOT));
+        assert!(!text(&app).contains("回看 -"));
     }
 
     #[test]

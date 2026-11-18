@@ -24,6 +24,8 @@ pub use event::{
     AudioRef, KeyAction, KeyEvent, Mods, MonoTime, RawBody, RawEvent, SourceKind, TraceId, Trust,
 };
 pub use intent::{FailKind, Refusal};
-pub use key::{key_byte, KEY_C, KEY_ESC, KEY_F5, KEY_Q};
+pub use key::{
+    key_byte, KEY_C, KEY_END, KEY_ESC, KEY_F5, KEY_HOME, KEY_PAGEDOWN, KEY_PAGEUP, KEY_Q,
+};
 pub use source::{trust_ok, InputSource};
 pub use term::{Keys, Term};
