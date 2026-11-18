@@ -8,7 +8,7 @@
 // SSoT: 30-interfaces/11-input-ingress.md §2.1、§4.1、§10.2。
 // ===========================================================================
 
-pub use intent::{SourceKind, TraceId, Trust};
+pub use intent::{AudioRef, SourceKind, TraceId, Trust};
 
 /// 单调时钟读数，单位纳秒，用于乱序与超时判定。
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -45,17 +45,6 @@ pub struct KeyEvent {
     pub mods: Mods,
     /// 本次动作。
     pub action: KeyAction,
-}
-
-/// 语音回放引用；`digest` 与实物不符即拒绝。
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct AudioRef {
-    /// 受管目录内的相对路径。
-    pub path: String,
-    /// `sha256:` 前缀的摘要。
-    pub digest: String,
-    /// 时长，单位毫秒。
-    pub duration_ms: u32,
 }
 
 /// L1 载荷：保持来源原貌，不在此处做归一化。

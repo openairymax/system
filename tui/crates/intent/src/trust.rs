@@ -11,29 +11,39 @@
 
 //! 来源种类、信任级别与二者之间的合法配对。
 
+use serde::Deserialize;
+
 /// 来源种类，与 `airy.intent/1` 的 `source.kind` 一一对应。
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
 pub enum SourceKind {
     /// 本地键盘：适配器只产键码，不产文本。
+    #[serde(rename = "keyboard")]
     Key,
     /// 语音：识别结果先进可编辑缓冲区，确认后才成为意图。
+    #[serde(rename = "voice")]
     Voice,
     /// 外接结构化 API：身份由 `SO_PEERCRED` 决定。
+    #[serde(rename = "api")]
     Api,
     /// 批处理：逐行一个意图，信任级别固定 T3。
+    #[serde(rename = "batch")]
     Batch,
 }
 
 /// 信任级别；只由适配器判定，组合层不得改写。
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
 pub enum Trust {
     /// 本地控制台用户。
+    #[serde(rename = "T0")]
     T0,
     /// 已认证会话用户。
+    #[serde(rename = "T1")]
     T1,
     /// 服务主体。
+    #[serde(rename = "T2")]
     T2,
     /// 自动化。
+    #[serde(rename = "T3")]
     T3,
 }
 
