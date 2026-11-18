@@ -1,0 +1,42 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later OR Apache-2.0
+# ===========================================================================
+# system/tui/deny.toml — TUI 工作区的依赖准入声明
+#
+# 三个面在这里一次说清，全部取「缺席即拒绝」：许可证只接受列出的表达式，
+# 同名多版本与通配依赖不接受，来源只接受 crates-io 与本地工作区成员。
+# 之前这些判断散在评审意见里，换一个人就换个口径；写成声明之后，
+# ci/gates/rust-sbom.sh 会拿它逐条去判物料清单，声明与实物对不上就红。
+#
+# 允许集是工作区的 SPDX 双许可（AGPL-3.0-or-later OR Apache-2.0）加上依赖
+# 实际使用的 MIT、Apache-2.0（含 LLVM 例外）。不复用 crates-io 的默认宽松
+# 集合：默认集会随工具版本变化，而依赖树一旦被换成别的许可证不会有人看见。
+#
+# 本文件只声明判据，不安装工具：cargo-deny 需要联网取 advisory 库，构建机
+# 与门禁机都不保证有网。advisories 段仍写全，供有网环境直接复用本文件。
+# ===========================================================================
+
+[advisories]
+version = 2
+yanked = "deny"
+
+[licenses]
+version = 2
+# 表达式按 OR 取支、AND 全取；允许集之外的任何一支都不通过。
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "AGPL-3.0-or-later",
+]
+
+[bans]
+# 同一 crate 出现两个版本意味着两套类型与两份补丁面；工作区是单一发行体，
+# 不允许这种分叉。通配版本要求让构建结果取决于取源当天，同样拒绝。
+multiple-versions = "deny"
+wildcards = "deny"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+# 离线构建的源是 vendor/，cargo 看到的仍是 crates-io 标识。
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
