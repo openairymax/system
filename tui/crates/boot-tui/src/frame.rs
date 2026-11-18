@@ -14,7 +14,8 @@
 
 use crate::input::{KeyAction, KeyEvent, RawBody, RawEvent, KEY_C, KEY_ESC, KEY_F5, KEY_Q};
 use crate::paint::Painter;
-use crate::screen::{clip, fits, Attr, CellGrid, Color, Style};
+use crate::screen::{fits, Attr, CellGrid, Color, Style};
+use crate::wcwidth::clip_cols;
 
 /// 单帧最多处理的输入事件，余下的留到下一帧。
 pub const MAX_BATCH: usize = 64;
@@ -146,23 +147,27 @@ impl App {
         let rows = self.grid.rows();
         self.grid.clear(Style::DEFAULT);
         if !fits(cols, rows) {
-            self.grid.put(0, 0, clip(SMALL, cols), Style::DEFAULT);
+            self.grid.put(0, 0, clip_cols(SMALL, cols), Style::DEFAULT);
             return;
         }
         self.grid.fill_row(0, BAR);
         self.grid
-            .put(1, 0, clip(TITLE, cols.saturating_sub(1)), BAR);
+            .put(1, 0, clip_cols(TITLE, cols.saturating_sub(1)), BAR);
         for (at, line) in [READY, "", INPUT, "", KEYS].iter().enumerate() {
             let y = 2 + at as u16;
-            self.grid
-                .put(1, y, clip(line, cols.saturating_sub(2)), Style::DEFAULT);
+            self.grid.put(
+                1,
+                y,
+                clip_cols(line, cols.saturating_sub(2)),
+                Style::DEFAULT,
+            );
         }
         let last = rows - 1;
         self.grid.fill_row(last, FOOT_STYLE);
         self.grid.put(
             1,
             last,
-            clip(self.footer(), cols.saturating_sub(2)),
+            clip_cols(self.footer(), cols.saturating_sub(2)),
             FOOT_STYLE,
         );
     }
