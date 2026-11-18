@@ -57,6 +57,19 @@ impl Outcome {
         self.status == Self::OK
     }
 
+    /// 子进程正常结束；退出码原样保留，由调用方按各入口契约解释。
+    pub fn spawned(code: Option<i32>, trace: TraceId) -> Self {
+        Self {
+            code,
+            status: Self::OK,
+            errno: 0,
+            advice: "",
+            trace,
+            stdout: Captured::default(),
+            stderr: Captured::default(),
+        }
+    }
+
     /// 由失败类别生成一条结果：三列取自同一张表，追踪号随行。
     pub fn failed(kind: FailKind, trace: TraceId) -> Self {
         Self {
