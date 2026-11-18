@@ -10,7 +10,7 @@
 // SSoT: 30-interfaces/11-input-ingress.md §7、§10.2。
 // ===========================================================================
 
-use intent::FailKind;
+use intent::Refusal;
 
 use super::{RawEvent, SourceKind, Trust};
 
@@ -20,128 +20,40 @@ pub trait InputSource: Send {
     fn kind(&self) -> SourceKind;
 
     /// 最多取出 `max` 条事件；空结果表示当前无可取事件。
-    fn drain(&mut self, max: usize) -> Result<Vec<RawEvent>, SourceError>;
+    fn drain(&mut self, max: usize) -> Result<Vec<RawEvent>, Refusal>;
 
     /// 关闭来源并释放其独占资源；重复关闭不得报错。
-    fn close(&mut self) -> Result<(), SourceError>;
+    fn close(&mut self) -> Result<(), Refusal>;
 }
 
 /// 契约 §4.1：来源与信任级别的合法组合。
 ///
 /// 适配器在把事件交给组合层之前调用一次；组合层不再复核，也不得改写级别。
-pub fn trust_ok(kind: SourceKind, trust: Trust) -> Result<(), SourceError> {
+pub fn trust_ok(kind: SourceKind, trust: Trust) -> Result<(), Refusal> {
     if kind.allows(trust) {
         Ok(())
     } else {
-        Err(SourceError::denied(kind.need()))
-    }
-}
-
-/// 适配器错误；类别决定状态串与返回码，附加字段只放具体证据。
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct SourceError {
-    kind: FailKind,
-    detail: String,
-}
-
-impl SourceError {
-    /// 语法或必填字段不通过；`field` 是首个不通过的字段名。
-    pub fn invalid(field: &str) -> Self {
-        Self::new(FailKind::Invalid, field)
-    }
-
-    /// 动作未注册。
-    pub fn unsupported(action: &str) -> Self {
-        Self::new(FailKind::Unsupported, action)
-    }
-
-    /// 信任级别不足；附加字段写所需的最低级别。
-    pub fn denied(need: Trust) -> Self {
-        Self::new(FailKind::Denied, need.label())
-    }
-
-    /// 白名单未命中或黑名单命中；附加字段写命中的动作类别。
-    pub fn forbidden(item: &str) -> Self {
-        Self::new(FailKind::Forbidden, item)
-    }
-
-    /// 审批缺失或过期。
-    pub fn approval(action: &str) -> Self {
-        Self::new(FailKind::Approval, action)
-    }
-
-    /// 端到端预算耗尽。
-    pub fn timeout(budget_ms: u32) -> Self {
-        Self::new(FailKind::Timeout, budget_ms)
-    }
-
-    /// 未完成请求达到上限。
-    pub fn busy(pending: usize) -> Self {
-        Self::new(FailKind::Busy, pending)
-    }
-
-    /// 依赖组件不可用。
-    pub fn unavailable(component: &str) -> Self {
-        Self::new(FailKind::Unavailable, component)
-    }
-
-    /// 结果不可序列化；附加字段写事件序号。
-    pub fn internal(seq: u64) -> Self {
-        Self::new(FailKind::Internal, seq)
-    }
-
-    /// 所属类别，供调用方按语义分支。
-    pub fn kind(&self) -> FailKind {
-        self.kind
-    }
-
-    /// 契约 §7 的返回码，统一取负值。
-    pub fn errno(&self) -> i32 {
-        self.kind.errno()
-    }
-
-    /// 稳定的状态串，可直接写进日志与状态栏。
-    pub fn status(&self) -> &'static str {
-        self.kind.status()
-    }
-
-    /// 契约 §7 的「附加」字段：解析位置、字段名、动作名等具体证据。
-    pub fn detail(&self) -> String {
-        self.detail.clone()
-    }
-
-    /// 可执行建议；不含推测，只给本机能做的一步。
-    pub fn advice(&self) -> &'static str {
-        self.kind.advice()
-    }
-
-    fn new(kind: FailKind, detail: impl core::fmt::Display) -> Self {
-        Self {
-            kind,
-            detail: detail.to_string(),
-        }
+        Err(Refusal::denied(kind.need().label()))
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use intent::FailKind;
+
     use super::*;
 
-    fn cases() -> Vec<(SourceError, i32, &'static str)> {
+    fn cases() -> Vec<(Refusal, i32, &'static str)> {
         vec![
-            (SourceError::invalid("schema"), -22, "invalid"),
-            (SourceError::unsupported("disk.wipe"), -22, "unsupported"),
-            (SourceError::denied(Trust::T2), -13, "denied"),
-            (SourceError::forbidden("disk.format"), -1, "denied"),
-            (
-                SourceError::approval("disk.format"),
-                -13,
-                "approval-required",
-            ),
-            (SourceError::timeout(5000), -110, "timeout"),
-            (SourceError::busy(8), -11, "busy"),
-            (SourceError::unavailable("ime"), -95, "unavailable"),
-            (SourceError::internal(7), -5, "internal"),
+            (Refusal::invalid("schema"), -22, "invalid"),
+            (Refusal::unsupported("disk.wipe"), -22, "unsupported"),
+            (Refusal::denied(Trust::T2.label()), -13, "denied"),
+            (Refusal::forbidden("disk.format"), -1, "denied"),
+            (Refusal::approval("disk.format"), -13, "approval-required"),
+            (Refusal::timeout(5000), -110, "timeout"),
+            (Refusal::busy(8), -11, "busy"),
+            (Refusal::unavailable("ime"), -95, "unavailable"),
+            (Refusal::internal(7), -5, "internal"),
         ]
     }
 
@@ -159,12 +71,12 @@ mod tests {
             assert!(!err.detail().is_empty(), "{err:?}");
         }
         assert_eq!(
-            SourceError::denied(Trust::T2).detail(),
+            Refusal::denied(Trust::T2.label()).detail(),
             "T2",
             "所需级别要写进附加字段"
         );
         assert_eq!(
-            SourceError::timeout(5000).detail(),
+            Refusal::timeout(5000).detail(),
             "5000",
             "预算毫秒要写进附加字段"
         );

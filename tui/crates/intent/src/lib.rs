@@ -9,11 +9,13 @@
 
 //! 结构化意图模型的公共接口。
 
+mod refuse;
 mod route;
 mod schema;
 mod status;
 mod trust;
 
+pub use refuse::Refusal;
 pub use route::{decide, Reason, Verdict};
 pub use schema::{
     Approval, AudioRef, CheckError, Constraints, Expect, Intent, Payload, PayloadKind, Session,
