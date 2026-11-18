@@ -15,3 +15,6 @@ publish = false
 workspace = true
 
 [dependencies]
+rustix.workspace = true
+unicode-segmentation.workspace = true
+unicode-width.workspace = true

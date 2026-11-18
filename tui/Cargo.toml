@@ -4,12 +4,31 @@
 #
 # 六个 crate 同处一个 Cargo 工作区，共用一份 Cargo.lock：锁文件是整机
 # 可复现构建的最小单位，按 crate 分锁会让同一次发行里出现两套依赖树。
-# vendor 目录与离线构建由 R-02 建立；本文件不声明任何外部依赖，因此
-# 工作区在无网络条件下即可编译。
+#
+# 外部依赖只在此处声明一次，crate 清单一律用 `{ workspace = true }` 继承。
+# 白名单的每一条都有出处，不接受「写了再说」：
+#   rustix              §14.3 要求精确设置 termios 并用 poll 读取，而工作区
+#                       禁止 unsafe，故终端系统调用必须由安全封装提供。
+#                       选 rustix 而非 nix：前者不链接 libc crate，走
+#                       linux-raw-sys 的原始常量，依赖面更窄。
+#   unicode-width       §14.4 明确要求 vendored 并钉版本，列宽只此一处算法。
+#   unicode-segmentation §14.4 明确要求 vendored 并钉版本，截断落在字素簇边界。
+#
+# vendor 目录是离线构建的唯一来源，`.cargo/config.toml` 指向它并置
+# offline，任何绕过白名单的依赖在无网环境里直接构建失败。
 # ===========================================================================
 [workspace]
 resolver = "2"
 members = ["crates/*"]
+
+[workspace.dependencies]
+rustix = { version = "1.1.6", default-features = false, features = [
+    "event",
+    "stdio",
+    "termios",
+] }
+unicode-segmentation = "1.13.3"
+unicode-width = "0.2.3"
 
 [workspace.package]
 version = "0.1.0"
