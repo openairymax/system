@@ -6,15 +6,18 @@
 // 层转成 airy.intent/1。抽象单位是事件而不是文本：文本只是 Key 源经过
 // IME 之后的产物，语音与结构化载荷不得被塞回「文本 → 输入法」管线。
 //
-// 本片（N-01）只声明类型、trait 与错误码，不含函数体。
+// 本片（N-01）声明 L1 的类型、trait 与错误码；N-02 起补键序列解码。
 // SSoT: 30-interfaces/11-input-ingress.md §10.1-§10.3。
 // ===========================================================================
 
 //! L1 输入事件层：四类来源归一到 [`RawEvent`]。
 
+mod escape;
 mod event;
+mod key;
 mod source;
 
+pub use escape::{decode, lone, Step};
 pub use event::{
     AudioRef, KeyAction, KeyEvent, Mods, MonoTime, RawBody, RawEvent, SourceKind, TraceId, Trust,
 };
