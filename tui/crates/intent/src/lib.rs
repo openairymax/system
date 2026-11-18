@@ -12,6 +12,7 @@
 mod refuse;
 mod route;
 mod schema;
+mod session;
 mod status;
 mod trust;
 
@@ -21,5 +22,6 @@ pub use schema::{
     Approval, AudioRef, CheckError, Constraints, Expect, Intent, Payload, PayloadKind, Session,
     SessionMode, Source, Structured, TraceId, TraceIdError, TrustTag, SCHEMA,
 };
+pub use session::{Ledger, Refuse, SessionState, Unmatched, SEEN};
 pub use status::FailKind;
 pub use trust::{SourceKind, Trust};
