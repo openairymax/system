@@ -22,9 +22,17 @@ path = "tests/degrade/main.rs"
 name = "frame_budget"
 path = "tests/frame_budget.rs"
 
+[[test]]
+name = "matrix"
+path = "tests/matrix/main.rs"
+
 [[bench]]
 name = "frame"
 harness = false
+
+[dev-dependencies]
+asr-gateway = { path = "../asr-gateway" }
+boot-ime = { path = "../boot-ime" }
 
 [dependencies]
 airy-adapters = { path = "../airy-adapters" }

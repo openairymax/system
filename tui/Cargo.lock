@@ -48,6 +48,8 @@ name = "boot-tui"
 version = "0.1.0"
 dependencies = [
  "airy-adapters",
+ "asr-gateway",
+ "boot-ime",
  "intent",
  "rustix",
  "serde_json",
