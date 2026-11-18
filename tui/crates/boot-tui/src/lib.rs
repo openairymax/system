@@ -30,6 +30,7 @@ pub mod scrollback;
 pub mod session;
 pub mod session_store;
 pub mod status;
+pub mod switch;
 pub mod theme;
 pub mod trace_view;
 pub mod wcwidth;
