@@ -1,0 +1,31 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later OR Apache-2.0
+# ===========================================================================
+# airy-session-switch@.service — 运行期会话切换的唯一执行面
+#
+# 实例名就是目标：`@gui` 切到图形，`@tui` 切到终端。用户侧入口只提交本单元
+# 的启动作业就返回，真正的停旧、起新、等就绪、回滚都在这里以 root 完成。
+#
+# 不设 [Install]：它按实例名由 `systemctl start` 拉起，不存在「开机自启」的
+# 语义；进 boot-set 或 preset 都会变成开机就跑一次切换。
+#
+# `TimeoutStartSec` 按最坏路径给：GUI 方向等 90 秒就绪，判负后回滚还要再等
+# 一次 90 秒，加上停单元的余量，300 秒内必然有结论。给足窗口是为了让回滚
+# 走完——到点被 systemd 杀掉会停在「旧会话已停、新会话没起」的中间态。
+#
+# 授权面不在本文件：用户能否启动本单元由 polkit 规则限定，规则只认
+# `airy-session-switch@(gui|tui).service` 与本地主体。
+#
+# SSoT: 0.0.5 方案 §14.15。
+# ===========================================================================
+[Unit]
+Description=AirymaxOS session switch to %i
+Documentation=man:airy-session-mode(1)
+# 不写 ConditionPathIsDirectory：状态目录由本单元的执行体在写入前自建
+# （0755 root，§14.15 F-48）。条件放在单元上会让「目录被清掉后第一次切换」
+# 被 systemd 静默跳过，与 S-9 的判据直接冲突。
+After=dbus.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/airy-session-mode --switch %i
+TimeoutStartSec=300
