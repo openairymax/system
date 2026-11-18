@@ -13,7 +13,8 @@
 //! 屏幕单元、样式与尺寸下限。
 
 use unicode_segmentation::UnicodeSegmentation;
-use unicode_width::UnicodeWidthStr;
+
+use crate::wcwidth::display_width;
 
 /// 可绘制的最小列数；小于此值只显示单行提示。
 pub const MIN_COLS: u16 = 40;
@@ -256,7 +257,7 @@ impl CellGrid {
         }
         let mut col = x;
         for grapheme in text.graphemes(true) {
-            let span = width(grapheme);
+            let span = display_width(grapheme);
             if span == 0 {
                 continue;
             }
@@ -335,25 +336,6 @@ impl CellGrid {
     fn index(&self, col: u16, y: u16) -> usize {
         usize::from(y) * usize::from(self.cols) + usize::from(col)
     }
-}
-
-/// 唯一的列宽入口：按东亚宽度计，歧义宽度固定为 1 列。
-pub fn width(text: &str) -> usize {
-    UnicodeWidthStr::width(text)
-}
-
-/// 截到 `limit` 列以内，切口落在字形边界上。
-pub fn clip(text: &str, limit: u16) -> &str {
-    let limit = usize::from(limit);
-    let mut used = 0;
-    for (at, grapheme) in text.grapheme_indices(true) {
-        let span = width(grapheme);
-        if used + span > limit {
-            return &text[..at];
-        }
-        used += span;
-    }
-    text
 }
 
 #[cfg(test)]
@@ -493,20 +475,6 @@ mod tests {
         let row = src.row(0).to_vec();
         dst.sync_row(0, &row);
         assert_eq!(dst.row(0), src.row(0));
-    }
-
-    #[test]
-    fn clip_cuts_on_grapheme_boundaries() {
-        assert_eq!(clip("极境OS", 3), "极");
-        assert_eq!(clip("极境OS", 4), "极境");
-        assert_eq!(clip("abc", 9), "abc");
-    }
-
-    #[test]
-    fn width_counts_east_asian_columns() {
-        assert_eq!(width("极"), 2);
-        assert_eq!(width("a"), 1);
-        assert_eq!(width("·"), 1);
     }
 
     #[test]
