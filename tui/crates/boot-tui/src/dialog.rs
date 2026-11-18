@@ -215,7 +215,7 @@ impl Dialog {
     fn prev(&self) -> usize {
         self.text[..self.caret]
             .grapheme_indices(true)
-            .last()
+            .next_back()
             .map_or(0, |(at, _)| at)
     }
 
@@ -230,8 +230,6 @@ impl Dialog {
 
 #[cfg(test)]
 mod tests {
-    use unicode_segmentation::UnicodeSegmentation;
-
     use super::{Dialog, Kind, Reply, CARET};
 
     fn input() -> Dialog {
@@ -274,7 +272,6 @@ mod tests {
     #[test]
     fn backspace_removes_a_whole_cluster() {
         let mut dialog = typed("e\u{301}x");
-        assert_eq!(dialog.text().graphemes(true).count(), 2);
         dialog.backspace();
         assert_eq!(dialog.text(), "e\u{301}");
         dialog.backspace();

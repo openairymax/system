@@ -22,6 +22,7 @@ pub mod paint;
 pub mod recover;
 pub mod screen;
 pub mod scrollback;
+pub mod session;
 pub mod session_store;
 pub mod status;
 pub mod theme;
