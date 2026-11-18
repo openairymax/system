@@ -1,0 +1,33 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later OR Apache-2.0
+// ===========================================================================
+// 50-airy-session-switch.rules — 运行期会话切换的授权面
+//
+// 只放行一件事：本地主体启动（或停止）两个实例名的切换单元。其余一律不表态，
+// 由系统默认策略拒绝。
+//
+// 不用 `allow_active`：boot-tui 由 systemd 以 User= 直接拉起，没有 PAM 会话，
+// 也就不在 logind 的会话表里；`allow_active` 对 TUI 恒不成立，切换会拿到
+// not authorized。判据因此改为「动作是 manage-units + 单元名匹配模板 +
+// 主体是本地主体」。
+//
+// 不写 .policy：policy 只能整类授予 manage-units，无法限定到某一个模板单元。
+//
+// SSoT: 0.0.5 方案 §14.15。
+// ===========================================================================
+polkit.addRule(function (action, subject) {
+    if (action.id !== "org.freedesktop.systemd1.manage-units") {
+        return;
+    }
+    var verb = action.lookup("verb");
+    if (verb !== "start" && verb !== "stop") {
+        return;
+    }
+    var unit = action.lookup("unit");
+    if (!/^airy-session-switch@(gui|tui)\.service$/.test(unit)) {
+        return;
+    }
+    if (!subject.local) {
+        return;
+    }
+    return polkit.Result.YES;
+});
