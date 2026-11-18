@@ -1,0 +1,17 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later OR Apache-2.0
+#
+# 结构化意图模型。承 A 模块：输入抽象为意图，三条通道共用同一类型。
+[package]
+name = "intent"
+description = "Structured intent model for the AirymaxOS TUI"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
