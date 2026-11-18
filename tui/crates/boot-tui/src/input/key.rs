@@ -16,14 +16,18 @@ pub const KEY_TAB: u16 = 15;
 /// Q；会话层的退出键。
 pub const KEY_Q: u16 = 16;
 pub const KEY_UP: u16 = 103;
+/// PageUp；会话流向上翻页。
 pub const KEY_PAGEUP: u16 = 104;
 pub const KEY_LEFT: u16 = 105;
 pub const KEY_RIGHT: u16 = 106;
+/// End；会话流回到最新一页。
 pub const KEY_END: u16 = 107;
 pub const KEY_DOWN: u16 = 108;
+/// PageDown；会话流向下翻页。
 pub const KEY_PAGEDOWN: u16 = 109;
 pub const KEY_INSERT: u16 = 110;
 pub const KEY_DELETE: u16 = 111;
+/// Home；会话流回到最早一页。
 pub const KEY_HOME: u16 = 102;
 pub const KEY_F1: u16 = 59;
 pub const KEY_F2: u16 = 60;

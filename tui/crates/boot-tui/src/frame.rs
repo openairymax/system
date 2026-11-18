@@ -12,6 +12,8 @@
 
 //! 版面、事件处理与单帧绘制。
 
+use std::time::Instant;
+
 use crate::input::{
     KeyAction, KeyEvent, RawBody, RawEvent, KEY_C, KEY_END, KEY_ESC, KEY_F5, KEY_HOME,
     KEY_PAGEDOWN, KEY_PAGEUP, KEY_Q,
@@ -20,6 +22,7 @@ use crate::layout::Layout;
 use crate::paint::Painter;
 use crate::screen::{fits, CellGrid, Style};
 use crate::scrollback::Scroll;
+use crate::session::{Role, Session, Stamp};
 use crate::session_store::Record;
 use crate::status::Face;
 use crate::theme::Theme;
@@ -65,6 +68,8 @@ pub struct App {
     theme: Theme,
     out: Vec<u8>,
     scroll: Scroll,
+    session: Session,
+    started: Instant,
     quit: bool,
     slow: bool,
 }
@@ -72,44 +77,57 @@ pub struct App {
 impl App {
     /// 按终端尺寸建版面。
     pub fn new(cols: u16, rows: u16) -> Self {
-        let mut scroll = Scroll::new();
-        scroll.push(READY);
-        scroll.push(String::new());
-        scroll.push(INPUT);
-        scroll.push(KEYS);
-        Self {
+        let mut app = Self {
             grid: CellGrid::new(cols, rows),
             painter: Painter::new(cols, rows),
             theme: Theme::builtin(),
             out: Vec::new(),
-            scroll,
+            scroll: Scroll::new(),
+            session: Session::new(),
+            started: Instant::now(),
             quit: false,
             slow: false,
-        }
+        };
+        app.record(Role::System, READY);
+        app.scroll.push(String::new());
+        app.record(Role::System, INPUT);
+        app.record(Role::System, KEYS);
+        app
     }
 
     /// 收下状态面并重排。
     pub fn set_face(&mut self, face: Face) {
         self.scroll.push(String::new());
-        self.scroll.push("状态面");
-        self.scroll.push(face.probe.line());
-        self.scroll.push(face.rt.line());
+        self.record(Role::System, "状态面");
+        self.record(Role::System, face.probe.line());
+        self.record(Role::System, face.rt.line());
         self.scroll.push(String::new());
-        self.scroll.push("追踪");
+        self.record(Role::System, "追踪");
         for line in face.trace.lines() {
-            self.scroll.push(line);
+            self.record(Role::System, line);
         }
         self.grid.touch_all();
     }
 
     /// 上次会话未正常结束时，把结论写进会话流。
-    pub fn show_recovery(&mut self, record: &Record) {
-        self.scroll.push(format!(
-            "上次会话未正常结束：{}（{}）",
-            record.state.word(),
-            record.note
-        ));
+    pub fn show_recovery(&mut self, prior: &Record) {
+        self.record(
+            Role::System,
+            format!(
+                "上次会话未正常结束：{}（{}）",
+                prior.state.word(),
+                prior.note
+            ),
+        );
         self.grid.touch_all();
+    }
+
+    /// 追加一条会话消息并送到屏上。
+    fn record(&mut self, role: Role, text: impl Into<String>) {
+        let at = Stamp::of(self.started.elapsed());
+        for line in self.session.push(at, role, text) {
+            self.scroll.push(line);
+        }
     }
 
     /// 尺寸变化后重排并整屏重画。
@@ -392,7 +410,7 @@ mod tests {
         app.draw();
         let screen = text(&app);
         assert!(screen.contains("上次会话未正常结束"));
-        assert!(screen.contains("fallback"));
+        assert!(screen.contains("panic: gone"));
     }
 
     #[test]
