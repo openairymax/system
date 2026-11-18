@@ -14,10 +14,36 @@
 
 //! 白名单入口与一次执行请求的形状。
 
-use intent::TraceId;
+use std::io::Read;
+use std::path::Path;
+use std::process::{Child, Command, Stdio};
+use std::thread;
+use std::time::{Duration, Instant};
+
+use intent::{FailKind, TraceId};
+
+use crate::normalize::{Captured, Outcome, PIPE_LIMIT};
 
 /// 入口的安装目录；子进程拉起的绝对路径由它与入口名拼成。
 pub const BIN_DIR: &str = "/usr/bin";
+
+/// 子进程的 `PATH`；固定值，不继承调用方，防止换掉 `PATH` 换掉依赖。
+const CHILD_PATH: &str = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
+
+/// 子进程的 locale；本项目只保证这一种。
+const CHILD_LANG: &str = "C.UTF-8";
+
+/// 子进程的终端类型；boot TUI 独占 tty1。
+const CHILD_TERM: &str = "linux";
+
+/// 单个动作的端到端预算。
+pub const BUDGET: Duration = Duration::from_secs(10);
+
+/// 等待子进程的轮询间隔；只影响超时的判定粒度。
+const POLL: Duration = Duration::from_millis(20);
+
+/// 取不到具体 errno 时的兜底返回码。
+const EIO: i32 = 5;
 
 /// 白名单内的入口。
 #[repr(usize)]
@@ -82,9 +108,120 @@ pub struct Request {
     pub trace: TraceId,
 }
 
+/// 子进程的结束方式；与结果里的状态列一一对应。
+enum End {
+    /// 已退出；被信号终止时退出码为 `None`。
+    Code(Option<i32>),
+    /// 预算耗尽，已强制终止。
+    TimedOut,
+    /// 等不到子进程状态，属于执行面自身故障。
+    Lost,
+}
+
+/// 执行一次已校验的请求：argv 直传、环境清洗、输出限长、预算兜底。
+///
+/// 进程没跑起来时不会伪造结果：状态列取 `unavailable`，返回码保留内核
+/// 给出的具体 errno，调用方据此区分「程序缺失」与「权限不足」。
+pub fn run(req: &Request) -> Outcome {
+    match start(&path_of(req.prog), &req.args) {
+        Ok(child) => collect(req.trace, child, BUDGET),
+        Err(err) => failed_spawn(req.trace, &err),
+    }
+}
+
+/// 拉起失败的结果：状态列取 `unavailable`，返回码保留内核给出的具体值。
+fn failed_spawn(trace: TraceId, err: &std::io::Error) -> Outcome {
+    let mut outcome = Outcome::failed(FailKind::Unavailable, trace);
+    outcome.errno = -err.raw_os_error().unwrap_or(EIO);
+    outcome
+}
+
+/// 白名单入口的绝对路径；`prog` 已由类型限定，不来自文本。
+fn path_of(prog: Prog) -> std::path::PathBuf {
+    Path::new(BIN_DIR).join(prog.name())
+}
+
+/// 拉起子进程；只允许 argv 直传，不提供 shell、不拼接字符串。
+fn start(path: &Path, args: &[String]) -> std::io::Result<Child> {
+    let home = std::env::var_os("HOME").unwrap_or_else(|| "/".into());
+    Command::new(path)
+        .args(args)
+        .env_clear()
+        .env("PATH", CHILD_PATH)
+        .env("LANG", CHILD_LANG)
+        .env("TERM", CHILD_TERM)
+        .env("HOME", home)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+}
+
+/// 收集输出并在预算内等待退出；两条管道同时读，避免写满后互锁。
+fn collect(trace: TraceId, mut child: Child, budget: Duration) -> Outcome {
+    let out = drain(child.stdout.take());
+    let err = drain(child.stderr.take());
+    let end = wait_child(&mut child, budget);
+    let mut outcome = match end {
+        End::Code(code) => Outcome::spawned(code, trace),
+        End::TimedOut => Outcome::failed(FailKind::Timeout, trace),
+        End::Lost => Outcome::failed(FailKind::Internal, trace),
+    };
+    outcome.stdout = out.join().unwrap_or_default();
+    outcome.stderr = err.join().unwrap_or_default();
+    outcome
+}
+
+/// 独占一个读线程，最多保留 [`PIPE_LIMIT`] 字节；余量继续读完再丢弃。
+fn drain<R: Read + Send + 'static>(pipe: Option<R>) -> thread::JoinHandle<Captured> {
+    thread::spawn(move || {
+        let Some(mut pipe) = pipe else {
+            return Captured::default();
+        };
+        let mut text = Vec::with_capacity(8 << 10);
+        let mut chunk = [0u8; 8 << 10];
+        let mut truncated = false;
+        loop {
+            match pipe.read(&mut chunk) {
+                Ok(0) | Err(_) => break,
+                Ok(got) => {
+                    let room = PIPE_LIMIT - text.len();
+                    truncated |= got > room;
+                    text.extend_from_slice(&chunk[..got.min(room)]);
+                }
+            }
+        }
+        Captured {
+            text: String::from_utf8_lossy(&text).into_owned(),
+            truncated,
+        }
+    })
+}
+
+/// 在预算内等待退出；超时即终止进程，不留孤儿。
+fn wait_child(child: &mut Child, budget: Duration) -> End {
+    let deadline = Instant::now() + budget;
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => return End::Code(status.code()),
+            Ok(None) if Instant::now() >= deadline => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return End::TimedOut;
+            }
+            Ok(None) => thread::sleep(POLL),
+            Err(_) => return End::Lost,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn trace() -> TraceId {
+        TraceId::parse("9f2c1b7e4d6a4c0e8b3f5a1d2c7e9b40").expect("合法追踪号")
+    }
 
     #[test]
     fn table_rows_match_their_discriminants() {
@@ -106,5 +243,42 @@ mod tests {
         for name in ["sh", "airy-rt-lat", "airy-disk ", "/usr/bin/airy-disk"] {
             assert_eq!(Prog::parse(name), None, "{name:?}");
         }
+    }
+
+    #[test]
+    fn spawn_failure_keeps_the_kernel_errno() {
+        let out = failed_spawn(trace(), &std::io::Error::from_raw_os_error(2));
+        assert_eq!(out.status, "unavailable");
+        assert_eq!(out.errno, -2, "程序缺失要报 ENOENT，不折叠成通用码");
+        assert!(!out.is_ok());
+    }
+
+    #[test]
+    fn closed_stdin_ends_the_child_at_once() {
+        let path = Path::new("/bin/cat");
+        if !path.exists() {
+            return;
+        }
+        let child = start(path, &[]).expect("cat 可拉起");
+        let out = collect(trace(), child, Duration::from_secs(5));
+        assert_eq!(out.status, Outcome::OK);
+        assert_eq!(out.code, Some(0));
+        assert!(out.stdout.text.is_empty(), "stdin 关闭后 cat 读到 EOF");
+        assert!(!out.stdout.truncated);
+    }
+
+    #[test]
+    fn long_output_is_cut_at_the_limit() {
+        let path = Path::new("/usr/bin/yes");
+        if !path.exists() {
+            return;
+        }
+        let child = start(path, &[]).expect("yes 可拉起");
+        let out = collect(trace(), child, Duration::from_millis(200));
+        assert!(out.stdout.truncated, "超过上限必须标记");
+        assert_eq!(out.stdout.text.len(), PIPE_LIMIT, "保留量正好到上限");
+        assert_eq!(out.status, "timeout");
+        assert_eq!(out.errno, -110);
+        assert!(out.code.is_none(), "被终止的进程没有退出码");
     }
 }
