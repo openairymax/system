@@ -13,8 +13,9 @@
 //! `airy-disk --json` 三个子命令的消费侧类型。
 
 use intent::Refusal;
-use serde::de::DeserializeOwned;
 use serde::Deserialize;
+
+use crate::decode;
 
 /// 本版支持的契约版本；与 0.0.4 的 `model.SCHEMA_VERSION` 一致。
 pub const SCHEMA_VERSION: u32 = 1;
@@ -315,8 +316,4 @@ impl Health {
     pub fn parse(bytes: &[u8]) -> Result<Self, Refusal> {
         decode(bytes)
     }
-}
-
-fn decode<T: DeserializeOwned>(bytes: &[u8]) -> Result<T, Refusal> {
-    serde_json::from_slice(bytes).map_err(Refusal::invalid)
 }
