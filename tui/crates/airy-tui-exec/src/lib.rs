@@ -11,3 +11,4 @@
 
 pub mod exec;
 pub mod normalize;
+pub mod sha256;

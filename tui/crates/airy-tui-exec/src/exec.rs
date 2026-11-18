@@ -133,7 +133,7 @@ enum End {
 /// 进程没跑起来时不会伪造结果：状态列取 `unavailable`，返回码保留内核
 /// 给出的具体 errno，调用方据此区分「程序缺失」与「权限不足」。
 pub fn run(req: &Request) -> Outcome {
-    if let Err(refused) = check_args(req) {
+    if let Some(refused) = check_args(req) {
         return refused;
     }
     match start(&path_of(req.prog), &req.args) {
@@ -153,13 +153,12 @@ pub fn run(req: &Request) -> Outcome {
 ///
 /// 两者都会让内核截断或拒绝参数，等到 execve 再报错就分不清是入口的
 /// 问题还是参数的问题；在这里挡下，状态列仍是 `invalid`。
-fn check_args(req: &Request) -> Result<(), Outcome> {
-    for arg in &req.args {
-        if arg.len() > ARG_MAX || arg.as_bytes().contains(&0) {
-            return Err(Outcome::failed(FailKind::Invalid, req.trace));
-        }
-    }
-    Ok(())
+fn check_args(req: &Request) -> Option<Outcome> {
+    let bad = req
+        .args
+        .iter()
+        .any(|arg| arg.len() > ARG_MAX || arg.as_bytes().contains(&0));
+    bad.then(|| Outcome::failed(FailKind::Invalid, req.trace))
 }
 
 /// 给子进程设资源上限；降限不需要特权，失败说明进程已不可控，直接放弃。
@@ -317,12 +316,12 @@ mod tests {
 
     #[test]
     fn nul_and_oversized_arguments_are_refused() {
-        let nul = check_args(&request(vec!["a\0b".into()])).expect_err("NUL 必须拒绝");
+        let nul = check_args(&request(vec!["a\0b".into()])).expect("NUL 必须拒绝");
         assert_eq!(nul.status, "invalid");
-        let big = check_args(&request(vec!["x".repeat(ARG_MAX + 1)])).expect_err("超长必须拒绝");
+        let big = check_args(&request(vec!["x".repeat(ARG_MAX + 1)])).expect("超长必须拒绝");
         assert_eq!(big.errno, -22);
         assert!(
-            check_args(&request(vec!["x".repeat(ARG_MAX)])).is_ok(),
+            check_args(&request(vec!["x".repeat(ARG_MAX)])).is_none(),
             "上限本身允许"
         );
     }
