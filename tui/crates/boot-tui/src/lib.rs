@@ -16,6 +16,7 @@
 pub mod display;
 pub mod frame;
 pub mod input;
+pub mod layout;
 pub mod paint;
 pub mod screen;
 pub mod wcwidth;

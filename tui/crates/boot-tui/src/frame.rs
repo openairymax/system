@@ -13,6 +13,7 @@
 //! 版面、事件处理与单帧绘制。
 
 use crate::input::{KeyAction, KeyEvent, RawBody, RawEvent, KEY_C, KEY_ESC, KEY_F5, KEY_Q};
+use crate::layout::Layout;
 use crate::paint::Painter;
 use crate::screen::{fits, Attr, CellGrid, Color, Style};
 use crate::wcwidth::clip_cols;
@@ -150,24 +151,34 @@ impl App {
             self.grid.put(0, 0, clip_cols(SMALL, cols), Style::DEFAULT);
             return;
         }
-        self.grid.fill_row(0, BAR);
-        self.grid
-            .put(1, 0, clip_cols(TITLE, cols.saturating_sub(1)), BAR);
+        let area = Layout::of(cols, rows);
+        self.grid.fill_row(area.head.y, BAR);
+        self.grid.put(
+            area.head.x + 1,
+            area.head.y,
+            clip_cols(TITLE, area.head.w.saturating_sub(1)),
+            BAR,
+        );
         for (at, line) in [READY, "", INPUT, "", KEYS].iter().enumerate() {
-            let y = 2 + at as u16;
+            let at = at as u16;
+            if at >= area.body.h {
+                break;
+            }
             self.grid.put(
-                1,
-                y,
-                clip_cols(line, cols.saturating_sub(2)),
+                area.body.x,
+                area.body.y + at,
+                clip_cols(line, area.body.w),
                 Style::DEFAULT,
             );
         }
-        let last = rows - 1;
-        self.grid.fill_row(last, FOOT_STYLE);
+        if area.foot.is_empty() {
+            return;
+        }
+        self.grid.fill_row(area.foot.y, FOOT_STYLE);
         self.grid.put(
-            1,
-            last,
-            clip_cols(self.footer(), cols.saturating_sub(2)),
+            area.foot.x + 1,
+            area.foot.y,
+            clip_cols(self.footer(), area.foot.w.saturating_sub(2)),
             FOOT_STYLE,
         );
     }
