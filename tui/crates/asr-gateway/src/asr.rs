@@ -45,6 +45,17 @@ impl Availability {
         }
     }
 
+    /// 由状态栏取值还原；未知取值返回 `None`，不做近似匹配。
+    pub fn from_status(text: &str) -> Option<Self> {
+        Some(match text {
+            "ready" => Self::Ready,
+            "unavailable" => Self::Unavailable,
+            "busy" => Self::Busy,
+            "empty" => Self::Empty,
+            _ => return None,
+        })
+    }
+
     /// 是否允许开始一次采集。
     pub fn usable(&self) -> bool {
         matches!(self, Self::Ready)
@@ -220,5 +231,19 @@ mod tests {
     #[test]
     fn missing_model_is_explicitly_unavailable() {
         assert_eq!(Availability::for_model(None), Availability::Unavailable);
+    }
+
+    #[test]
+    fn status_tokens_roundtrip() {
+        for state in [
+            Availability::Ready,
+            Availability::Unavailable,
+            Availability::Busy,
+            Availability::Empty,
+        ] {
+            assert_eq!(Availability::from_status(state.status()), Some(state));
+        }
+        assert_eq!(Availability::from_status("unknown"), None);
+        assert_eq!(Availability::from_status(""), None);
     }
 }
