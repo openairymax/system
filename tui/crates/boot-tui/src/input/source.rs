@@ -2,15 +2,15 @@
 // ===========================================================================
 // L1 适配器接口与错误码
 //
-// 适配器只负责产事件与关闭；组合、审批与执行都不在适配器内。错误码与
-// 接入契约 §7 的稳定状态串一一对应，每个类别只表达一种失败语义。
-//
-// 状态串、errno 与建议三列放在同一张表里，按类别索引。此前它们是三段
-// 各自独立的 match，新增一个错误类别要同步改三处，漏一处就是日志与返回值
-// 对不上；现在一列一列摆在同一行，核对契约时看表即可。
+// 适配器只负责产事件与关闭；组合、审批与执行都不在适配器内。错误类别与
+// 状态串、返回码、建议三列由 `intent::FailKind` 统一给出：接入侧与执行面
+// 共用同一份契约表，本模块只把「具体是哪个字段、哪个组件」写进附加字段，
+// 不再保存第二份映射。
 //
 // SSoT: 30-interfaces/11-input-ingress.md §7、§10.2。
 // ===========================================================================
+
+use intent::FailKind;
 
 use super::{RawEvent, SourceKind, Trust};
 
@@ -36,76 +36,6 @@ pub fn trust_ok(kind: SourceKind, trust: Trust) -> Result<(), SourceError> {
         Err(SourceError::denied(kind.need()))
     }
 }
-
-/// 失败类别；一个类别只对应契约里的一条失败语义。
-///
-/// 判别值就是元数据表的行号，新增类别时两处必须一起改；文件末尾的常量
-/// 断言会在漏行时直接让编译失败。
-#[repr(usize)]
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum FailKind {
-    /// 语法或必填字段不通过，`status=invalid`。
-    Invalid = 0,
-    /// 动作未注册，`status=unsupported`。
-    Unsupported = 1,
-    /// 信任级别不足，`status=denied`。
-    Denied = 2,
-    /// 白名单未命中或黑名单命中，`status=denied`。
-    Forbidden = 3,
-    /// 审批缺失或已过期，`status=approval-required`。
-    Approval = 4,
-    /// 端到端预算耗尽，`status=timeout`。
-    Timeout = 5,
-    /// 未完成请求达到上限，`status=busy`。
-    Busy = 6,
-    /// 依赖组件不可用，`status=unavailable`。
-    Unavailable = 7,
-    /// 结果不可序列化，`status=internal`。
-    Internal = 8,
-}
-
-/// 契约 §7 的一行：稳定状态串、返回码与可执行建议。
-struct Meta {
-    status: &'static str,
-    errno: i32,
-    advice: &'static str,
-}
-
-impl Meta {
-    const fn new(status: &'static str, errno: i32, advice: &'static str) -> Self {
-        Self {
-            status,
-            errno,
-            advice,
-        }
-    }
-}
-
-/// 契约 §7 用到的 errno 值；Linux 通用编号，x86、ARM、RISC-V 一致。
-const EPERM: i32 = 1;
-const EIO: i32 = 5;
-const EAGAIN: i32 = 11;
-const EACCES: i32 = 13;
-const EINVAL: i32 = 22;
-/// `EOPNOTSUPP` 的同义词，本系统统一使用 `ENOTSUP` 这一名字。
-const ENOTSUP: i32 = 95;
-const ETIMEDOUT: i32 = 110;
-
-/// 按 `FailKind` 的判别值排列；一行对应契约表的一行。
-const META: [Meta; 9] = [
-    Meta::new("invalid", -EINVAL, "检查字段与语法后重试"),
-    Meta::new("unsupported", -EINVAL, "改用已注册的动作"),
-    Meta::new("denied", -EACCES, "提升级别或改用允许的通道"),
-    Meta::new("denied", -EPERM, "从 deny 移除该动作"),
-    Meta::new("approval-required", -EACCES, "完成本地审批后重试"),
-    Meta::new("timeout", -ETIMEDOUT, "放宽预算或缩小范围"),
-    Meta::new("busy", -EAGAIN, "等待在途请求返回后重试"),
-    Meta::new("unavailable", -ENOTSUP, "确认依赖组件已启动"),
-    Meta::new("internal", -EIO, "记录 trace_id 并上报缺陷"),
-];
-
-/// 表长必须覆盖最后一个类别的行号；新增类别漏行时在此编译失败。
-const _: () = assert!(META.len() == FailKind::Internal as usize + 1);
 
 /// 适配器错误；类别决定状态串与返回码，附加字段只放具体证据。
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -167,12 +97,12 @@ impl SourceError {
 
     /// 契约 §7 的返回码，统一取负值。
     pub fn errno(&self) -> i32 {
-        self.meta().errno
+        self.kind.errno()
     }
 
     /// 稳定的状态串，可直接写进日志与状态栏。
     pub fn status(&self) -> &'static str {
-        self.meta().status
+        self.kind.status()
     }
 
     /// 契约 §7 的「附加」字段：解析位置、字段名、动作名等具体证据。
@@ -182,7 +112,7 @@ impl SourceError {
 
     /// 可执行建议；不含推测，只给本机能做的一步。
     pub fn advice(&self) -> &'static str {
-        self.meta().advice
+        self.kind.advice()
     }
 
     fn new(kind: FailKind, detail: impl core::fmt::Display) -> Self {
@@ -190,10 +120,6 @@ impl SourceError {
             kind,
             detail: detail.to_string(),
         }
-    }
-
-    fn meta(&self) -> &'static Meta {
-        &META[self.kind as usize]
     }
 }
 
@@ -275,8 +201,17 @@ mod tests {
     #[test]
     fn kinds_are_distinct() {
         let seen: Vec<FailKind> = cases().into_iter().map(|(err, _, _)| err.kind()).collect();
-        for (index, kind) in seen.iter().enumerate() {
-            assert_eq!(*kind as usize, index, "类别顺序必须与元数据表一致");
-        }
+        let expected = [
+            FailKind::Invalid,
+            FailKind::Unsupported,
+            FailKind::Denied,
+            FailKind::Forbidden,
+            FailKind::Approval,
+            FailKind::Timeout,
+            FailKind::Busy,
+            FailKind::Unavailable,
+            FailKind::Internal,
+        ];
+        assert_eq!(seen, expected, "构造器与类别必须一一对应");
     }
 }

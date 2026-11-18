@@ -11,6 +11,7 @@
 
 mod route;
 mod schema;
+mod status;
 mod trust;
 
 pub use route::{decide, Reason, Verdict};
@@ -18,4 +19,5 @@ pub use schema::{
     Approval, AudioRef, CheckError, Constraints, Expect, Intent, Payload, PayloadKind, Session,
     SessionMode, Source, Structured, TraceId, TraceIdError, TrustTag, SCHEMA,
 };
+pub use status::FailKind;
 pub use trust::{SourceKind, Trust};
