@@ -21,4 +21,5 @@ pub use escape::{decode, lone, Step};
 pub use event::{
     AudioRef, KeyAction, KeyEvent, Mods, MonoTime, RawBody, RawEvent, SourceKind, TraceId, Trust,
 };
+pub use key::key_byte;
 pub use source::{trust_ok, InputSource, SourceError};
