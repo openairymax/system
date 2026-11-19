@@ -58,12 +58,15 @@ SPEC = ROOT.parent / "distro" / "specs" / "airymaxos-system.spec"
 PAYLOAD = "/usr/sbin/airyctl"
 
 SYSTEM_UNITS = frozenset({
+    "dbus.service",
     "display-manager.service",
+    "getty@tty1.service",
     "graphical.target",
     "local-fs.target",
     "multi-user.target",
     "NetworkManager.service",
     "network-online.target",
+    "rescue.target",
     "rtkit-daemon.service",
     "slices.target",
     "sysinit.target",
@@ -402,6 +405,19 @@ TEMPLATES: dict[str, tuple[tuple[str, str, str], ...]] = {
         ("Service", "User", "airy"),
         ("Service", "Group", "airy"),
     ),
+    # 切换实例只做一次状态落盘与回拉，重复执行是幂等的；不给 Restart：
+    # 失败时保留现场由调用方决定下一步，自动重试只会把会话状态写乱。
+    "airy-session-switch@.service": (
+        ("Unit", "Description", "AirymaxOS session switch to %i"),
+        ("Unit", "After", "dbus.service"),
+        ("Service", "Type", "oneshot"),
+        (
+            "Service",
+            "ExecStart",
+            "/usr/bin/airy-session-mode --switch %i",
+        ),
+        ("Service", "TimeoutStartSec", "300"),
+    ),
 }
 
 HEALTH = "agentrt-health-check.service"
@@ -714,6 +730,10 @@ LLM = "airy-llm.service"
 
 AGENT_SLICE = "airymax-agent.slice"
 
+SESSION_CHOICE = "airy-session-choice.service"
+
+BOOT_TUI = "boot-tui.service"
+
 # 推理单元的峰值内存取决于权重尺寸，绝对值上限会在换机型时把能跑的模型
 # 杀掉；比例上限则与机型无关，且正是 285H 需要的约束——现场三个实例把
 # RSS 推到 29.5G / 30G 后，整机进入 direct reclaim，桌面与 SSH 一起失去
@@ -785,6 +805,52 @@ LLM_PAIRS: dict[tuple[str, str], str] = {
     ("Service", "StandardError"): "journal",
     ("Service", "OOMPolicy"): "stop",
     ("Install", "WantedBy"): "agentrt.target",
+}
+
+# 选择器独占 tty1：与 getty 互斥靠 Conflicts + RemainAfterExit 两条一起实现，
+# 少一条就会在选择完成后把登录提示放回来。窗口 120 秒，而 oneshot 缺省启动
+# 超时只有 90 秒，TimeoutStartSec 必须单独放宽。
+SESSION_CHOICE_PAIRS: dict[tuple[str, str], str] = {
+    ("Unit", "DefaultDependencies"): "no",
+    ("Unit", "After"): "local-fs.target getty@tty1.service",
+    ("Unit", "Before"): "graphical.target display-manager.service",
+    ("Unit", "Conflicts"): "getty@tty1.service rescue.target",
+    ("Service", "Type"): "oneshot",
+    ("Service", "RemainAfterExit"): "yes",
+    ("Service", "StandardInput"): "tty",
+    ("Service", "StandardOutput"): "tty",
+    ("Service", "TTYPath"): "/dev/tty1",
+    ("Service", "TTYReset"): "yes",
+    ("Service", "TTYVHangup"): "yes",
+    ("Service", "TimeoutStartSec"): "150",
+    (
+        "Service",
+        "ExecStart",
+    ): "/usr/bin/airy-session-pick --timeout 120 --default gui",
+    ("Install", "WantedBy"): "sysinit.target",
+}
+
+# TUI 会话以 amuser 运行，/run 下的会话目录归 root：模式改写只能由
+# ExecStartPost 的 + 前缀提权重完成。退出后把 tty1 还给登录提示，故
+# ExecStopPost 固定回拉 getty；结论不在这里判断，由 TUI 自己写状态文件。
+BOOT_TUI_PAIRS: dict[tuple[str, str], str] = {
+    ("Unit", "After"): "airy-session-choice.service",
+    ("Unit", "Conflicts"): "getty@tty1.service",
+    ("Service", "Type"): "notify",
+    ("Service", "User"): "amuser",
+    ("Service", "TTYPath"): "/dev/tty1",
+    ("Service", "TTYReset"): "yes",
+    ("Service", "TTYVTDisallocate"): "yes",
+    ("Service", "ExecStart"): "/usr/bin/boot-tui",
+    (
+        "Service",
+        "ExecStartPost",
+    ): "-+/usr/lib/airymaxos/desktop/airy-session-state tui",
+    (
+        "Service",
+        "ExecStopPost",
+    ): "+-/usr/bin/systemctl --no-block start getty@tty1.service",
+    ("Service", "Restart"): "no",
 }
 
 SESSION_DROPIN = "user.slice.d/50-airymax-memory.conf"
@@ -914,6 +980,7 @@ TIMERS: dict[str, dict[tuple[str, str], str]] = {
 UNITS = frozenset(SERVICES) | frozenset(TARGETS) | frozenset(TEMPLATES) | {
     AGENT_SLICE,
     BOOT_MOUNT,
+    BOOT_TUI,
     BOOT_WATCH,
     COEXIST,
     DISK_HEALTH,
@@ -925,6 +992,7 @@ UNITS = frozenset(SERVICES) | frozenset(TARGETS) | frozenset(TEMPLATES) | {
     NET_DOCTOR,
     POWER,
     RT_BANDWIDTH,
+    SESSION_CHOICE,
     UPDATE_CHECK,
 } | frozenset(TIMERS)
 
@@ -1432,6 +1500,8 @@ PAIR_SPECS: dict[str, dict[tuple[str, str], str | None]] = {
     UPDATE_CHECK: CHECK_PAIRS,
     LLM: LLM_PAIRS,
     AGENT_SLICE: AGENT_SLICE_PAIRS,
+    SESSION_CHOICE: SESSION_CHOICE_PAIRS,
+    BOOT_TUI: BOOT_TUI_PAIRS,
 }
 
 
