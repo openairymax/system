@@ -1,0 +1,41 @@
+AIRYMAX-TUI-FIELD/1
+case=fixture-ime-recover
+evidence=fixture
+arch=x86_64
+os=AirymaxOS 0.0.5
+build=fixture-format
+term=linux
+cols=85
+rows=24
+observed=palette=basic;render=ok
+result=pass
+note=夹具只验证记录格式，不构成实机取证
+AIRYMAX-TUI-FIELD-END
+
+AIRYMAX-TUI-FIELD/1
+case=fixture-tty-small
+evidence=fixture
+arch=aarch64
+os=AirymaxOS 0.0.5
+build=fixture-format
+term=linux
+cols=40
+rows=12
+observed=layout=wrapped
+result=pass
+note=夹具只验证记录格式，不构成实机取证
+AIRYMAX-TUI-FIELD-END
+
+AIRYMAX-TUI-FIELD/1
+case=fixture-display-zh
+evidence=fixture
+arch=riscv64
+os=AirymaxOS 0.0.5
+build=fixture-format
+term=linux
+cols=80
+rows=24
+observed=glyphs=fixture
+result=pass
+note=夹具只验证记录格式，不构成实机取证
+AIRYMAX-TUI-FIELD-END
