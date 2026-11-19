@@ -74,7 +74,7 @@ impl Default for Opts {
         Self {
             timeout: 120,
             default: Choice::Gui,
-            dir: PathBuf::from(DIR),
+            dir: crate::root::path(DIR),
         }
     }
 }

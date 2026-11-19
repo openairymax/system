@@ -29,8 +29,10 @@ use std::thread::sleep;
 use std::time::Duration;
 
 use boot_tui::pick::{Choice, DIR};
+use boot_tui::root;
 use boot_tui::switch::{
     fail_line, fallback, mode_line, read_mode, ready_state, wait_secs, write_pages, write_want,
+    FG_WAIT,
 };
 
 /// 单元控制入口。
@@ -60,7 +62,7 @@ fn usage() -> ExitCode {
 
 /// 打印实际态；缺文件即 `none`，由调用方决定怎么用。
 fn status() -> ExitCode {
-    let word = read_mode(std::path::Path::new(DIR)).map_or("none", Choice::word);
+    let word = read_mode(&root::path(DIR)).map_or("none", Choice::word);
     println!("mode={word}");
     ExitCode::SUCCESS
 }
@@ -76,7 +78,7 @@ fn user(word: &str) -> ExitCode {
         eprintln!("AIRYMAX-SESSION-MODE refused=not-ready state={state}");
         return ExitCode::from(4);
     }
-    if read_mode(std::path::Path::new(DIR)) == Some(want) {
+    if read_mode(&root::path(DIR)) == Some(want) {
         println!("mode={} state=unchanged", want.word());
         return ExitCode::SUCCESS;
     }
@@ -103,10 +105,10 @@ fn worker(word: &str) -> ExitCode {
         Some(want) => want,
         None => return usage(),
     };
-    let dir = std::path::Path::new(DIR);
-    let old = read_mode(dir);
-    let reason = take_reason(dir);
-    if let Err(err) = write_want(dir, want) {
+    let dir = root::path(DIR);
+    let old = read_mode(&dir);
+    let reason = take_reason(&dir);
+    if let Err(err) = write_want(&dir, want) {
         eprintln!("AIRYMAX-SESSION-MODE write=desired error={err}");
         return ExitCode::from(1);
     }
@@ -116,11 +118,11 @@ fn worker(word: &str) -> ExitCode {
             Choice::Gui => start_gui(),
             Choice::Tui => start_tui(),
         };
-        return settle(dir, old, want, &reason);
+        return settle(&dir, old, want, &reason);
     }
     match apply(want) {
-        Ok(()) => settle(dir, old, want, &reason),
-        Err(cause) => rollback(dir, old, want, cause),
+        Ok(()) => settle(&dir, old, want, &reason),
+        Err(cause) => rollback(&dir, old, want, cause),
     }
 }
 
@@ -248,7 +250,7 @@ fn marks() -> u32 {
 
 /// GUI 方向的画面前台：等座位会话的 VT 成为当前控制台，超时后兜底切一次。
 fn fg_gui() -> Result<(), &'static str> {
-    let mut left = 5;
+    let mut left = FG_WAIT;
     while left > 0 {
         if let Some(tty) = seat_tty() {
             if fg() == Some(tty.clone()) {
@@ -338,7 +340,7 @@ fn unit_of(want: Choice) -> String {
 
 /// 执行一条命令并保留结果。
 fn run(program: &str, args: &[&str]) -> io::Result<Output> {
-    Command::new(program).args(args).output()
+    Command::new(root::path(program)).args(args).output()
 }
 
 /// 只取标准输出并去掉首尾空白；失败一律当空串，由调用方判空。
