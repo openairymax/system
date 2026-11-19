@@ -397,9 +397,10 @@ def _show_plan(found: coexist.Plan, as_json: bool) -> None:
         print(json.dumps(found.dump(), ensure_ascii=False))
         return
     risk = "-" if found.pressure is None else f"{found.pressure:.1f}%"
+    cur = "-" if found.current is None else found.current
     print(
         f"{MARK} mode={found.mode.value} unit={found.unit}"
-        f" weight={found.weight} current={found.current}"
+        f" weight={found.weight} current={cur}"
         f" applied={found.applied}"
     )
     print(

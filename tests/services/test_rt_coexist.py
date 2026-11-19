@@ -246,18 +246,28 @@ class CliTest(Base):
             code = cli.main(argv)
         return code, out.getvalue()
 
-    def args(self, cmd: str) -> list[str]:
+    def args(self, cmd: str, systemctl: Path | None = None) -> list[str]:
         return [
             cmd,
             "--sysroot", str(self.machine.sys),
             "--procroot", str(self.machine.proc),
             "--cgroup", str(self.machine.cgroup),
             "--cmdline", str(self.machine.cmdline),
-            "--systemctl", str(self.shim.exe),
+            "--systemctl", str(systemctl or self.shim.exe),
             "--desktop", "airymax-desktop.slice",
             "--pressure", str(self.machine.proc / "pressure" / "cpu"),
             "--loadavg", str(self.machine.proc / "loadavg"),
         ]
+
+    def test_absent_detail_has_no_python_none(self) -> None:
+        """absent 时 current 无值：串口上要打 `-`，不能漏出 Python 的 None。"""
+        shim = Shim(self.base / "cli-absent", load="not-found",
+                    active="inactive")
+        code, out = self.call(self.args("coexist", systemctl=shim.exe))
+        self.assertEqual(code, 0)
+        self.assertIn("mode=absent", out)
+        self.assertIn("current=-", out)
+        self.assertNotIn("None", out)
 
     def test_in_sync_exit_zero(self) -> None:
         code, out = self.call(self.args("coexist"))
