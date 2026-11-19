@@ -97,6 +97,15 @@ readonly UI_STAGES=(
     '8|桌面就绪|8|desktop'
     '9|自检与取证|10|health'
 )
+# 阶段 → 专属生产者单元。只登记「剖面可以把整个单元屏蔽掉」的阶段：单元
+# 被 mask 后该阶段永远不会发射，宿主的段完整性断言必须按同一份归属放行，
+# 否则判据会要求一个按设计不存在的段。屏蔽清单本身不在这里——谁执行 mask，
+# 谁就是事实源（验收夹具的 %post），本表只回答「这个单元负责哪一段」。
+# shellcheck disable=SC2034  # 仅由宿主侧解析器读取，guest 运行期不消费
+readonly UI_STAGE_UNITS=(
+    'desktop|airymax-desktop-ready.service'
+)
+
 readonly UI_COL=16
 
 _ui_err() {
