@@ -24,6 +24,7 @@ use std::io::{self, Read, Write};
 use std::process::{Command, ExitCode};
 
 use boot_tui::pick::{self, Choice, Opts};
+use boot_tui::root;
 
 /// 会话选择独占的终端。
 const TTY: &str = "/dev/tty1";
@@ -55,7 +56,7 @@ fn main() -> ExitCode {
 
 /// 命令行开关优先，其次交互；两者都拿不到就取默认。
 fn decide(opts: &Opts) -> (Choice, &'static str) {
-    let cmdline = fs::read_to_string("/proc/cmdline").unwrap_or_default();
+    let cmdline = fs::read_to_string(root::path("/proc/cmdline")).unwrap_or_default();
     if pick::cmdline_off(&cmdline) {
         return (Choice::Gui, "cmdline");
     }
@@ -141,12 +142,15 @@ fn draw_left(tty: &mut File, secs: u64) {
 
 /// tty1 只以读写方式打开；打开失败视为没有可交互终端。
 fn open_tty() -> io::Result<File> {
-    OpenOptions::new().read(true).write(true).open(TTY)
+    OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(root::path(TTY))
 }
 
 /// TUI 分支显式拉起会话单元；失败只记一行，不改变已经落盘的结论。
 fn start_tui() {
-    match Command::new(SYSTEMCTL)
+    match Command::new(root::path(SYSTEMCTL))
         .args(["--no-block", "start", "boot-tui.service"])
         .status()
     {

@@ -19,6 +19,10 @@ name = "degrade"
 path = "tests/degrade/main.rs"
 
 [[test]]
+name = "e2e"
+path = "tests/e2e/main.rs"
+
+[[test]]
 name = "frame_budget"
 path = "tests/frame_budget.rs"
 
