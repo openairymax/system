@@ -424,7 +424,6 @@ HEALTH = "agentrt-health-check.service"
 
 HEALTH_PAIRS: dict[tuple[str, str], str] = {
     ("Unit", "After"): "agentrt.target",
-    ("Unit", "Wants"): "agentrt.target",
     ("Service", "Type"): "oneshot",
     (
         "Service",

@@ -1,8 +1,10 @@
 [Unit]
 Description=AirymaxOS Boot Health Check
 Documentation=https://docs.agentrt.local/190-distribution/04-update-mechanism
+# 只观察，不拉起：Wants=agentrt.target 会把整栈连同 12 个尚未交付的
+# daemon 拉进启动事务，缺载荷时单元进 failed、target 连带失败，而这台
+# 机器实际上什么都没坏。After 保留启动顺序，是否运行由 target 自身决定。
 After=agentrt.target
-Wants=agentrt.target
 
 [Service]
 Type=oneshot

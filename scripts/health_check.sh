@@ -6,11 +6,16 @@
 #
 # 在 agentrt.target 就绪后校验内核、控制面与内存子系统的真实状态：
 #   1. 内核版本可获取；
-#   2. agentrt.target 处于 active；
+#   2. agentrt.target 已启用时须处于 active，未启用时记跳过；
 #   3. 已安装的 agentrt daemon 全部处于 active；
 #   4. 具备 PMEM 设备时 memoryrovol/pmem 已挂载，无设备时跳过；
 #   5. 内核暴露 lru_gen 时 MGLRU 已启用，未暴露时跳过；
 #   6. PSI 三个压力文件可读。
+#
+# 第 2 项分三档而不是两档：整栈默认由 90-airymax.preset 钉在 disabled，
+# 而本单元随安装器清单启用。未启用的 target 必然不是 active，若一律记
+# 失败，每一台出厂机器开机都会多一条真实但无意义的失败，本单元自身也
+# 会因此退出 1 进入 failed——观测者不该制造它要观测的故障。
 #
 # 第 6 项是必需能力而非可选特性：airy-power 以 PSI 的 cpu/memory/io 三路压力
 # 作降档判据，缺 PSI 时它只能退回 loadavg，而 loadavg 对 IO 等待与内存直接
@@ -100,7 +105,9 @@ check_kernel() {
 }
 
 check_target() {
-    if systemctl is-active --quiet agentrt.target; then
+    if ! systemctl is-enabled --quiet agentrt.target 2>/dev/null; then
+        mark_skip 2 "agentrt.target" "not enabled"
+    elif systemctl is-active --quiet agentrt.target; then
         mark_pass 2 "agentrt.target"
     else
         mark_fail 2 "agentrt.target" inactive

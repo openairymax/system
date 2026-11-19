@@ -294,7 +294,12 @@ class HealthCase(UnitsCase):
         self.assert_bad("After")
 
     def test_hc_wants(self) -> None:
-        self.edit(HEALTH, "Wants=agentrt.target", "Requires=agentrt.target")
+        """自检只观察，任一 Wants/Requires 都会把整栈拉进启动事务。"""
+        self.edit(
+            HEALTH,
+            "After=agentrt.target\n",
+            "After=agentrt.target\nWants=agentrt.target\n",
+        )
         self.assert_bad("unexpected directive")
 
     def test_hc_exec(self) -> None:

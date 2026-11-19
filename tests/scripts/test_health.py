@@ -34,6 +34,14 @@ case "${1:-}" in
         printf '{ path=%s/%s_d ; argv[]=%s/%s_d ; ignore_errors=no ; }\\n' \\
             "${FAKE_SBIN:?}" "$name" "${FAKE_SBIN:?}" "$name"
         ;;
+    is-enabled)
+        [[ ${2:-} == --quiet ]] || exit 2
+        # 整栈默认关闭的机器上 target 未启用：FAKE_TARGET_DISABLED=1 模拟
+        # 这一出厂形态，其余用例保持「已启用」以免混淆失败与不适用。
+        if [[ ${FAKE_TARGET_DISABLED:-0} == 1 && ${3:-} == agentrt.target ]]; then
+            exit 1
+        fi
+        ;;
     is-active)
         [[ ${2:-} == --quiet ]] || exit 2
         unit=${3:-}
@@ -150,6 +158,15 @@ class ExitCase(HealthCase):
         self.assertEqual(res.returncode, 0, res.stderr)
         self.assertFalse(mark.exists())
         self.assertIn("固化当前版本", res.stdout)
+
+    def test_target_off(self) -> None:
+        """整栈未启用记不适用，不产生失败，也不触发回滚。"""
+        mark = self.pending()
+        res = self.run_check(FAKE_TARGET_DISABLED="1")
+        self.assertEqual(res.returncode, 0, res.stderr)
+        self.assertIn("agentrt.target: SKIP (not enabled)", res.stdout)
+        self.assertIn("fail=0", res.stdout)
+        self.assertFalse(mark.exists())
 
     def test_degraded(self) -> None:
         mark = self.pending()
