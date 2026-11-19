@@ -133,26 +133,29 @@ now() {
 
 # systemd 的时间读数（TimeoutStartUSec）形如 "1min 30s"、"500ms"、
 # "infinity"。只把可换算成有限秒数的值当作界：infinity、unknown、空值
-# 一律为 0，界不可判定时不得按有界等待放行。单位按后缀从长到短匹配，
-# "ms" 不能被当成 "s"、"month" 不能被当成 "h"。
+# 一律为 0，界不可判定时不得按有界等待放行。
+#
+# 单位查表而不是逐个后缀分支：每多支持一个单位就多一层 else-if，复杂度
+# 随单位表线性上涨，而这里只需要「数字前缀 + 后缀倍率」一次换算。后缀
+# 精确匹配也顺带解决了 "ms" 被当成 "s"、"month" 被当成 "h" 的歧义。
 tsec() {
     printf '%s\n' "${1:-}" | awk '
     $0 == "infinity" { print 0; exit }
-    NF == 0 { print 0; exit }
     {
+        mult["us"] = 0.000001; mult["ms"] = 0.001; mult["s"] = 1
+        mult["min"] = 60; mult["h"] = 3600; mult["d"] = 86400
+        mult["w"] = 604800; mult["month"] = 2592000
+        mult["y"] = 31536000
         n = 0
         for (i = 1; i <= NF; i++) {
-            v = $i
-            if (v ~ /^[0-9]+us$/) { sub(/us$/, "", v); n += v / 1000000 }
-            else if (v ~ /^[0-9]+ms$/) { sub(/ms$/, "", v); n += v / 1000 }
-            else if (v ~ /^[0-9]+month$/) { sub(/month$/, "", v); n += v * 2592000 }
-            else if (v ~ /^[0-9]+min$/) { sub(/min$/, "", v); n += v * 60 }
-            else if (v ~ /^[0-9]+h$/) { sub(/h$/, "", v); n += v * 3600 }
-            else if (v ~ /^[0-9]+d$/) { sub(/d$/, "", v); n += v * 86400 }
-            else if (v ~ /^[0-9]+w$/) { sub(/w$/, "", v); n += v * 604800 }
-            else if (v ~ /^[0-9]+y$/) { sub(/y$/, "", v); n += v * 31536000 }
-            else if (v ~ /^[0-9]+s$/) { sub(/s$/, "", v); n += v }
-            else { n = 0; break }
+            if (match($i, /^[0-9]+(\.[0-9]+)?/)) {
+                v = substr($i, 1, RLENGTH)
+                u = substr($i, RLENGTH + 1)
+            } else {
+                n = 0; break
+            }
+            if (!(u in mult)) { n = 0; break }
+            n += v * mult[u]
         }
         printf "%d", n
     }'
