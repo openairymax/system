@@ -38,6 +38,17 @@
 # churn 字段承载：0 表示窗口内作业表逐字未变、1 表示反复变化，两者都是
 # 「开机后 100 秒仍未到默认目标」这一事实，都值得报出来。
 #
+# 有界等待不是卡死：会话选择器在 tty1 上等人最多 120 秒（单元
+# TimeoutStartSec=150），这期间默认目标当然达不到、作业表也当然逐字不变。
+# 0.0.5 的验收镜像就停在这里：开机 100 秒的报告写着目标未达成、唯一挂起
+# 的作业是 session-choice 的 start 且仍在 running，而它的窗口还有 20 秒——
+# 看门狗抢在合法等待前面判了负，这一行又进了判定集，三条腿一起失败。
+# 故判定改读单元事实：挂起作业的单元处于 activating 且 TimeoutStartUSec
+# 有限，说明 systemd 保证会在界内收尾，是等待而非停滞；这一轮只记一行
+# WAIT，不推进停滞计数。界到期后 systemd 自己会失败或完成该单元，作业表
+# 随之改变，停滞判定自然恢复。界不可判定（infinity、读数缺失）时不放行
+# ——对无界阻塞保持沉默比误判更糟。
+#
 # 目标达成同样不等于有会话：graphical.target 只要求登录管理器的启动作业
 # 结束，管理器退出、被禁用、fail 掉之后目标照样激活，tty1 留着 getty 的
 # 登录提示。此时作业表是空的、目标是绿的，前两种判据都无从触发，串口只剩
@@ -70,6 +81,10 @@ readonly WIN="${AIRY_WATCH_WIN:-40}"
 readonly JTOT="${AIRY_WATCH_JOBS:-8}"
 readonly TAIL="${AIRY_WATCH_TAIL:-8}"
 readonly JTIMEOUT="${AIRY_WATCH_JTIME:-5}"
+# 观测者的硬上限：停滞窗口之外还得罩住一段有界的交互等待，否则看门狗自己
+# 会先于被观察者结束。它不是判定阈值——停滞仍由 WIN 决定——只是保证本进程
+# 一定有终点，任何未预见的读数异常都不会让它一直睡在窗口里。
+readonly MAX="${AIRY_WATCH_MAX:-300}"
 readonly CONSOLE="${UI_CONSOLE:-/dev/console}"
 readonly SERIAL="${AIRY_WATCH_SERIAL:-/dev/ttyS0}"
 readonly ACTIVE="${AIRY_WATCH_ACTIVE:-/sys/class/tty/console/active}"
@@ -77,6 +92,8 @@ readonly SELF=airy-boot-watch
 
 IDLE=0
 CHURN=0
+BW_UNIT=''
+BW_CAP=''
 
 # 通道判据的唯一实现见 con.sh；历史变量名在此转名，回归与现场口径不变。
 # shellcheck source-path=SCRIPTDIR source=con.sh
@@ -106,6 +123,62 @@ is_done() {
     systemctl is-active --quiet "$1" 2>/dev/null
 }
 
+# 开机秒数：所有时限都以它为准，墙钟（NTP 校时、时区）不参与判定。
+now() {
+    local s=''
+
+    s="$(cut -d. -f1 /proc/uptime 2>/dev/null)" || s=''
+    printf '%s' "${s:-0}"
+}
+
+# systemd 的时间读数（TimeoutStartUSec）形如 "1min 30s"、"500ms"、
+# "infinity"。只把可换算成有限秒数的值当作界：infinity、unknown、空值
+# 一律为 0，界不可判定时不得按有界等待放行。单位按后缀从长到短匹配，
+# "ms" 不能被当成 "s"、"month" 不能被当成 "h"。
+tsec() {
+    printf '%s\n' "${1:-}" | awk '
+    $0 == "infinity" { print 0; exit }
+    NF == 0 { print 0; exit }
+    {
+        n = 0
+        for (i = 1; i <= NF; i++) {
+            v = $i
+            if (v ~ /^[0-9]+us$/) { sub(/us$/, "", v); n += v / 1000000 }
+            else if (v ~ /^[0-9]+ms$/) { sub(/ms$/, "", v); n += v / 1000 }
+            else if (v ~ /^[0-9]+month$/) { sub(/month$/, "", v); n += v * 2592000 }
+            else if (v ~ /^[0-9]+min$/) { sub(/min$/, "", v); n += v * 60 }
+            else if (v ~ /^[0-9]+h$/) { sub(/h$/, "", v); n += v * 3600 }
+            else if (v ~ /^[0-9]+d$/) { sub(/d$/, "", v); n += v * 86400 }
+            else if (v ~ /^[0-9]+w$/) { sub(/w$/, "", v); n += v * 604800 }
+            else if (v ~ /^[0-9]+y$/) { sub(/y$/, "", v); n += v * 31536000 }
+            else if (v ~ /^[0-9]+s$/) { sub(/s$/, "", v); n += v }
+            else { n = 0; break }
+        }
+        printf "%d", n
+    }'
+}
+
+# 作业表里是否有「尚未到期的有界启动」。ActiveState=activating 且
+# TimeoutStartUSec 有限，说明 systemd 保证会在界内收尾该单元，此时目标
+# 达不到是设计中的等待，不是作业表停滞。返回 0 时 BW_UNIT/BW_CAP 给出
+# 正在等待的单元与它的界，供 WAIT 行落盘。
+bwait() {
+    local job unit typ st act cap secs
+
+    while read -r job unit typ st; do
+        [ -n "${unit:-}" ] || continue
+        act="$(show "${unit}" ActiveState)"
+        [ "${act}" = activating ] || continue
+        cap="$(show "${unit}" TimeoutStartUSec)"
+        secs="$(tsec "${cap}")"
+        [ "${secs:-0}" -gt 0 ] || continue
+        BW_UNIT="${unit}"
+        BW_CAP="${cap}"
+        return 0
+    done <<<"$1"
+    return 1
+}
+
 # 未完成作业表：本单元自己的那条作业排除在外，它每轮都在，会把「作业表
 # 逐字不变」永远否定掉。排序后比较，systemd 的输出顺序不参与判定。
 pend() {
@@ -123,14 +196,29 @@ pend() {
 # 让作业表每轮不同，按变化提前收工等于对最需要证据的那类卡点失明。
 # 作业表为空同样算没在推进：目标未达成却没有任何作业，说明 systemd 已停
 # 在别处（救援目标、isolate），这比继续等更值得报出来。
+#
+# 有界启动不计入停滞计数：会话选择器等输入时作业表逐字不变，按「窗口内
+# 没变即卡死」会在合法等待进行中判负。每轮先问 bwait，有界启动挂着就只
+# 记一行 WAIT 并等下一轮；界到期后 systemd 收尾该单元，下一轮自然回到
+# 停滞判定。MAX 只封住观测者自身的时长，不改变 WIN 这个判定阈值。
 watch() {
-    local tgt="$1" last='' cur step=0
+    local tgt="$1" last='' cur step=0 held='' hard
 
-    while [ "${step}" -lt "${WIN}" ]; do
+    hard=$(( $(now) + MAX ))
+    while [ "${step}" -lt "${WIN}" ] && [ "$(now)" -lt "${hard}" ]; do
         if is_done "${tgt}"; then
             return 1
         fi
         cur="$(pend)"
+        if bwait "${cur}"; then
+            if [ "${BW_UNIT}" != "${held}" ]; then
+                put "AIRYMAX-BOOT-WAIT unit=${BW_UNIT}" \
+                    "cap=${BW_CAP} reason=bounded"
+                held="${BW_UNIT}"
+            fi
+            sleep "${POLL}"
+            continue
+        fi
         if [ "${step}" -gt 0 ] && [ "${cur}" != "${last}" ]; then
             CHURN=1
         fi
@@ -150,7 +238,7 @@ rep_tgt() {
 
     act="$(show "${tgt}" ActiveState)"
     sub="$(show "${tgt}" SubState)"
-    up="$(cut -d. -f1 /proc/uptime)" || up=0
+    up="$(now)"
     put "AIRYMAX-BOOT-STUCK target=${tgt} active=${act}" \
         "sub=${sub} uptime=${up}s idle=${IDLE}s churn=${CHURN}" \
         "reason=${reason}"
