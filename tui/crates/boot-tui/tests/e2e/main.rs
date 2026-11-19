@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later OR Apache-2.0
+// SPDX-FileCopyrightText: 2025-2026 SPHARX Ltd.
 // ===========================================================================
 // V-02 会话选择与运行期切换的端到端取证
 //

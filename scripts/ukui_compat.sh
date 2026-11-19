@@ -1,5 +1,6 @@
 #!/bin/bash
 # SPDX-License-Identifier: AGPL-3.0-or-later
+# SPDX-FileCopyrightText: 2025-2026 SPHARX Ltd.
 # ===========================================================================
 # ukui_compat.sh — 补齐 ukui 上游服务声明与二进制落点之间的差
 #
