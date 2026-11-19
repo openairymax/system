@@ -54,16 +54,28 @@ list-units)
     ;;
 show)
     prop=''
+    unit=''
     while [ "$#" -gt 0 ]; do
         case "$1" in
         -p) prop="$2"; shift 2 ;;
+        --value) shift; unit="${1:-}"; shift ;;
         *) shift ;;
         esac
     done
+    n=0
+    [ -r "${FAKE_SEQ}/n" ] && n="$(cat "${FAKE_SEQ}/n")"
+    bf="${FAKE_SEQ}/b.${unit}.${n}"
+    [ -r "${bf}" ] || bf="${FAKE_SEQ}/b.${unit}"
+    [ -r "${bf}" ] || bf="${FAKE_SEQ}/b.last"
     case "${prop}" in
     ActiveState)
-        if [ "${FAKE_ACTIVE:-0}" -eq 0 ]; then printf 'active\\n'
+        if [ -r "${bf}" ]; then printf 'activating\\n'
+        elif [ "${FAKE_ACTIVE:-0}" -eq 0 ]; then printf 'active\\n'
         else printf 'inactive\\n'; fi
+        ;;
+    TimeoutStartUSec)
+        if [ -r "${bf}" ]; then cat "${bf}"
+        else printf 'infinity\\n'; fi
         ;;
     SubState) printf 'dead\\n' ;;
     MainPID) printf '812\\n' ;;
@@ -204,6 +216,42 @@ class BootWatchCase(unittest.TestCase):
         self.assertEqual(res.returncode, 0, res.stderr)
         self.assertIn("AIRYMAX-BOOT-STUCK target=graphical.target", res.stdout)
         self.assertIn("churn=1", res.stdout)
+
+    def test_bounded_wait_not_stuck(self) -> None:
+        """有界启动在窗口内挂着是等待，不是卡死；界到期后照常报告。"""
+        self.jobs(JOB)
+        (self.seq / "b.lightdm.service.1").write_text(
+            "2min 30s\n", encoding="utf-8"
+        )
+        res = self.run_watch(FAKE_ACTIVE="1")
+        self.assertEqual(res.returncode, 0, res.stderr)
+        self.assertIn(
+            "AIRYMAX-BOOT-WAIT unit=lightdm.service"
+            " cap=2min 30s reason=bounded",
+            res.stdout,
+        )
+        self.assertIn("AIRYMAX-BOOT-STUCK target=graphical.target", res.stdout)
+
+    def test_bounded_wait_healthy_silent(self) -> None:
+        """有界等待期间目标已达成，健康路径仍不留一行。"""
+        self.jobs(JOB)
+        (self.seq / "b.lightdm.service").write_text(
+            "1min 30s\n", encoding="utf-8"
+        )
+        res = self.run_watch(FAKE_ACTIVE="0")
+        self.assertEqual(res.returncode, 0, res.stderr)
+        self.assertEqual(res.stdout, "")
+
+    def test_unbounded_wait_reported(self) -> None:
+        """时限为 infinity 的启动不得当作有界等待：无界阻塞照常判负。"""
+        self.jobs(JOB)
+        (self.seq / "b.lightdm.service").write_text(
+            "infinity\n", encoding="utf-8"
+        )
+        res = self.run_watch(FAKE_ACTIVE="1")
+        self.assertEqual(res.returncode, 0, res.stderr)
+        self.assertNotIn("AIRYMAX-BOOT-WAIT", res.stdout)
+        self.assertIn("AIRYMAX-BOOT-STUCK target=graphical.target", res.stdout)
 
     def test_self_filtered(self) -> None:
         self.jobs(JOB)

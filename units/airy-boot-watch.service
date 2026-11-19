@@ -17,9 +17,12 @@
 # 与串口，journald 未就绪时结论只能落在丢失的 stdout 上。该 socket 由
 # PID1 在非常早的阶段拉起，不依赖 sysinit.target。
 #
-# TimeoutStartSec 覆盖观测窗口（默认 40 秒）加取样开销。StandardOutput
-# 只取 journal：console 与串口由脚本自己按设备实际归属写，交给 systemd
-# 再复制一遍会在 /dev/console 归属串口的机器上打出两行。
+# TimeoutStartSec 覆盖观测窗口（默认 40 秒）、会话选择等有界交互等待（单元
+# TimeoutStartSec=150）与取样开销：脚本自身以 AIRY_WATCH_MAX（默认 300 秒）
+# 封顶，这里必须严格大于它，否则看门狗会在写出结论前被 systemd 收走，卡点
+# 事实又只剩「超时」。0.0.5 的验收镜像正是两个时限互相盖住的结果。
+# StandardOutput 只取 journal：console 与串口由脚本自己按设备实际归属写，
+# 交给 systemd 再复制一遍会在 /dev/console 归属串口的机器上打出两行。
 # ===========================================================================
 [Unit]
 Description=Report a boot that stops making progress
