@@ -10,6 +10,9 @@ target/
 # Python bytecode
 __pycache__/
 *.pyc
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
 
 # IDE
 .vscode/
