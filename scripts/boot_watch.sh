@@ -299,6 +299,22 @@ dm_tail() {
     return 0
 }
 
+# 最近一次崩溃的登记。解析需要 libelf；缺它时 coredumpctl 仍给出进程、
+# 信号与时间，足以判断是同一处反复崩还是每次不同。没有 coredumpctl 的
+# 系统直接跳过。
+dm_core() {
+    local out='' line
+
+    command -v coredumpctl >/dev/null 2>&1 || return 0
+    out="$(timeout "${JTIMEOUT}" coredumpctl info -n 1 lightdm 2>/dev/null)" ||
+        return 0
+    while IFS= read -r line; do
+        [ -n "${line}" ] || continue
+        put "AIRYMAX-BOOT-DM core ${line}"
+    done <<<"${out}"
+    return 0
+}
+
 # lightdm 的单元状态与四份落盘证据。二进制缺席（最小安装、TUI 剖面）时
 # 整段静默：此时「没有显示管理器」是已知事实，不必逐文件报缺失。
 rep_dm() {
@@ -312,6 +328,7 @@ rep_dm() {
     dm_tail greeter "${DMLOG}/seat0-greeter.log"
     dm_tail xserver "${DMLOG}/x-0.log"
     dm_tail xwrap "${DMRUN}/xserver.log"
+    dm_core
 }
 
 # journal 末尾若干行：阻塞前的最后一句往往就是卡点所在。整条命令限时，
