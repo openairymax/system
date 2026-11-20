@@ -12,6 +12,7 @@
 //! 冻结契约适配层的公共接口。
 
 pub mod disk;
+pub mod modmap;
 pub mod model;
 pub mod probe;
 pub mod rtcap;
