@@ -65,10 +65,11 @@
 #
 # 每条事实同时写 stdout（journal）与串口设备节点：/dev/console 只归内核
 # 命令行里最后一个 console=，本项目的命令行是
-# console=ttyS0,115200 console=tty0，落点是本地屏，写进去的每一行都停在
-# tty0 上，只有串口的现场读不到（run 41925092075 的冷启动就是这样：探针
-# 判负并打印了，串口里却一条卡点事实都没有）。通道判据与九阶段打印共用
-# con.sh：串口优先、/dev/console 次之，两者同源时只写一份。
+# console=<串口> console=tty0（串口名随架构，见 con.sh），落点是本地屏，
+# 写进去的每一行都停在 tty0 上，只有串口的现场读不到（run 41925092075 的
+# 冷启动就是这样：探针判负并打印了，串口里却一条卡点事实都没有）。通道
+# 判据与九阶段打印共用 con.sh：串口优先、/dev/console 次之，两者同源时
+# 只写一份。
 #
 # 部署：airy-boot-watch.service，由 airy-boot-watch.timer 触发。
 # ===========================================================================
@@ -86,7 +87,10 @@ readonly JTIMEOUT="${AIRY_WATCH_JTIME:-5}"
 # 一定有终点，任何未预见的读数异常都不会让它一直睡在窗口里。
 readonly MAX="${AIRY_WATCH_MAX:-300}"
 readonly CONSOLE="${UI_CONSOLE:-/dev/console}"
-readonly SERIAL="${AIRY_WATCH_SERIAL:-/dev/ttyS0}"
+# 串口名不在这里派生：缺省（空串）交给 con.sh 按架构决定（ttyS0/ttyAMA0），
+# 显式给出时以调用方为准。保留变量只为让 AIRY_WATCH_SERIAL 这个历史名字
+# 继续有效，转名在下面 source 处一次完成。
+readonly SERIAL="${AIRY_WATCH_SERIAL:-}"
 readonly ACTIVE="${AIRY_WATCH_ACTIVE:-/sys/class/tty/console/active}"
 readonly SELF=airy-boot-watch
 
