@@ -91,6 +91,9 @@ readonly DMBIN="${AIRY_WATCH_DMBIN:-/usr/sbin/lightdm}"
 readonly DMLOG="${AIRY_WATCH_DMLOG:-/var/log/lightdm}"
 readonly DMRUN="${AIRY_WATCH_DMRUN:-/run/airymaxos}"
 readonly DMTAIL="${AIRY_WATCH_DMTAIL:-20}"
+# 崩溃栈的临时落点。取 core 到磁盘而不是 /run：core 与进程地址空间同量级，
+# tmpfs 会直接吃掉内存，取证不该把失败现场推向 OOM。
+readonly DMCORE="${AIRY_WATCH_DMCORE:-/var/tmp/airymax-core}"
 # 观测者的硬上限：停滞窗口之外还得罩住一段有界的交互等待，否则看门狗自己
 # 会先于被观察者结束。它不是判定阈值——停滞仍由 WIN 决定——只是保证本进程
 # 一定有终点，任何未预见的读数异常都不会让它一直睡在窗口里。
@@ -315,6 +318,29 @@ dm_core() {
     return 0
 }
 
+# 崩溃栈的符号化。openEuler 的 systemd-coredump 编译时未带 libelf，
+# coredumpctl info 只余寄存器快照，串口上反复出现 "elfutils disabled"，
+# 装 elfutils 包也解不出函数名。镜像里同一套 elfutils 提供 eu-stack，它
+# 自己读 core，不经过 coredumpctl 的解析路径；取最近一次 lightdm 的 core
+# 交给它，帧名与模块偏移才是可定位的那份证据。导出与解栈各自限时，解不出
+# 就整段跳过：取证不得变成新的卡点。
+dm_stack() {
+    local out='' line
+
+    command -v eu-stack >/dev/null 2>&1 || return 0
+    command -v coredumpctl >/dev/null 2>&1 || return 0
+    timeout "${JTIMEOUT}" coredumpctl dump -n 1 lightdm \
+        --output="${DMCORE}" >/dev/null 2>&1 || :
+    [ -s "${DMCORE}" ] || return 0
+    out="$(timeout "${JTIMEOUT}" eu-stack -e "${DMBIN}" -c "${DMCORE}" 2>&1)" || :
+    rm -f "${DMCORE}" 2>/dev/null || :
+    while IFS= read -r line; do
+        [ -n "${line}" ] || continue
+        put "AIRYMAX-BOOT-DM frame ${line}"
+    done <<<"$(printf '%s\n' "${out}" | head -n "${DMTAIL}")"
+    return 0
+}
+
 # lightdm 的单元状态与四份落盘证据。二进制缺席（最小安装、TUI 剖面）时
 # 整段静默：此时「没有显示管理器」是已知事实，不必逐文件报缺失。
 rep_dm() {
@@ -329,6 +355,7 @@ rep_dm() {
     dm_tail xserver "${DMLOG}/x-0.log"
     dm_tail xwrap "${DMRUN}/xserver.log"
     dm_core
+    dm_stack
 }
 
 # journal 末尾若干行：阻塞前的最后一句往往就是卡点所在。整条命令限时，
