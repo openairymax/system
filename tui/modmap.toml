@@ -1,0 +1,187 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later OR Apache-2.0
+# SPDX-FileCopyrightText: 2025-2026 SPHARX Ltd.
+# ===========================================================================
+# system/tui/modmap.toml — docs-linux 十九个功能模块的入口映射
+#
+# 三列口径（模块 → 入口 → 判据）是 0.0.5 方案 §2.5 的验收底线：每个模块
+# 要么在本版给出可观测入口与两条判据（成功一路、失败一路），要么明确登记
+# 承接版本，不允许以「待办」留白。`scope = covered` 的 entry 必须是仓库内
+# 真实存在的路径；`scope = deferred` 的 entry 固定为 `-`，note 以承接版本
+# 开头。两张表（本文件与 crates/airy-adapters/src/modmap.rs）必须逐字段
+# 一致，由 ci/gates/doc-contract.sh 判定，改一侧不改另一侧即判负。
+#
+# 为什么入口是路径而不是界面元素：入口是「该模块在会话层被观测到的第一条
+# 通路」，可以是可执行文件、适配器模块或门禁脚本；写成界面位置会在布局
+# 调整后立刻失真，而路径由死代码扫描与门禁同时看住。
+# ===========================================================================
+
+[[module]]
+code = "L"
+name = "工具链与 CI/CD"
+scope = "covered"
+entry = "ci/ci.sh"
+ok = "ci/ci.sh --list 列出门禁全集，ci/lint.sh --no-distro 退出 0"
+fail = "任一判据返回 1 时打印分组名与首个失败断言，不吞错"
+note = "门禁目录只做分发，判据在 ci/gates 与 ci/checks"
+
+[[module]]
+code = "A"
+name = "核心 syscall 与 Capability Folding"
+scope = "deferred"
+entry = "-"
+ok = "-"
+fail = "-"
+note = "0.0.24 起按内核窗口承接：折叠语义属内核侧，会话层不自行解释"
+
+[[module]]
+code = "M"
+name = "发行版工程与磁盘管理"
+scope = "covered"
+entry = "system/tui/crates/airy-adapters/src/disk.rs"
+ok = "airy-disk --json 的冻结字段集被完整解码为磁盘视图"
+fail = "字段缺失或类型不符折成契约不符，状态行给出原因而非静默"
+note = "只消费 0.0.4 冻结输出，不新增字段"
+
+[[module]]
+code = "B"
+name = "安全子系统"
+scope = "covered"
+entry = "system/tui/crates/airy-tui-exec/src/approve.rs"
+ok = "argv 序列化后命中 root 预置批准文件则执行，且不经 sh -c"
+fail = "未命中或批准文件过期返回 EPERM，写入批准目录由内核拒绝"
+note = "交互式审批随会话上下文留待 0.0.6"
+
+[[module]]
+code = "F"
+name = "认知运行时"
+scope = "deferred"
+entry = "-"
+ok = "-"
+fail = "-"
+note = "0.0.24 起承接：本版只落 Intent 解析，不冒充认知运行时"
+
+[[module]]
+code = "J"
+name = "质量保证与形式化验证"
+scope = "deferred"
+entry = "-"
+ok = "-"
+fail = "-"
+note = "0.0.6 起承接：本版复用既有门禁，形式化验证与浸泡仍在夜间轨"
+
+[[module]]
+code = "E"
+name = "内存管理"
+scope = "deferred"
+entry = "-"
+ok = "-"
+fail = "-"
+note = "0.0.24 起按内核窗口承接：用户态不提供内存管理入口"
+
+[[module]]
+code = "C"
+name = "双层 Supervisor"
+scope = "deferred"
+entry = "-"
+ok = "-"
+fail = "-"
+note = "0.0.24 起承接：监督面读点属内核事件通道，随 K 模块抬基线"
+
+[[module]]
+code = "D"
+name = "可观测性与审计"
+scope = "covered"
+entry = "system/tui/crates/airy-adapters/src/probe.rs"
+ok = "airy-probe status --json 的顶层键与 channels 被解码，可写性按通道呈现"
+fail = "单通道不可读时该行显示不可用并保留其余通道，不整体失败"
+note = "可写性只在 channels 元素内，不改冻结键名"
+
+[[module]]
+code = "I"
+name = "驱动框架"
+scope = "deferred"
+entry = "-"
+ok = "-"
+fail = "-"
+note = "0.1.0 起承接：设备模型与热插拔需内核侧先立接口"
+
+[[module]]
+code = "G"
+name = "云原生控制面"
+scope = "deferred"
+entry = "-"
+ok = "-"
+fail = "-"
+note = "0.1.0 起承接：控制面不在会话层实现，本版只消费 RT 能力快照"
+
+[[module]]
+code = "K"
+name = "用户态守护进程与核心服务"
+scope = "covered"
+entry = "system/tui/crates/airy-adapters/src/model.rs"
+ok = "airy-model status --json 被解码，就绪与降级状态按枚举呈现"
+fail = "degraded 携带原因时原样显示，原因未知则显示枚举值本身"
+note = "降级原因枚举由 0.0.4 冻结，不新增不改名"
+
+[[module]]
+code = "N"
+name = "兼容性层"
+scope = "deferred"
+entry = "-"
+ok = "-"
+fail = "-"
+note = "0.1.0 起承接：ABI 兼容矩阵随内核基线稳定后才有判据"
+
+[[module]]
+code = "H"
+name = "系统服务与开发工作站"
+scope = "covered"
+entry = "system/tui/crates/boot-tui/src/bin"
+ok = "引导期在 120 秒窗口内选择会话，结果落状态文件并可切换"
+fail = "超时回落默认会话并写 journal，切换失败回滚到原会话"
+note = "会话入口唯一，不按桌面环境变量分支"
+
+[[module]]
+code = "O"
+name = "性能工程"
+scope = "covered"
+entry = "ci/gates/tui-frame.sh"
+ok = "85x24 整屏重绘 p99 不超过 33 毫秒且帧常驻堆不超过 64 KiB"
+fail = "任一读数超预算即以非零退出码报告，不折中"
+note = "预算线只有一处声明，测试与基准读同一条线"
+
+[[module]]
+code = "P"
+name = "本地化与国标"
+scope = "covered"
+entry = "system/tui/crates/boot-ime"
+ok = "中文语料在离线词典上全数命中，字素簇截断不裂字"
+fail = "词典或编码非法时给出明确错误，不回退到猜测"
+note = "词典格式自持，不引入 C++ 输入法运行时"
+
+[[module]]
+code = "Q"
+name = "应用生态与工具集"
+scope = "covered"
+entry = "tools/airy"
+ok = "tools/airy --list 列出命令表全集，argv 与退出码原样透传"
+fail = "未知命令返回 2 并列出可用命令，不猜近义词"
+note = "命令名与路径的唯一声明在 tools/commands.tsv"
+
+[[module]]
+code = "R1"
+name = "桌面体验追新"
+scope = "deferred"
+entry = "-"
+ok = "-"
+fail = "-"
+note = "0.0.6 起承接：UKUI 4.24 自建闭包按可行性启动条件立项"
+
+[[module]]
+code = "R2"
+name = "桌面体验自建闭包"
+scope = "deferred"
+entry = "-"
+ok = "-"
+fail = "-"
+note = "0.0.6 起承接：闭包与包名重组代价未定，本版不启动"
