@@ -121,6 +121,18 @@ put() {
     con_put "$@"
 }
 
+# 一段多行证据按统一前缀逐行落盘。证据段（日志尾部、崩溃栈、journal）
+# 都是「读一段文本、逐行加标签」，四处各写一遍同样的 while 与空行判据，
+# 只会在改动其中一处时漂移；抽取后标签是唯一变量，空行判据只有一份。
+puts() {
+    local line
+
+    while IFS= read -r line; do
+        [ -n "${line}" ] || continue
+        put "$1 ${line}"
+    done
+}
+
 show() {
     local v
 
@@ -290,32 +302,24 @@ rep_unit() {
 # 单个证据文件的尾部。读不到就跳过：证据段允许缺省，观测者不能因为
 # 取证变成新的卡点。
 dm_tail() {
-    local tag="$1" path="$2" out='' line
+    local tag="$1" path="$2" out=''
 
     [ -r "${path}" ] || return 0
     out="$(timeout "${JTIMEOUT}" tail -n "${DMTAIL}" "${path}" 2>/dev/null)" ||
-        return 0
-    while IFS= read -r line; do
-        [ -n "${line}" ] || continue
-        put "AIRYMAX-BOOT-DM ${tag} ${line}"
-    done <<<"${out}"
-    return 0
+        out=''
+    puts "AIRYMAX-BOOT-DM ${tag}" <<<"${out}"
 }
 
 # 最近一次崩溃的登记。解析需要 libelf；缺它时 coredumpctl 仍给出进程、
 # 信号与时间，足以判断是同一处反复崩还是每次不同。没有 coredumpctl 的
 # 系统直接跳过。
 dm_core() {
-    local out='' line
+    local out=''
 
     command -v coredumpctl >/dev/null 2>&1 || return 0
     out="$(timeout "${JTIMEOUT}" coredumpctl info -n 1 lightdm 2>/dev/null)" ||
-        return 0
-    while IFS= read -r line; do
-        [ -n "${line}" ] || continue
-        put "AIRYMAX-BOOT-DM core ${line}"
-    done <<<"${out}"
-    return 0
+        out=''
+    puts "AIRYMAX-BOOT-DM core" <<<"${out}"
 }
 
 # 崩溃栈的符号化。openEuler 的 systemd-coredump 编译时未带 libelf，
@@ -325,7 +329,7 @@ dm_core() {
 # 交给它，帧名与模块偏移才是可定位的那份证据。导出与解栈各自限时，解不出
 # 就整段跳过：取证不得变成新的卡点。
 dm_stack() {
-    local out='' line
+    local out=''
 
     command -v eu-stack >/dev/null 2>&1 || return 0
     command -v coredumpctl >/dev/null 2>&1 || return 0
@@ -334,11 +338,8 @@ dm_stack() {
     [ -s "${DMCORE}" ] || return 0
     out="$(timeout "${JTIMEOUT}" eu-stack -e "${DMBIN}" -c "${DMCORE}" 2>&1)" || :
     rm -f "${DMCORE}" 2>/dev/null || :
-    while IFS= read -r line; do
-        [ -n "${line}" ] || continue
-        put "AIRYMAX-BOOT-DM frame ${line}"
-    done <<<"$(printf '%s\n' "${out}" | head -n "${DMTAIL}")"
-    return 0
+    puts "AIRYMAX-BOOT-DM frame" <<<"$(printf '%s\n' "${out}" |
+        head -n "${DMTAIL}")"
 }
 
 # lightdm 的单元状态与四份落盘证据。二进制缺席（最小安装、TUI 剖面）时
@@ -362,15 +363,11 @@ rep_dm() {
 # 读不到（无权限、journald 未起、超时）即跳过——证据段可缺省，观测者
 # 不能因为取证而变成新的卡点。
 rep_last() {
-    local out='' line=''
+    local out=''
 
     out="$(timeout "${JTIMEOUT}" journalctl -b -n "${TAIL}" --no-pager \
-        -o short-monotonic 2>/dev/null)" || return 0
-    while IFS= read -r line; do
-        [ -n "${line}" ] || continue
-        put "AIRYMAX-BOOT-LAST ${line}"
-    done <<<"${out}"
-    return 0
+        -o short-monotonic 2>/dev/null)" || out=''
+    puts "AIRYMAX-BOOT-LAST" <<<"${out}"
 }
 
 # 九阶段走到第几步。取中文行（logger -t airymax-boot）而不是各单元的 stdout
@@ -466,14 +463,7 @@ rep_cmd() {
 # 登录管理器是否在跑。display-manager.service 是 enable 之后得到的别名，
 # 别名缺失（管理器只是被手工拉起过）时退回具体单元名，两者任一在跑即算。
 dm_live() {
-    local u
-
-    for u in display-manager.service lightdm.service; do
-        if is_done "${u}"; then
-            return 0
-        fi
-    done
-    return 1
+    is_done display-manager.service || is_done lightdm.service
 }
 
 # 0.0.4 起的命令行不再带 rhgb，plymouth 单元也不参与启动：阶段行与卡点
@@ -483,10 +473,9 @@ dm_live() {
 # （无图形剖面、最小安装）或未运行（已被 plymouth.enable=0 关掉）时无事
 # 可做。
 unveil() {
-    command -v plymouth >/dev/null 2>&1 || return 0
-    plymouth --ping 2>/dev/null || return 0
+    command -v plymouth >/dev/null 2>&1 && plymouth --ping 2>/dev/null ||
+        return 0
     plymouth --hide-splash >/dev/null 2>&1 || :
-    return 0
 }
 
 main() {
