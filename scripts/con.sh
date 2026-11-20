@@ -6,7 +6,7 @@
 #
 # 为什么要有这一份：/dev/console 归内核 console 层，落点由命令行里最后一
 # 个 console= 决定。本项目的命令行是
-#   console=ttyS0,115200 console=tty0
+#   console=<串口> console=tty0
 # 末位是本地屏，于是写进 /dev/console 的每一行都停在 tty0 上，只接串口的
 # 现场一行也读不到（run 41925092075 的冷启动就是这样）。串口设备节点不经
 # console 层，是控制台层卡死时唯一还能出证据的通道，因此恒为首选；仅当它
@@ -17,7 +17,8 @@
 # 本文件，两个调用方各自只负责措辞。
 #
 # 环境变量：
-#   AIRY_CON_SERIAL  串口设备，缺省 /dev/ttyS0
+#   AIRY_CON_SERIAL  串口设备，缺省按架构派生（x86_64 的 8250 是 ttyS0，
+#                    aarch64 的 PL011 是 ttyAMA0）
 #   AIRY_CON_ACTIVE  活动控制台列表，缺省 /sys/class/tty/console/active
 #   AIRY_CON_UI      本地屏落点，缺省 /dev/console
 #   AIRY_CON_WLIM    单次写入的阻塞上限秒数，缺省 2
@@ -32,7 +33,15 @@
 [[ -n "${_AIRY_CON_SH:-}" ]] && return 0
 readonly _AIRY_CON_SH=1
 
-readonly CON_SER="${AIRY_CON_SERIAL:-/dev/ttyS0}"
+# 串口设备名随架构不同，且只在这里派生一次：两个调用方都不再自带默认值。
+# 写死 ttyS0 时 aarch64 的通道判定永远落在「不可写，退回 /dev/console」，
+# 于是九阶段打印与看门狗诊断在 ARM 上又回到「只进本地屏」的老毛病
+# （run 41925092075）。aarch64 上是 8250 缺失、PL011 提供 ttyAMA0。
+airy_con_dev=ttyS0
+if [ "$(uname -m)" = aarch64 ]; then
+    airy_con_dev=ttyAMA0
+fi
+readonly CON_SER="${AIRY_CON_SERIAL:-/dev/${airy_con_dev}}"
 readonly CON_ACT="${AIRY_CON_ACTIVE:-/sys/class/tty/console/active}"
 readonly CON_UI="${AIRY_CON_UI:-/dev/console}"
 # 控制台驱动死锁时写操作不返回，诊断行跟着挂死等于在最需要证据的时候
