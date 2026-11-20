@@ -29,24 +29,14 @@ pub const PREFIX: &str = "AIRYMAX-NET";
 /// 六个字段的键序；与 [`Fields`] 的槽位一一对应。
 const KEYS: [&str; 6] = ["state", "dev", "driver", "fw", "rfkill", "hint"];
 
-/// state token 表；顺序与 [`State`] 的判别值一致。
-const TOKENS: [&str; 6] = [
-    "no-device",
-    "no-firmware",
-    "no-carrier",
-    "no-ssid",
-    "dhcp-timeout",
-    "ok",
-];
-
-/// token 表对应的判别值。
-const STATES: [State; 6] = [
-    State::NoDevice,
-    State::NoFirmware,
-    State::NoCarrier,
-    State::NoSsid,
-    State::DhcpTimeout,
-    State::Ready,
+/// token 与结论写在同一条目里；解析只读这张表，不另设平行数组。
+const TOKENS: [(&str, State); 6] = [
+    ("no-device", State::NoDevice),
+    ("no-firmware", State::NoFirmware),
+    ("no-carrier", State::NoCarrier),
+    ("no-ssid", State::NoSsid),
+    ("dhcp-timeout", State::DhcpTimeout),
+    ("ok", State::Ready),
 ];
 
 /// 三级顺序；数组下标即判别值。
@@ -147,8 +137,8 @@ impl State {
     pub fn parse(token: &str) -> Result<Self, Refusal> {
         TOKENS
             .iter()
-            .position(|known| *known == token)
-            .map(|index| STATES[index])
+            .find(|(known, _)| *known == token)
+            .map(|(_, state)| *state)
             .ok_or_else(|| Refusal::invalid(token))
     }
 }
