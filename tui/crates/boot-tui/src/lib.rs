@@ -22,6 +22,7 @@ pub mod input;
 pub mod keymap;
 pub mod layout;
 pub mod nav;
+pub mod net_view;
 pub mod paint;
 pub mod palette;
 pub mod pick;
