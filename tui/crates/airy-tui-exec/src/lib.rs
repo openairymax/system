@@ -11,6 +11,7 @@
 //! 意图执行面的公共接口。
 
 pub mod approve;
+pub mod audit;
 pub mod exec;
 pub mod normalize;
 pub mod sandbox;
