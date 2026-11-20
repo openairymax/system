@@ -14,6 +14,7 @@
 pub mod disk;
 pub mod model;
 pub mod modmap;
+pub mod net;
 pub mod probe;
 pub mod rtcap;
 
