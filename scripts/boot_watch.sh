@@ -82,6 +82,15 @@ readonly WIN="${AIRY_WATCH_WIN:-40}"
 readonly JTOT="${AIRY_WATCH_JOBS:-8}"
 readonly TAIL="${AIRY_WATCH_TAIL:-8}"
 readonly JTIMEOUT="${AIRY_WATCH_JTIME:-5}"
+# 显示管理器的现场。桌面起不来有四种收场：lightdm 自己退出、X 没起来、
+# greeter 崩、会话脚本卡住。四者的证据分别落在 lightdm.log、x-0.log、
+# seat0-greeter.log 与封装脚本的状态文件里，都不上串口；判定成立时各取
+# 尾部若干行按标签带出。路径可重定向，回归用例才能在没有这些文件的机器
+# 上验证接线，而不是靠现场碰运气。
+readonly DMBIN="${AIRY_WATCH_DMBIN:-/usr/sbin/lightdm}"
+readonly DMLOG="${AIRY_WATCH_DMLOG:-/var/log/lightdm}"
+readonly DMRUN="${AIRY_WATCH_DMRUN:-/run/airymaxos}"
+readonly DMTAIL="${AIRY_WATCH_DMTAIL:-20}"
 # 观测者的硬上限：停滞窗口之外还得罩住一段有界的交互等待，否则看门狗自己
 # 会先于被观察者结束。它不是判定阈值——停滞仍由 WIN 决定——只是保证本进程
 # 一定有终点，任何未预见的读数异常都不会让它一直睡在窗口里。
@@ -275,6 +284,36 @@ rep_unit() {
         "sub=${sub} pid=${pid} result=${res}"
 }
 
+# 单个证据文件的尾部。读不到就跳过：证据段允许缺省，观测者不能因为
+# 取证变成新的卡点。
+dm_tail() {
+    local tag="$1" path="$2" out='' line
+
+    [ -r "${path}" ] || return 0
+    out="$(timeout "${JTIMEOUT}" tail -n "${DMTAIL}" "${path}" 2>/dev/null)" ||
+        return 0
+    while IFS= read -r line; do
+        [ -n "${line}" ] || continue
+        put "AIRYMAX-BOOT-DM ${tag} ${line}"
+    done <<<"${out}"
+    return 0
+}
+
+# lightdm 的单元状态与四份落盘证据。二进制缺席（最小安装、TUI 剖面）时
+# 整段静默：此时「没有显示管理器」是已知事实，不必逐文件报缺失。
+rep_dm() {
+    local u=lightdm.service
+
+    [ -e "${DMBIN}" ] || return 0
+    put "AIRYMAX-BOOT-DM unit=${u} active=$(show "${u}" ActiveState)" \
+        "sub=$(show "${u}" SubState) result=$(show "${u}" Result)" \
+        "restarts=$(show "${u}" NRestarts)"
+    dm_tail lightdm "${DMLOG}/lightdm.log"
+    dm_tail greeter "${DMLOG}/seat0-greeter.log"
+    dm_tail xserver "${DMLOG}/x-0.log"
+    dm_tail xwrap "${DMRUN}/xserver.log"
+}
+
 # journal 末尾若干行：阻塞前的最后一句往往就是卡点所在。整条命令限时，
 # 读不到（无权限、journald 未起、超时）即跳过——证据段可缺省，观测者
 # 不能因为取证而变成新的卡点。
@@ -425,6 +464,7 @@ main() {
         rep_unit "${first}"
     fi
     rep_unit "${tgt}"
+    rep_dm
     rep_stage
     rep_last
     rep_fail

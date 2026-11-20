@@ -209,6 +209,32 @@ class BootWatchCase(unittest.TestCase):
         self.assertIn("AIRYMAX-BOOT-CMDLINE argv=\"", res.stdout)
         self.assertIn("AIRYMAX-BOOT-HINT cmd=\"systemctl list-jobs;", res.stdout)
 
+    def test_dm_evidence(self) -> None:
+        """桌面起不来时把 lightdm 的落盘证据按来源带出来。"""
+        self.jobs(JOB)
+        dm = Path(self.tmp.name) / "dm"
+        dm.mkdir()
+        (dm / "lightdm.log").write_text(
+            "Failed to start X server\n", encoding="utf-8"
+        )
+        (dm / "x-0.log").write_text("(EE) no screens found\n", encoding="utf-8")
+        bin_path = Path(self.tmp.name) / "lightdm"
+        bin_path.write_text("", encoding="utf-8")
+        res = self.run_watch(
+            FAKE_ACTIVE="1",
+            AIRY_WATCH_DMBIN=str(bin_path),
+            AIRY_WATCH_DMLOG=str(dm),
+            AIRY_WATCH_DMRUN=str(dm),
+        )
+        self.assertEqual(res.returncode, 0, res.stderr)
+        self.assertIn(
+            "AIRYMAX-BOOT-DM lightdm Failed to start X server", res.stdout
+        )
+        self.assertIn(
+            "AIRYMAX-BOOT-DM xserver (EE) no screens found", res.stdout
+        )
+        self.assertNotIn("AIRYMAX-BOOT-DM greeter", res.stdout)
+
     def test_progress_reported(self) -> None:
         """作业表在变同样要报：反复重启的单元让作业表每轮都不同。"""
         self.jobs(JOB, JOB + "3 multi-user.target start waiting\n")
