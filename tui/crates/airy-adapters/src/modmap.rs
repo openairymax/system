@@ -112,10 +112,7 @@ pub fn lookup(code: &str) -> Option<&'static ModEntry> {
 
 /// 本版已覆盖的模块数。
 pub fn covered() -> usize {
-    MODULES
-        .iter()
-        .filter(|m| m.scope == Scope::Covered)
-        .count()
+    MODULES.iter().filter(|m| m.scope == Scope::Covered).count()
 }
 
 #[cfg(test)]
@@ -140,10 +137,7 @@ mod tests {
 
     #[test]
     fn covered_count_matches_scope() {
-        let marked = MODULES
-            .iter()
-            .filter(|m| m.scope == Scope::Covered)
-            .count();
+        let marked = MODULES.iter().filter(|m| m.scope == Scope::Covered).count();
         assert_eq!(covered(), marked, "计数与登记不一致");
         assert!(marked < MODULES.len(), "十九个模块不可能全是 covered");
     }
