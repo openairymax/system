@@ -98,8 +98,8 @@ impl Entry {
 
     /// 渲染成一行；字段顺序即契约 §3 的顺序。
     pub fn line(&self) -> String {
-        let (out, out_cut) = fold(&self.stdout.text, TEXT);
-        let (err, err_cut) = fold(&self.stderr.text, TEXT);
+        let (out, trimmed) = fold(&self.stdout.text, TEXT);
+        let (err, trimmed_err) = fold(&self.stderr.text, TEXT);
         [
             PREFIX.to_owned(),
             pair("trace", &self.trace.to_hex()),
@@ -114,11 +114,11 @@ impl Entry {
             pair("approval", &dash(self.approval.as_deref().unwrap_or(""))),
             pair("advice", &flat(&self.advice)),
             pair("out", &self.stdout.text.len().to_string()),
-            pair("out_cut", flag(out_cut)),
+            pair("out_cut", flag(trimmed || self.stdout.truncated)),
             pair("err", &self.stderr.text.len().to_string()),
-            pair("err_cut", flag(err_cut)),
-            pair("stdout", &out),
-            pair("stderr", &err),
+            pair("err_cut", flag(trimmed_err || self.stderr.truncated)),
+            pair("stdout", &dash(&out)),
+            pair("stderr", &dash(&err)),
         ]
         .join(" ")
     }
