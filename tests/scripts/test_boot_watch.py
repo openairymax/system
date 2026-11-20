@@ -115,6 +115,31 @@ printf '09:00:03.2 host lightdm[812]: waiting for bus name\\n'
 exit 0
 """
 
+COREDUMPCTL = """#!/usr/bin/env bash
+set -uo pipefail
+case "$1" in
+info)
+    printf 'Process 4543 (lightdm) of user 0 dumped core.\\n'
+    ;;
+dump)
+    out=''
+    for arg in "$@"; do
+        case "${arg}" in
+        --output=*) out="${arg#--output=}" ;;
+        esac
+    done
+    [ -n "${out}" ] || exit 1
+    printf 'core\\n' >"${out}"
+    ;;
+esac
+"""
+
+EU_STACK = """#!/usr/bin/env bash
+set -uo pipefail
+printf '#0  0x0000ffff8f3cb248 __strlen_aarch64+0x8 in libc.so.6\\n'
+printf '#1  0x0000ffff8f36f3a8 g_strdup+0x18 in libglib-2.0.so.0\\n'
+"""
+
 
 class BootWatchCase(unittest.TestCase):
     """构造桩 systemctl 与隔离的输出通道。"""
@@ -234,6 +259,34 @@ class BootWatchCase(unittest.TestCase):
             "AIRYMAX-BOOT-DM xserver (EE) no screens found", res.stdout
         )
         self.assertNotIn("AIRYMAX-BOOT-DM greeter", res.stdout)
+
+    def test_dm_stack_frames(self) -> None:
+        """coredumpctl 解不出符号时改走 eu-stack，帧名单独成段。"""
+        self.jobs(JOB)
+        base = Path(self.tmp.name)
+        core = base / "core"
+        for name, body in (
+            ("coredumpctl", COREDUMPCTL),
+            ("eu-stack", EU_STACK),
+        ):
+            tool = self.bin / name
+            tool.write_text(body, encoding="utf-8")
+            tool.chmod(0o755)
+        bin_path = base / "lightdm"
+        bin_path.write_text("", encoding="utf-8")
+        res = self.run_watch(
+            FAKE_ACTIVE="1",
+            AIRY_WATCH_DMBIN=str(bin_path),
+            AIRY_WATCH_DMLOG=str(base),
+            AIRY_WATCH_DMRUN=str(base),
+            AIRY_WATCH_DMCORE=str(core),
+        )
+        self.assertEqual(res.returncode, 0, res.stderr)
+        self.assertIn("AIRYMAX-BOOT-DM core Process 4543", res.stdout)
+        self.assertIn(
+            "AIRYMAX-BOOT-DM frame #0  0x0000ffff8f3cb248", res.stdout
+        )
+        self.assertFalse(core.exists())
 
     def test_progress_reported(self) -> None:
         """作业表在变同样要报：反复重启的单元让作业表每轮都不同。"""
