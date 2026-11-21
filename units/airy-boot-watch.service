@@ -17,12 +17,13 @@
 # 与串口，journald 未就绪时结论只能落在丢失的 stdout 上。该 socket 由
 # PID1 在非常早的阶段拉起，不依赖 sysinit.target。
 #
-# TimeoutStartSec 覆盖观测窗口（默认 40 秒）、会话选择等有界交互等待（单元
-# TimeoutStartSec=150）与取样开销：脚本自身以 AIRY_WATCH_MAX（默认 300 秒）
-# 封顶，这里必须严格大于它，否则看门狗会在写出结论前被 systemd 收走，卡点
-# 事实又只剩「超时」。360 秒 = 300 秒上限 + 取证段（两段 journal 各限时
-# 5 秒）与收尾余量。0.0.5 的验收镜像曾把这里写成 120：开机 60 秒启动、
-# 180 秒被收走，Result=timeout 又进了失败单元判定，三条腿的 T23 一起判负。
+# TimeoutStartSec 覆盖观测窗口与取样开销：脚本自身以 AIRY_WATCH_MAX（默认
+# 600 秒）封顶，这里必须严格大于它，否则看门狗会在写出结论前被 systemd
+# 收走，卡点事实又只剩「超时」。660 秒 = 600 秒上限 + 取证段（两段 journal
+# 各限时 5 秒）与收尾余量。上限从 300 提到 600 的依据是 aarch64 TCG：
+# 333→373 秒作业表逐字不变而 journal 持续增长，图形目标 407 秒才达成，
+# 300 秒会把「慢而有序」判成卡死。0.0.5 的验收镜像曾把这里写成 120：开机
+# 60 秒启动、180 秒被收走，Result=timeout 又进了失败单元判定。
 #
 # StandardOutput 只取 journal：console 与串口由脚本自己按设备实际归属写，
 # 交给 systemd 再复制一遍会在 /dev/console 归属串口的机器上打出两行。
@@ -36,6 +37,6 @@ After=systemd-journald.socket
 [Service]
 Type=oneshot
 ExecStart=/usr/lib/airymaxos/scripts/boot_watch.sh
-TimeoutStartSec=360
+TimeoutStartSec=660
 StandardOutput=journal
 StandardError=journal

@@ -94,10 +94,11 @@ readonly DMTAIL="${AIRY_WATCH_DMTAIL:-20}"
 # 崩溃栈的临时落点。取 core 到磁盘而不是 /run：core 与进程地址空间同量级，
 # tmpfs 会直接吃掉内存，取证不该把失败现场推向 OOM。
 readonly DMCORE="${AIRY_WATCH_DMCORE:-/var/tmp/airymax-core}"
-# 观测者的硬上限：停滞窗口之外还得罩住一段有界的交互等待，否则看门狗自己
-# 会先于被观察者结束。它不是判定阈值——停滞仍由 WIN 决定——只是保证本进程
-# 一定有终点，任何未预见的读数异常都不会让它一直睡在窗口里。
-readonly MAX="${AIRY_WATCH_MAX:-300}"
+# 观测者的硬上限。判定阈值仍是 WIN：作业表与 journal 游标都不动才叫停滞。
+# 上限只保证本进程有终点，因此必须容得下「一直在推进、但目标达成得慢」的
+# 整段启动（aarch64 TCG 上图形目标在 407 秒达成），600 秒是实测值的余量；
+# 它与 airy-boot-watch.service 的 TimeoutStartSec 成对改动。
+readonly MAX="${AIRY_WATCH_MAX:-600}"
 readonly CONSOLE="${UI_CONSOLE:-/dev/console}"
 # 串口名不在这里派生：缺省（空串）交给 con.sh 按架构决定（ttyS0/ttyAMA0），
 # 显式给出时以调用方为准。保留变量只为让 AIRY_WATCH_SERIAL 这个历史名字
@@ -222,6 +223,15 @@ pend() {
         LC_ALL=C sort
 }
 
+# journal 游标：作业表逐字不变不等于没有推进。aarch64 TCG 上 333 秒与
+# 373 秒的作业表完全相同（graphical.target 的作业在队列里等），系统仍在
+# 持续写日志，图形目标 407 秒达成。只看作业表会把这种「慢而有序」判成
+# 卡死。游标读不到时返回空串，判定退回只看作业表，保持原有的 fail-closed。
+jcur() {
+    timeout "${JTIMEOUT}" journalctl -b -n 0 --no-pager -q \
+        --show-cursor 2>&1 | sed -n 's/^-- cursor: //p'
+}
+
 # 0 窗口结束时目标仍未达成；1 目标已达成。
 # 作业表的变化只记进 CHURN，不再作为「健康」的判据：反复重启的单元同样
 # 让作业表每轮不同，按变化提前收工等于对最需要证据的那类卡点失明。
@@ -233,7 +243,7 @@ pend() {
 # 记一行 WAIT 并等下一轮；界到期后 systemd 收尾该单元，下一轮自然回到
 # 停滞判定。MAX 只封住观测者自身的时长，不改变 WIN 这个判定阈值。
 watch() {
-    local tgt="$1" last='' cur step=0 held='' hard
+    local tgt="$1" last='' lastc='' cur c step=0 held='' hard adv
 
     hard=$(( $(now) + MAX ))
     while [ "${step}" -lt "${WIN}" ] && [ "$(now)" -lt "${hard}" ]; do
@@ -250,18 +260,30 @@ watch() {
             sleep "${POLL}"
             continue
         fi
+        c="$(jcur)"
         if [ "${step}" -gt 0 ] && [ "${cur}" != "${last}" ]; then
             CHURN=1
         fi
+        adv=0
+        if [ -n "${cur}" ]; then
+            [ "${cur}" != "${last}" ] && adv=1
+            { [ -n "${c}" ] && [ "${c}" != "${lastc}" ]; } && adv=1
+        fi
+        [ "${adv}" -eq 1 ] && step=0
         last="${cur}"
+        lastc="${c}"
         sleep "${POLL}"
         step=$((step + POLL))
     done
     if is_done "${tgt}"; then
         return 1
     fi
-    IDLE="${WIN}"
-    return 0
+    IDLE="${step}"
+    # 窗口走满才是停滞（0）。走到 MAX 仍在推进的启动只是慢，不能按卡死
+    # 判负——aarch64 TCG 的图形目标 407 秒才达成，而它在 333→373 秒之间
+    # 的作业表逐字不变。慢启动单独报一行，判定权交给开机腿自己的等待上限。
+    [ "${step}" -ge "${WIN}" ] && return 0
+    return 2
 }
 
 rep_tgt() {
@@ -273,6 +295,18 @@ rep_tgt() {
     put "AIRYMAX-BOOT-STUCK target=${tgt} active=${act}" \
         "sub=${sub} uptime=${up}s idle=${IDLE}s churn=${CHURN}" \
         "reason=${reason}"
+}
+
+rep_slow() {
+    local tgt="$1" act sub up n
+
+    act="$(show "${tgt}" ActiveState)"
+    sub="$(show "${tgt}" SubState)"
+    up="$(now)"
+    n="$(pend | wc -l)"
+    put "AIRYMAX-BOOT-SLOW target=${tgt} active=${act}" \
+        "sub=${sub} uptime=${up}s idle=${IDLE}s jobs=${n}" \
+        "reason=cap cap=${MAX}s"
 }
 
 rep_jobs() {
@@ -479,19 +513,27 @@ unveil() {
 }
 
 main() {
-    local tgt first reason
+    local tgt first reason rc=0
 
     tgt="$(def_tgt)"
-    if watch "${tgt}"; then
-        reason=unreached
-    elif [ "${tgt}" = graphical.target ] && ! dm_live; then
+    watch "${tgt}" || rc=$?
+    if [ "${rc}" -eq 1 ]; then
+        if [ "${tgt}" != graphical.target ] || dm_live; then
+            return 0
+        fi
         reason=nodm
+    elif [ "${rc}" -eq 2 ]; then
+        reason=cap
     else
-        return 0
+        reason=unreached
     fi
     unveil
     first="$(pend | awk 'NR == 1 { print $2 }')"
-    rep_tgt "${tgt}" "${reason}"
+    if [ "${rc}" -eq 2 ]; then
+        rep_slow "${tgt}"
+    else
+        rep_tgt "${tgt}" "${reason}"
+    fi
     rep_jobs
     if [ -n "${first}" ]; then
         rep_unit "${first}"

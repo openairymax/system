@@ -3,11 +3,12 @@
 #
 # AirymaxOS 启动卡点自证回归测试
 #
-# 以桩 systemctl 提供默认目标、作业表、单元属性与失败记账，验证四件事：
+# 以桩 systemctl 提供默认目标、作业表、单元属性与失败记账，验证五件事：
 # 健康路径一个字都不输出；目标未达成且作业表逐字不变时一次性带出可归因
 # 的事实；作业表在变（反复重启）同样带出事实并以 churn=1 区分；诊断行
-# 不落 journal 的 err 桶。桩只复刻 systemctl 的对外输出，不复制任何判定
-# 逻辑。
+# 不落 journal 的 err 桶；作业表不变而 journal 仍在写（游标推进）时按慢
+# 启动报 BOOT-SLOW，不按停滞判负。桩只复刻 systemctl 的对外输出，不复制
+# 任何判定逻辑。
 
 from __future__ import annotations
 
@@ -102,6 +103,17 @@ set -uo pipefail
 printf '%s\\n' "$*" >>"${FAKE_JLOG:?}"
 [ "${FAKE_JEXIT:-0}" -eq 0 ] || exit "${FAKE_JEXIT}"
 case " $* " in
+*" --show-cursor "*)
+    # 游标每次调用自增：模拟作业表逐字不变、journal 却仍在写。
+    # 未开 FAKE_JCUR 时不给游标，等价于现场读不到，判定退回只看作业表。
+    [ "${FAKE_JCUR:-0}" -eq 1 ] || exit 0
+    n=0
+    [ -r "${FAKE_SEQ}/cursor" ] && n="$(cat "${FAKE_SEQ}/cursor")"
+    n=$((n + 1))
+    printf '%s\\n' "${n}" >"${FAKE_SEQ}/cursor"
+    printf -- '-- cursor: s=%s;i=%s\\n' "${n}" "${n}"
+    exit 0
+    ;;
 *" -t "*)
     # 阶段行按 ident 过滤的取法；无 fixture 即「本次开机一条阶段行都没有」。
     [ -r "${FAKE_STAGE_FILE:-/nonexistent}" ] || exit 0
@@ -183,6 +195,10 @@ class BootWatchCase(unittest.TestCase):
     def run_watch(self, **env2: str):
         env = dict(os.environ)
         env["PATH"] = f"{self.bin}{os.pathsep}{env['PATH']}"
+        # 被测脚本把 stderr 并入 stdout（诊断不得进 journal 的 err 桶），
+        # 因此宿主注入的加载器路径会让每个动态链接的工具把告警写进被测
+        # 输出。产品跑在干净系统上，回归也必须在干净的加载器环境里跑。
+        env.pop("LD_LIBRARY_PATH", None)
         env.update(
             {
                 "UI_CONSOLE": str(self.console),
@@ -295,6 +311,20 @@ class BootWatchCase(unittest.TestCase):
         self.assertEqual(res.returncode, 0, res.stderr)
         self.assertIn("AIRYMAX-BOOT-STUCK target=graphical.target", res.stdout)
         self.assertIn("churn=1", res.stdout)
+
+    def test_cursor_progress_not_stuck(self) -> None:
+        """作业表不变但 journal 仍在写是慢启动，不按停滞判负。
+
+        aarch64 TCG 上图形目标 407 秒才达成，而 333→373 秒之间的作业表
+        逐字相同；只看作业表会把这种慢而有序的启动判成卡死。观测者走到
+        自身上限时改报 BOOT-SLOW，判定权留给开机腿的等待上限。
+        """
+        self.jobs(JOB)
+        res = self.run_watch(FAKE_ACTIVE="1", FAKE_JCUR="1", AIRY_WATCH_MAX="3")
+        self.assertEqual(res.returncode, 0, res.stderr)
+        self.assertNotIn("AIRYMAX-BOOT-STUCK", res.stdout)
+        self.assertIn("AIRYMAX-BOOT-SLOW target=graphical.target", res.stdout)
+        self.assertIn("reason=cap cap=3s", res.stdout)
 
     def test_bounded_wait_not_stuck(self) -> None:
         """有界启动在窗口内挂着是等待，不是卡死；界到期后照常报告。"""

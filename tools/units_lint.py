@@ -490,9 +490,10 @@ BOOT_WATCH = "airy-boot-watch.service"
 # 被 plymouth-read-write 卡死，本单元 journal 为空）。stdout 只进 journal，
 # console 与串口由脚本按设备实际归属自己写，交给 systemd 复制一遍会在
 # /dev/console 归串口的机器上重复。
-# TimeoutStartSec 取 360：脚本自身以 AIRY_WATCH_MAX（300 秒）封顶，之后还有
-# 两段各限时 5 秒的取证；120 会让 systemd 在结论写出前收走看门狗，超时本身
-# 又变成一条失败单元（0.0.5 验收镜像三条腿的 T23 即此形态）。
+# TimeoutStartSec 取 660：脚本自身以 AIRY_WATCH_MAX（600 秒）封顶，之后还有
+# 两段各限时 5 秒的取证；小于上限会让 systemd 在结论写出前收走看门狗，超时
+# 本身又变成一条失败单元（0.0.5 验收镜像三条腿的 T23 即此形态）。上限取 600
+# 是因为 aarch64 TCG 的图形目标 407 秒才达成。
 BOOT_WATCH_PAIRS: dict[tuple[str, str], str] = {
     ("Unit", "DefaultDependencies"): "no",
     ("Unit", "After"): "systemd-journald.socket",
@@ -501,7 +502,7 @@ BOOT_WATCH_PAIRS: dict[tuple[str, str], str] = {
         "Service",
         "ExecStart",
     ): "/usr/lib/airymaxos/scripts/boot_watch.sh",
-    ("Service", "TimeoutStartSec"): "360",
+    ("Service", "TimeoutStartSec"): "660",
     ("Service", "StandardOutput"): "journal",
     ("Service", "StandardError"): "journal",
 }
