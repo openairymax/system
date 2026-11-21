@@ -109,6 +109,7 @@ readonly SELF=airy-boot-watch
 
 IDLE=0
 CHURN=0
+HELD=''
 BW_UNIT=''
 BW_CAP=''
 
@@ -234,6 +235,29 @@ jcur() {
         --show-cursor 2>&1 | sed -n 's/^-- cursor: //p'
 }
 
+# 有界启动的 WAIT 行只在等待单元切换时落一行：同一单元持续等待时每轮都写
+# 会把串口刷成一片重复行，反而盖住别的证据。
+wait_row() {
+    [ "${BW_UNIT}" = "${HELD}" ] && return 0
+    put "AIRYMAX-BOOT-WAIT unit=${BW_UNIT}" "cap=${BW_CAP} reason=bounded"
+    HELD="${BW_UNIT}"
+}
+
+# 本轮作业表或 journal 游标是否前移。作业表为空的轮次不算推进（见下面
+# watch 的说明），此时只看游标没有意义，故先按空表否决。
+moved() {
+    [ -n "$1" ] || return 1
+    [ "$1" = "$3" ] || return 0
+    [ -n "$2" ] && [ "$2" != "$4" ]
+}
+
+# 窗口结束后的判定：目标已达成 1；走满窗口 0；未走满（撞上 MAX）2。
+verdict() {
+    is_done "$1" && return 1
+    [ "$2" -ge "${WIN}" ] && return 0
+    return 2
+}
+
 # 0 窗口结束时目标仍未达成；1 目标已达成。
 # 作业表的变化只记进 CHURN，不再作为「健康」的判据：反复重启的单元同样
 # 让作业表每轮不同，按变化提前收工等于对最需要证据的那类卡点失明。
@@ -245,47 +269,30 @@ jcur() {
 # 记一行 WAIT 并等下一轮；界到期后 systemd 收尾该单元，下一轮自然回到
 # 停滞判定。MAX 只封住观测者自身的时长，不改变 WIN 这个判定阈值。
 watch() {
-    local tgt="$1" last='' lastc='' cur c step=0 held='' hard adv
+    local tgt="$1" last='' lastc='' cur c step=0 hard
 
     hard=$(( $(now) + MAX ))
     while [ "${step}" -lt "${WIN}" ] && [ "$(now)" -lt "${hard}" ]; do
-        if is_done "${tgt}"; then
-            return 1
-        fi
+        is_done "${tgt}" && return 1
         cur="$(pend)"
         if bwait "${cur}"; then
-            if [ "${BW_UNIT}" != "${held}" ]; then
-                put "AIRYMAX-BOOT-WAIT unit=${BW_UNIT}" \
-                    "cap=${BW_CAP} reason=bounded"
-                held="${BW_UNIT}"
-            fi
+            wait_row
             sleep "${POLL}"
             continue
         fi
         c="$(jcur)"
-        if [ "${step}" -gt 0 ] && [ "${cur}" != "${last}" ]; then
-            CHURN=1
-        fi
-        adv=0
-        if [ -n "${cur}" ]; then
-            [ "${cur}" != "${last}" ] && adv=1
-            { [ -n "${c}" ] && [ "${c}" != "${lastc}" ]; } && adv=1
-        fi
-        [ "${adv}" -eq 1 ] && step=0
+        [ "${step}" -gt 0 ] && [ "${cur}" != "${last}" ] && CHURN=1
+        moved "${cur}" "${c}" "${last}" "${lastc}" && step=0
         last="${cur}"
         lastc="${c}"
         sleep "${POLL}"
         step=$((step + POLL))
     done
-    if is_done "${tgt}"; then
-        return 1
-    fi
     IDLE="${step}"
     # 窗口走满才是停滞（0）。走到 MAX 仍在推进的启动只是慢，不能按卡死
     # 判负——aarch64 TCG 的图形目标 407 秒才达成，而它在 333→373 秒之间
     # 的作业表逐字不变。慢启动单独报一行，判定权交给开机腿自己的等待上限。
-    [ "${step}" -ge "${WIN}" ] && return 0
-    return 2
+    verdict "${tgt}" "${step}"
 }
 
 rep_tgt() {
