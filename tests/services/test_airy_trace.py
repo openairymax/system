@@ -57,11 +57,24 @@ class RecordTest(Tree):
             trace.record(self.tracefs, 0.01, EVENTS)
         self.assertEqual(on.read_text(encoding="ascii").strip(), "1")
 
+    def test_written(self) -> None:
+        def fake(_: float) -> None:
+            head = "# entries-in-buffer/entries-written: 1/4   #P:4\n"
+            with (self.tracefs / "trace").open("a", encoding="ascii") as out:
+                out.write(head)
+            self.emit("airy_ipc_send")
+
+        with mock.patch(SLEEP, side_effect=fake):
+            shot = trace.record(self.tracefs, 0.01, EVENTS)
+        self.assertEqual(shot.written, 4)
+        self.assertEqual(shot.count("airy_ipc_send"), 1)
+
     def test_idle(self) -> None:
         with mock.patch(SLEEP):
             shot = trace.record(self.tracefs, 0.01, EVENTS)
         self.assertEqual(shot.state, trace.IDLE)
         self.assertEqual(shot.hit, 0)
+        self.assertIsNone(shot.written)
 
     def test_missing(self) -> None:
         shot = trace.record(self.base / "absent", 0.01, EVENTS)

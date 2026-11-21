@@ -10,6 +10,10 @@
 #
 # 计数只认形如 `名称: 字段` 的事件头，不对正文做任何解析：trace 正文里的
 # 数字属于事件载荷，混进计数会把一次调用算成多次。
+#
+# 窗口内同时取回 ring buffer 的 entries-written：事件头计数只看得到还留在
+# 缓冲里的行，缓冲被覆盖或写出失败时它会低报；entries-written 是写入侧
+# 的累计值，两者不一致本身就是一条证据，因此分开给出、不互相修正。
 
 """AirymaxOS ftrace sampling."""
 
@@ -39,6 +43,8 @@ EVENTS_DIR = "events/airy/{}/enable"
 
 HEAD = re.compile(r"\b(airy_[a-z0-9_]+):")
 
+WRITTEN = re.compile(r"entries-written:\s*\d+/(\d+)")
+
 
 @dataclass(frozen=True, slots=True)
 class Sample:
@@ -48,6 +54,7 @@ class Sample:
     counts: tuple[tuple[str, int], ...]
     state: str
     reason: str | None
+    written: int | None = None
 
     @property
     def hit(self) -> int:
@@ -74,7 +81,7 @@ def record(root: Path, window: float, names: Sequence[str]) -> Sample:
         return Sample(window, (), UNAVAILABLE, "unreadable")
     counts = _counts(body, names)
     state = OK if any(c for _, c in counts) else IDLE
-    return Sample(window, counts, state, None)
+    return Sample(window, counts, state, None, _written(body))
 
 
 def _arm(
@@ -100,6 +107,12 @@ def _restore(trace: Path, prev: dict[str, str], on: str) -> None:
     files.write(trace / ON_FILE, on)
     for name, value in prev.items():
         files.write(trace / EVENTS_DIR.format(name), value)
+
+
+def _written(body: str) -> int | None:
+    """取回 buffer 的写入计数；没有头部（旧内核或空文件）时返回 None。"""
+    match = WRITTEN.search(body)
+    return int(match.group(1)) if match else None
 
 
 def _counts(body: str, names: Sequence[str]) -> tuple[tuple[str, int], ...]:

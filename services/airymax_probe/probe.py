@@ -51,6 +51,7 @@ def _round(paths: Paths, window: float) -> trace.Sample:
 def _build(mode: str, paths: Paths, tries: Outcomes, shots: Samples) -> Report:
     return Report(
         mode=mode,
+        tracefs=paths.tracefs,
         events=events.discover(Path(paths.tracefs)),
         channels=channels.inspect(paths),
         attempts=tries,

@@ -18,7 +18,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "services"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from airymax_probe import EVENTS, channels, events, stats  # noqa: E402
+from airymax_probe import EVENTS, channels, events, paths, stats  # noqa: E402
 from airy_probe_fixture import Tree  # noqa: E402
 
 
@@ -106,6 +106,18 @@ class StatsTest(Tree):
         self.assertIsNone(found.cap_used)
         self.assertIsNone(found.stc_total)
         self.assertFalse(found.facts)
+
+
+class ScopeTest(Tree):
+    """tracefs 作用域：airy 实例优先，缺席时退回挂载根。"""
+
+    def test_instance(self) -> None:
+        inst = self.tracefs / paths.INSTANCE
+        inst.mkdir(parents=True)
+        self.assertEqual(paths._scope(self.tracefs), str(inst))
+
+    def test_root(self) -> None:
+        self.assertEqual(paths._scope(self.tracefs), str(self.tracefs))
 
 
 if __name__ == "__main__":

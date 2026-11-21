@@ -30,7 +30,7 @@ __all__ = ["STATUS", "SAMPLE", "VERIFY", "Report", "State"]
 
 NAME = "airy-probe"
 
-VERSION = "0.0.4"
+VERSION = "0.0.5"
 
 STATUS = "status"
 
@@ -65,6 +65,7 @@ class Report:
     """一次 status / sample / verify 的完整结论。"""
 
     mode: str
+    tracefs: str
     events: tuple[Event, ...]
     channels: tuple[Channel, ...]
     attempts: tuple[Outcome, ...]
@@ -127,6 +128,7 @@ class Report:
             "probe": NAME,
             "version": VERSION,
             "mode": self.mode,
+            "tracefs": self.tracefs,
             "state": self.state.value,
             "hint": self.hint,
             "readable": self.readable,
@@ -202,5 +204,6 @@ def _sample(item: Sample) -> dict[str, object]:
         "state": item.state,
         "reason": item.reason,
         "hit": item.hit,
+        "written": item.written,
         "counts": dict(item.counts),
     }
