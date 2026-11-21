@@ -226,9 +226,11 @@ pend() {
 # journal 游标：作业表逐字不变不等于没有推进。aarch64 TCG 上 333 秒与
 # 373 秒的作业表完全相同（graphical.target 的作业在队列里等），系统仍在
 # 持续写日志，图形目标 407 秒达成。只看作业表会把这种「慢而有序」判成
-# 卡死。游标读不到时返回空串，判定退回只看作业表，保持原有的 fail-closed。
+# 卡死。取最近一条记录的定位（-n 1 而非 -n 0）：零条输出时游标的取值
+# 随 systemd 版本而异，读不到就只能退回只看作业表；一条记录保证定位来自
+# 真实条目。游标读不到时返回空串，判定退回只看作业表，保持 fail-closed。
 jcur() {
-    timeout "${JTIMEOUT}" journalctl -b -n 0 --no-pager -q \
+    timeout "${JTIMEOUT}" journalctl -b -n 1 --no-pager -q \
         --show-cursor 2>&1 | sed -n 's/^-- cursor: //p'
 }
 
