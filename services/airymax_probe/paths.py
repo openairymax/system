@@ -8,6 +8,11 @@
 # stc 统计。tracefs 优先取标准挂载点，缺失时回落到 debugfs 兼容挂载，
 # 两者都不存在仍照常产出报告——由上层显式记为 unavailable，而不是让
 # 探针自己退出。
+#
+# tracefs 根之上再选一层作用域：airy 的十路追踪落在实例
+# instances/agent_trace 内（K-01 的读点就是该实例），顶层 tracer 的计数
+# 不构成同一条证据。实例缺席时退回挂载根，事件仍可读；读数来自哪一层
+# 由报告里的 tracefs 字段给出，不在这里替判据下结论。
 
 """AirymaxOS probe endpoints."""
 
@@ -24,6 +29,8 @@ TRACE = "/sys/kernel/tracing"
 
 LEGACY = "/sys/kernel/debug/tracing"
 
+INSTANCE = "instances/agent_trace"
+
 
 @dataclass(frozen=True, slots=True)
 class Paths:
@@ -37,9 +44,14 @@ class Paths:
 
 
 def defaults() -> Paths:
-    """按本机实际挂载点选择 tracefs 根。"""
-    if files.kind(Path(TRACE)) == files.DIR:
-        return Paths()
-    if files.kind(Path(LEGACY)) == files.DIR:
-        return Paths(tracefs=LEGACY)
-    return Paths()
+    """按本机实际挂载点选择 tracefs 根，并落在 airy 专用实例上。"""
+    root = LEGACY if files.kind(Path(TRACE)) != files.DIR else TRACE
+    return Paths(tracefs=_scope(Path(root)))
+
+
+def _scope(root: Path) -> str:
+    """有 airy 实例就用实例，没有则退回挂载根。"""
+    scope = root / INSTANCE
+    if files.kind(scope) == files.DIR:
+        return str(scope)
+    return str(root)

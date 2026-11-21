@@ -162,6 +162,7 @@ def _emit(found: Report, as_json: bool) -> None:
         f"{PROG} state={found.state.value} mode={found.mode}"
         f" readable={found.readable}/{len(found.events)}"
     )
+    print(f"tracefs {found.tracefs}")
     _events(found.events)
     _channels(found.channels)
     _tries(found.attempts)
@@ -220,7 +221,7 @@ def _shots(found: Report) -> None:
     for index, shot in enumerate(found.samples, 1):
         print(
             f"sample {index} window={shot.window:g}s"
-            f" hit={shot.hit} {shot.state}"
+            f" hit={shot.hit} written={_val(shot.written)} {shot.state}"
         )
         if shot.reason:
             print(f"  reason {shot.reason}")
