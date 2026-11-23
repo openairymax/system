@@ -23,7 +23,8 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "services"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from airydeb import archive, err  # noqa: E402
+from airydeb import archive  # noqa: E402
+from airylib import err  # noqa: E402
 from deb_fixture import (  # noqa: E402
     Tree,
     hardlink,

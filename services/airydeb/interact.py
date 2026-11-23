@@ -23,7 +23,7 @@ import subprocess
 import sys
 from collections.abc import Sequence
 
-from .err import EXIT_ENV, EXIT_POLICY, Fault
+from airylib.err import EXIT_ENV, EXIT_POLICY, Fault
 
 __all__ = ["ask", "elevate"]
 

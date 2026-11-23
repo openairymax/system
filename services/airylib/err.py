@@ -3,31 +3,27 @@
 #
 # 退出码与可预期失败
 #
-# 一处定义，archive/plan/spec/cli 共用，避免各模块各写一套数字。异常自带
-# 退出码，命令行只负责打印与返回，不再按异常类型二次分派。
+# 一处定义，airydeb/airypkg/airylocale/airycharset 共用，避免每个命令行各写
+# 一套数字。异常自带退出码，命令行只负责打印与返回，不再按异常类型二次分派。
 
-"""AirymaxOS deb helper failures and exit codes."""
+"""AirymaxOS command line failures and exit codes."""
 
 from __future__ import annotations
 
 __all__ = [
-    "EXIT_BUILD",
     "EXIT_ENV",
     "EXIT_OK",
     "EXIT_POLICY",
+    "EXIT_RUN",
     "EXIT_USAGE",
     "Fault",
 ]
 
 EXIT_OK = 0
-
 EXIT_USAGE = 2
-
 EXIT_ENV = 4
-
 EXIT_POLICY = 5
-
-EXIT_BUILD = 6
+EXIT_RUN = 6
 
 
 class Fault(Exception):

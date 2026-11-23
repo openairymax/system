@@ -21,7 +21,8 @@ from unittest import mock
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "services"))
 
-from airydeb import err, interact  # noqa: E402
+from airydeb import interact  # noqa: E402
+from airylib import err  # noqa: E402
 
 
 def ask_with(reply):

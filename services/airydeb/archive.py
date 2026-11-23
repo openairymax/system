@@ -27,7 +27,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterator
 
-from .err import Fault
+from airylib.err import Fault
 
 __all__ = [
     "Deb",

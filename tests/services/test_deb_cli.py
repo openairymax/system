@@ -21,7 +21,8 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "services"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from airydeb import cli, err  # noqa: E402
+from airydeb import cli  # noqa: E402
+from airylib import err  # noqa: E402
 from deb_fixture import Tree  # noqa: E402
 
 POSTINST = "#!/bin/sh\necho postinst\nexit 0\n"

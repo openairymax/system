@@ -21,7 +21,7 @@ from unittest import mock
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "services"))
 
-from airylocale import cli  # noqa: E402
+from airylocale import cli, tool  # noqa: E402
 
 
 def run(*argv: str) -> tuple[int, str, str]:
@@ -155,8 +155,8 @@ class GenTest(Base):
 
     def test_run_success(self) -> None:
         done = mock.Mock(returncode=0)
-        with mock.patch.object(cli.shutil, "which", return_value="/usr/bin/localedef"):
-            with mock.patch.object(cli.subprocess, "run", return_value=done) as call:
+        with mock.patch.object(tool.shutil, "which", return_value="/usr/bin/localedef"):
+            with mock.patch.object(tool.subprocess, "run", return_value=done) as call:
                 code, out, _ = run("gen", "--root", str(self.root))
         self.assertEqual(code, cli.EXIT_OK)
         self.assertIn("ok=2 skip=0 fail=0", out)
@@ -165,14 +165,14 @@ class GenTest(Base):
 
     def test_run_failure(self) -> None:
         done = mock.Mock(returncode=1)
-        with mock.patch.object(cli.shutil, "which", return_value="/usr/bin/localedef"):
-            with mock.patch.object(cli.subprocess, "run", return_value=done):
+        with mock.patch.object(tool.shutil, "which", return_value="/usr/bin/localedef"):
+            with mock.patch.object(tool.subprocess, "run", return_value=done):
                 code, out, _ = run("gen", "--root", str(self.root))
         self.assertEqual(code, cli.EXIT_RUN)
         self.assertIn("fail=2", out)
 
     def test_missing_localedef(self) -> None:
-        with mock.patch.object(cli.shutil, "which", return_value=None):
+        with mock.patch.object(tool.shutil, "which", return_value=None):
             code, _, err = run("gen", "--root", str(self.root))
         self.assertEqual(code, cli.EXIT_ENV)
         self.assertIn("缺少 localedef", err)

@@ -28,24 +28,10 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
-from airydeb.err import (
-    EXIT_BUILD,
-    EXIT_ENV,
-    EXIT_OK,
-    EXIT_POLICY,
-    EXIT_USAGE,
-    Fault,
-)
+from airylib.err import EXIT_ENV, EXIT_OK, EXIT_POLICY, EXIT_RUN, EXIT_USAGE, Fault
 from airydeb.interact import ask, elevate
 
-__all__ = [
-    "EXIT_BUILD",
-    "EXIT_ENV",
-    "EXIT_OK",
-    "EXIT_POLICY",
-    "EXIT_USAGE",
-    "main",
-]
+__all__ = ["main"]
 
 # rpm 的查询格式：名字、版本-发行、架构三段，空格分隔。安装前回显与
 # 判负都读这一行，不再用 rpm -qpi 的多行输出做二次解析。
@@ -132,7 +118,7 @@ def _rpm(path: Path, args: argparse.Namespace) -> int:
     code = subprocess.run(["dnf", "install", "-y", str(path)],
                           check=False).returncode
     if code != 0:
-        raise Fault(f"dnf 安装失败（退出 {code}）", EXIT_BUILD)
+        raise Fault(f"dnf 安装失败（退出 {code}）", EXIT_RUN)
     return EXIT_OK
 
 

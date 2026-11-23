@@ -21,26 +21,12 @@ from .archive import (
 )
 from .cli import main
 from .control import field, items, parse
-from .err import (
-    EXIT_BUILD,
-    EXIT_ENV,
-    EXIT_OK,
-    EXIT_POLICY,
-    EXIT_USAGE,
-    Fault,
-)
 from .plan import blocked, deps, render
 from .spec import ARCHS, entries, legal, meta, text, upstream
 
 __all__ = [
     "ARCHS",
     "Deb",
-    "EXIT_BUILD",
-    "EXIT_ENV",
-    "EXIT_OK",
-    "EXIT_POLICY",
-    "EXIT_USAGE",
-    "Fault",
     "Member",
     "Script",
     "blocked",

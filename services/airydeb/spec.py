@@ -29,7 +29,7 @@ import shlex
 from pathlib import Path
 
 from . import control
-from .err import Fault
+from airylib.err import Fault
 
 __all__ = ["ARCHS", "entries", "legal", "meta", "text", "upstream"]
 

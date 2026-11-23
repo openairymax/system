@@ -30,24 +30,11 @@ import tempfile
 from collections.abc import Sequence
 from pathlib import Path
 
-from . import archive, control, interact, plan, spec
-from .err import (
-    EXIT_BUILD,
-    EXIT_ENV,
-    EXIT_OK,
-    EXIT_POLICY,
-    EXIT_USAGE,
-    Fault,
-)
+from airylib.err import EXIT_ENV, EXIT_OK, EXIT_POLICY, EXIT_RUN, EXIT_USAGE, Fault
 
-__all__ = [
-    "EXIT_BUILD",
-    "EXIT_ENV",
-    "EXIT_OK",
-    "EXIT_POLICY",
-    "EXIT_USAGE",
-    "main",
-]
+from . import archive, control, interact, plan, spec
+
+__all__ = ["main"]
 
 RPMBUILD = ("rpmbuild", "rpm-build")
 
@@ -226,7 +213,7 @@ def _build(deb: archive.Deb, fields: dict[str, str], work: Path) -> Path:
                         str(work / "package.spec")])
     if code != 0:
         print(log, file=sys.stderr)
-        raise Fault(f"rpmbuild 失败（退出 {code}）", EXIT_BUILD)
+        raise Fault(f"rpmbuild 失败（退出 {code}）", EXIT_RUN)
     return _find(work, spec.meta(fields))
 
 
@@ -234,7 +221,7 @@ def _find(work: Path, names: tuple[str, str, str]) -> Path:
     name, version, _ = names
     hits = sorted((work / "RPMS").rglob(f"{name}-{version}-*.rpm"))
     if not hits:
-        raise Fault("rpmbuild 没有产出 RPM", EXIT_BUILD)
+        raise Fault("rpmbuild 没有产出 RPM", EXIT_RUN)
     return hits[0]
 
 
@@ -242,7 +229,7 @@ def _dnf(rpm: Path) -> None:
     _need(*DNF)
     code = _spawn(["dnf", "install", "-y", str(rpm)])
     if code != 0:
-        raise Fault(f"dnf 安装失败（退出 {code}）", EXIT_BUILD)
+        raise Fault(f"dnf 安装失败（退出 {code}）", EXIT_RUN)
 
 
 def _need(tool: str, package: str) -> None:

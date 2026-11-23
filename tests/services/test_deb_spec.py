@@ -19,7 +19,8 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "services"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from airydeb import archive, control, err, spec  # noqa: E402
+from airydeb import archive, control, spec  # noqa: E402
+from airylib import err  # noqa: E402
 from deb_fixture import Tree  # noqa: E402
 
 FIELDS = control.parse(
