@@ -27,6 +27,18 @@ pkg_check_modules(LIBBPF REQUIRED IMPORTED_TARGET libbpf>=1.0)
 
 find_program(CLANG_EXECUTABLE NAMES clang REQUIRED)
 
+# clang 以 bpf 为目标时不带宿主三元组，默认头文件搜索面里没有 Debian 系
+# 发行版的多架构目录，linux/types.h 随之找不到 asm/types.h。这里向宿主 C
+# 编译器查询多架构名，只补这一处头文件路径；字节码本身仍不含架构分支。
+execute_process(
+	COMMAND ${CMAKE_C_COMPILER} -print-multiarch
+	OUTPUT_VARIABLE AIRY_MULTIARCH
+	OUTPUT_STRIP_TRAILING_WHITESPACE
+	ERROR_QUIET)
+if(AIRY_MULTIARCH AND EXISTS "/usr/include/${AIRY_MULTIARCH}/asm/types.h")
+	list(APPEND AIRY_BPF_CFLAGS "-idirafter" "/usr/include/${AIRY_MULTIARCH}")
+endif()
+
 add_executable(airy-probe airy_probe.c)
 target_compile_options(airy-probe PRIVATE
 	-Wall -Wextra -Werror -D_GNU_SOURCE)
@@ -35,6 +47,7 @@ target_link_libraries(airy-probe PRIVATE PkgConfig::LIBBPF)
 add_custom_command(
 	OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/airy_probe.bpf.o
 	COMMAND ${CLANG_EXECUTABLE} -g -O2 -target bpf -c
+		${AIRY_BPF_CFLAGS}
 		${CMAKE_CURRENT_SOURCE_DIR}/airy_probe.bpf.c
 		-o ${CMAKE_CURRENT_BINARY_DIR}/airy_probe.bpf.o
 	DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/airy_probe.bpf.c
