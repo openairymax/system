@@ -1,0 +1,15 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# ===========================================================================
+# 60-airymax.rules — Airy 字符设备的属组与权限
+#
+# 内核以 0600 root:root 注册字符设备，守护进程却以非 root 运行：
+# logger_d 用 User=airy 且附属组含 airy-log，macro_d 用 User=airy。
+# 没有这两条规则时，open 在权限处失败，单元起来即退，症状只在 journal
+# 里留一行 EACCES，从服务状态看不出是设备权限问题。
+#
+# 权限只放给对应守护的组，不开 world 读写：日志环与监督通道都能读到
+# agent 的身份与故障记录，属于进程间可见面而非公共接口。
+# ===========================================================================
+
+SUBSYSTEM=="misc", KERNEL=="airy_log", GROUP="airy-log", MODE="0660"
+SUBSYSTEM=="misc", KERNEL=="airy_superv", GROUP="airy", MODE="0660"

@@ -65,6 +65,11 @@ if(AIRY_INSTALL_SYSTEMD_UNITS)
 		scripts/health_check.sh
 		DESTINATION lib/airymaxos/scripts
 	)
+	# 字符设备默认 0600 root:root，非 root 守护需要按属组放权；规则与
+	# 单元同包交付，避免出现「单元已装、设备仍不可读」的升级窗口。
+	install(FILES udev/60-airymax.rules
+		DESTINATION lib/udev/rules.d
+	)
 endif()
 
 # ---------------------------------------------------------------------------

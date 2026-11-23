@@ -210,6 +210,8 @@ SERVICES: dict[str, Service] = {
         extra=(
             ("Service", "LimitNPROC", "512"),
             ("Service", "PrivateDevices", "yes"),
+            ("Service", "DeviceAllow", "/dev/airy_superv rw"),
+            ("Service", "BindReadOnlyPaths", "/dev/airy_superv"),
             ("Service", "KillSignal", "SIGTERM"),
             ("Service", "SendSIGKILL", "yes"),
         ),
