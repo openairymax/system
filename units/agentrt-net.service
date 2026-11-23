@@ -14,7 +14,7 @@ StartLimitIntervalSec=300
 [Service]
 Type=notify
 NotifyAccess=main
-ExecStart=/usr/sbin/net_d --config=/etc/agentrt/daemons/net_d.conf
+ExecStart=/usr/sbin/net_d --config=/etc/agentrt/net.conf
 ExecReload=/bin/kill -HUP $MAINPID
 Restart=always
 RestartSec=2s

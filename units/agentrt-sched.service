@@ -13,7 +13,7 @@ StartLimitIntervalSec=300
 [Service]
 Type=notify
 NotifyAccess=main
-ExecStart=/usr/sbin/sched_d --config=/etc/agentrt/daemons/sched_d.conf
+ExecStart=/usr/sbin/sched_d --config=/etc/agentrt/sched.conf
 ExecReload=/bin/kill -HUP $MAINPID
 Restart=always
 RestartSec=1s

@@ -14,7 +14,7 @@ StartLimitIntervalSec=300
 [Service]
 Type=notify
 NotifyAccess=main
-ExecStart=/usr/sbin/mem_d --config=/etc/agentrt/daemons/mem_d.conf
+ExecStart=/usr/sbin/mem_d --config=/etc/agentrt/mem.conf
 ExecReload=/bin/kill -HUP $MAINPID
 Restart=always
 RestartSec=2s

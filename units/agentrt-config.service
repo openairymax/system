@@ -1,8 +1,8 @@
 [Unit]
 Description=AirymaxOS Unified Configuration Subsystem (A-UCS)
 Documentation=man:config_d(8)
-After=agentrt-vfs.service agentrt-firstboot.service
-Requires=agentrt-firstboot.service
+After=systemd-journald.service agentrt-firstboot.service
+Requires=systemd-journald.service agentrt-firstboot.service
 Wants=agentrt-vfs.service
 PartOf=agentrt.target
 OnFailure=airy-incident@%n.service
@@ -12,23 +12,24 @@ StartLimitBurst=3
 StartLimitIntervalSec=300
 
 [Service]
-Type=oneshot
-RemainAfterExit=yes
-ExecStart=/usr/sbin/config_d --load --config=/etc/agentrt/airy.conf
-ExecReload=/usr/sbin/config_d --reload
-ExecStop=/bin/true
-# Type=oneshot 不设 TimeoutStartSec 时默认就是 infinity（plymouth 卡死的
-# 同一类问题）：config_d 一旦在加载中阻塞，agentrt.target 的启动事务无界
-# 等待，屏幕停在最后一行且无从归因。30 秒足够正常加载，超时按失败处理并
-# 受 StartLimitBurst 约束重试。
+Type=notify
+NotifyAccess=main
+ExecStart=/usr/sbin/config_d --root /etc/agentrt
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=always
+RestartSec=1s
+WatchdogSec=30s
 TimeoutStartSec=30
 TimeoutStopSec=15
-Restart=on-failure
-RestartSec=5s
+KillMode=mixed
+KillSignal=SIGTERM
+SendSIGKILL=yes
 
-User=airy
-Group=airy
-SupplementaryGroups=airy-config
+# 共享参数需下发到 kernel.airy.*，写 /proc/sys 要求 DAC 与 sysctl 权限；
+# 以 root 运行但能力集收窄到最小必要两项，其余一律丢弃。
+User=root
+CapabilityBoundingSet=CAP_DAC_OVERRIDE CAP_SYS_ADMIN
+AmbientCapabilities=
 
 MemoryMax=256M
 MemoryHigh=200M
@@ -39,10 +40,8 @@ LimitNOFILE=65536
 ProtectSystem=strict
 ProtectHome=yes
 PrivateTmp=yes
-ReadWritePaths=/etc/agentrt /var/lib/agentrt/config
+PrivateDevices=yes
 NoNewPrivileges=yes
-CapabilityBoundingSet=
-AmbientCapabilities=
 
 IOSchedulingClass=best-effort
 IOSchedulingPriority=4

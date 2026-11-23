@@ -14,7 +14,7 @@ StartLimitIntervalSec=300
 [Service]
 Type=notify
 NotifyAccess=main
-ExecStart=/usr/sbin/macro_d --config=/etc/agentrt/daemons/macro_d.conf
+ExecStart=/usr/sbin/macro_d --config=/etc/agentrt/macro-superv.conf
 ExecReload=/bin/kill -HUP $MAINPID
 Restart=always
 RestartSec=1s

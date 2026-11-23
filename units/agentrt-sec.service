@@ -14,7 +14,7 @@ StartLimitIntervalSec=300
 Type=notify
 NotifyAccess=main
 ExecStartPre=/sbin/modprobe airy_lsm
-ExecStart=/usr/sbin/sec_d --config=/etc/agentrt/daemons/sec_d.conf
+ExecStart=/usr/sbin/sec_d --config=/etc/agentrt/sec.conf
 ExecReload=/bin/kill -HUP $MAINPID
 Restart=always
 RestartSec=1s

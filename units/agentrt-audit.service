@@ -14,7 +14,7 @@ StartLimitIntervalSec=300
 [Service]
 Type=notify
 NotifyAccess=main
-ExecStart=/usr/sbin/audit_d --config=/etc/agentrt/daemons/audit_d.conf
+ExecStart=/usr/sbin/audit_d --config=/etc/agentrt/audit.conf
 ExecStartPost=/usr/sbin/audit_d --restore
 ExecReload=/bin/kill -HUP $MAINPID
 Restart=always

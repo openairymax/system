@@ -13,7 +13,7 @@ StartLimitIntervalSec=300
 [Service]
 Type=notify
 NotifyAccess=main
-ExecStart=/usr/sbin/logger_d --config=/etc/agentrt/daemons/logger_d.conf
+ExecStart=/usr/sbin/logger_d --config=/etc/agentrt/logger.conf
 ExecReload=/bin/kill -HUP $MAINPID
 Restart=always
 RestartSec=1s

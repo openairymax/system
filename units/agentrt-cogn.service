@@ -13,7 +13,7 @@ StartLimitIntervalSec=300
 [Service]
 Type=notify
 NotifyAccess=main
-ExecStart=/usr/sbin/cogn_d --config=/etc/agentrt/daemons/cogn_d.conf
+ExecStart=/usr/sbin/cogn_d --config=/etc/agentrt/cogn.conf
 ExecReload=/bin/kill -HUP $MAINPID
 Restart=always
 RestartSec=5s

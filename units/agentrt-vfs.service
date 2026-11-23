@@ -14,7 +14,7 @@ StartLimitIntervalSec=300
 [Service]
 Type=notify
 NotifyAccess=main
-ExecStart=/usr/sbin/vfs_d --config=/etc/agentrt/daemons/vfs_d.conf
+ExecStart=/usr/sbin/vfs_d --config=/etc/agentrt/vfs.conf
 ExecReload=/bin/kill -HUP $MAINPID
 Restart=always
 RestartSec=2s
