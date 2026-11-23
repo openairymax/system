@@ -1,0 +1,11 @@
+# AirymaxOS locale 支持矩阵（docs-linux/180-i18n/01-locale-design.md §1.4）
+# 列：POSIX 名	语言	区域	字符集	优先级
+# 默认 locale 固定为 en_US.UTF-8；优先级只允许 P0/P1/P2。
+en_US.UTF-8	en	US	UTF-8	P0
+zh_CN.UTF-8	zh	CN	UTF-8	P0
+ja_JP.UTF-8	ja	JP	UTF-8	P1
+ko_KR.UTF-8	ko	KR	UTF-8	P1
+zh_TW.UTF-8	zh	TW	UTF-8	P2
+en_GB.UTF-8	en	GB	UTF-8	P2
+de_DE.UTF-8	de	DE	UTF-8	P2
+fr_FR.UTF-8	fr	FR	UTF-8	P2
