@@ -3,7 +3,6 @@ Description=AirymaxOS Unified Configuration Subsystem (A-UCS)
 Documentation=man:config_d(8)
 After=systemd-journald.service agentrt-firstboot.service
 Requires=systemd-journald.service agentrt-firstboot.service
-Wants=agentrt-vfs.service
 PartOf=agentrt.target
 OnFailure=airy-incident@%n.service
 # StartLimit* belongs to [Unit]; StartLimitIntervalSec in [Service] is

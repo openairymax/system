@@ -108,6 +108,7 @@ class Service:
     io_class: str = "best-effort"
     io_prio: str = "3"
     exec_start: str = ""
+    conf: str = ""
     omit: tuple[tuple[str, str], ...] = ()
     extra: tuple[tuple[str, str, str], ...] = ()
 
@@ -190,6 +191,7 @@ SERVICES: dict[str, Service] = {
     ),
     "agentrt-macro-superv.service": Service(
         daemon="macro",
+        conf="macro-superv",
         after="systemd-journald.service agentrt-sched.service",
         requires="systemd-journald.service agentrt-sched.service",
         wants="agentrt-gateway.service",
@@ -334,31 +336,35 @@ SERVICES: dict[str, Service] = {
     ),
     "agentrt-config.service": Service(
         daemon="config",
-        after="agentrt-vfs.service",
-        wants="agentrt-vfs.service",
-        restart="on-failure",
-        restart_sec="5s",
+        after="systemd-journald.service",
+        wants="",
+        requires="systemd-journald.service",
+        restart="always",
+        restart_sec="1s",
         burst="3",
         mem_max="256M",
         mem_high="200M",
         cpu="50%",
         tasks="128",
-        groups="airy-config",
-        rw="/etc/agentrt /var/lib/agentrt/config",
+        groups="",
         io_prio="4",
-        exec_start=(
-            "/usr/sbin/config_d --load --config=/etc/agentrt/airy.conf"
-        ),
+        exec_start="/usr/sbin/config_d --root /etc/agentrt",
         omit=(
-            ("Service", "NotifyAccess"),
-            ("Service", "WatchdogSec"),
-            ("Service", "KillMode"),
+            ("Service", "Group"),
+            ("Service", "SupplementaryGroups"),
         ),
         extra=(
-            ("Service", "Type", "oneshot"),
-            ("Service", "RemainAfterExit", "yes"),
-            ("Service", "ExecStop", "/bin/true"),
-            ("Service", "ExecReload", "/usr/sbin/config_d --reload"),
+            # 唯一需要写 /proc/sys 的守护：能力集只保留 DAC 与 sysctl 两项，
+            # 账户必须是 root（配置根与内核参数都不对非特权账户开放）。
+            ("Service", "User", "root"),
+            (
+                "Service",
+                "CapabilityBoundingSet",
+                "CAP_DAC_OVERRIDE CAP_SYS_ADMIN",
+            ),
+            ("Service", "PrivateDevices", "yes"),
+            ("Service", "KillSignal", "SIGTERM"),
+            ("Service", "SendSIGKILL", "yes"),
         ),
     ),
 }
@@ -1052,7 +1058,7 @@ def _deps(cfg: ConfigParser) -> dict[str, list[str]]:
 def _pairs(spec: Service) -> dict[tuple[str, str], str | None]:
     exec_start = spec.exec_start or (
         f"/usr/sbin/{spec.daemon}_d"
-        f" --config=/etc/agentrt/daemons/{spec.daemon}_d.conf"
+        f" --config=/etc/agentrt/{spec.conf or spec.daemon}.conf"
     )
     pairs: dict[tuple[str, str], str | None] = {
         ("Unit", "After"): f"{spec.after} {FIRSTBOOT}".strip(),

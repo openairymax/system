@@ -184,7 +184,7 @@ class ServiceCase(UnitsCase):
         self.assert_bad("AmbientCapabilities")
 
     def test_cfg_type(self) -> None:
-        self.edit("agentrt-config.service", "Type=oneshot", "Type=notify")
+        self.edit("agentrt-config.service", "Type=notify", "Type=oneshot")
         self.assert_bad("Type")
 
     def test_wantedby(self) -> None:
