@@ -798,6 +798,28 @@ CHECK_PAIRS: dict[tuple[str, str], str] = {
 
 LLM = "airy-llm.service"
 
+# 备份单元按小时自评全量/增量，并在 04:00 顺带清理过期件。它以 root
+# 运行：读取 /etc/agentrt 与各 Agent 的数据目录需要越过业务组边界，而
+# 可写面由 StateDirectory 与 LogsDirectory 收窄到两个目录。ProtectSystem
+# 保持 strict，源码树与 /usr 在单元内仍然只读。
+BACKUP = "airymax-backup.service"
+
+BACKUP_PAIRS: dict[tuple[str, str], str] = {
+    ("Unit", "Description"): "Hourly AirymaxOS Backup and Retention",
+    ("Service", "Type"): "oneshot",
+    ("Service", "ExecStart"): "/usr/bin/airy-backup --actor systemd auto",
+    ("Service", "StateDirectory"): "airy/backup",
+    ("Service", "StateDirectoryMode"): "0750",
+    ("Service", "LogsDirectory"): "airy",
+    ("Service", "TimeoutStartSec"): "3600",
+    ("Service", "Nice"): "10",
+    ("Service", "IOSchedulingClass"): "idle",
+    ("Service", "ProtectSystem"): "strict",
+    ("Service", "ProtectHome"): "yes",
+    ("Service", "PrivateTmp"): "yes",
+    ("Service", "NoNewPrivileges"): "yes",
+}
+
 AGENT_SLICE = "airymax-agent.slice"
 
 SESSION_CHOICE = "airy-session-choice.service"
@@ -984,6 +1006,16 @@ CONSOLE_SINK_LINES: frozenset[str] = frozenset(
 )
 
 TIMERS: dict[str, dict[tuple[str, str], str]] = {
+    "airymax-backup.timer": {
+        ("Unit", "Description"): "Hourly AirymaxOS Backup Schedule",
+        ("Timer", "OnCalendar"): "hourly",
+        # 五分钟抖动把整点同时醒来的备份、更新检查与健康巡检错开，避免
+        # 同一分钟里四五个 oneshot 争 IO。Persistent 让关机跨过的整点
+        # 在下次开机后补跑一次，而不是整天没有全量。
+        ("Timer", "RandomizedDelaySec"): "5m",
+        ("Timer", "Persistent"): "true",
+        ("Install", "WantedBy"): "timers.target",
+    },
     "airymax-update-check.timer": {
         ("Unit", "Description"): "Daily AirymaxOS Update Check",
         ("Timer", "OnCalendar"): "daily",
@@ -1050,6 +1082,7 @@ TIMERS: dict[str, dict[tuple[str, str], str]] = {
 UNITS = frozenset(SERVICES) | frozenset(TARGETS) | frozenset(TEMPLATES) | {
     AGENT_SLICE,
     ALERT,
+    BACKUP,
     BOOT_MOUNT,
     BOOT_TUI,
     BOOT_WATCH,
@@ -1569,6 +1602,7 @@ PAIR_SPECS: dict[str, dict[tuple[str, str], str | None]] = {
     POWER: POWER_PAIRS,
     COEXIST: COEXIST_PAIRS,
     ALERT: ALERT_PAIRS,
+    BACKUP: BACKUP_PAIRS,
     UPDATE_CHECK: CHECK_PAIRS,
     LLM: LLM_PAIRS,
     AGENT_SLICE: AGENT_SLICE_PAIRS,

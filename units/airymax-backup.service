@@ -1,0 +1,16 @@
+[Unit]
+Description=Hourly AirymaxOS Backup and Retention
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/airy-backup --actor systemd auto
+StateDirectory=airy/backup
+StateDirectoryMode=0750
+LogsDirectory=airy
+TimeoutStartSec=3600
+Nice=10
+IOSchedulingClass=idle
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+NoNewPrivileges=yes

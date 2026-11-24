@@ -139,7 +139,14 @@ install(PROGRAMS
 	bin/airy-alertd
 	bin/airy-alert
 	bin/airy-incident
+	bin/airy-backup
 	DESTINATION bin
+)
+
+# 备份恢复（P-15）：仓库、核验与恢复实现装进 site-packages，入口进 bin。
+install(DIRECTORY ops/backup
+	DESTINATION ${Python3_SITELIB}
+	PATTERN "__pycache__" EXCLUDE
 )
 
 # 事件响应（P-14）：台账包进 site-packages，运行手册进 share，入口进 bin。
