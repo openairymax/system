@@ -15,6 +15,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "ops"))
+sys.path.insert(0, str(ROOT / "services"))
 
 from incident.model import (  # noqa: E402
     BadInput, BadStore, Category, Severity, State, day_key, make_id,

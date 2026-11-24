@@ -16,6 +16,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "services" / "daemons"))
+sys.path.insert(0, str(ROOT / "services"))
 
 from alert_d.model import AlertEvent, make_alert  # noqa: E402
 from alert_d.store import ACTIVE, STATUS, Store  # noqa: E402

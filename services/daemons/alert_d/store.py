@@ -17,19 +17,16 @@ import time
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
+from airylib.ledger import FILE_MODE, atomic_write, compact
+
 SCHEMA = 1
 DIR_MODE = 0o750
-FILE_MODE = 0o640
 ACTIVE = "active.json"
 STATUS = "status.json"
 ARCHIVE = "archive"
 # 活动列表按严重度倒序，级别必须先折算成数值：直接比较 "WARNING" 与
 # "CRITICAL" 的字面序会把 WARNING 排到最前。
 RANK = {"INFO": 0, "WARNING": 1, "CRITICAL": 2}
-
-
-def _dump(obj: Any) -> str:
-    return json.dumps(obj, ensure_ascii=False, separators=(",", ":"))
 
 
 class Store:
@@ -45,16 +42,13 @@ class Store:
 
     def _write(self, path: Path, text: str) -> None:
         self._ensure()
-        tmp = path.with_name(path.name + ".tmp")
-        tmp.write_text(text, encoding="utf-8")
-        os.chmod(tmp, FILE_MODE)
-        os.replace(tmp, path)
+        atomic_write(path, text)
 
     def save(self, alerts: Iterable[Any]) -> None:
         rows = [alert.to_json() for alert in alerts]
         rows.sort(key=lambda row: (RANK.get(row["severity"], 0), row["first_ns"]),
                   reverse=True)
-        text = _dump({"schema": SCHEMA, "alerts": rows}) + "\n"
+        text = compact({"schema": SCHEMA, "alerts": rows}) + "\n"
         self._write(self.root / ACTIVE, text)
 
     def load(self) -> list[dict[str, Any]]:
@@ -73,7 +67,7 @@ class Store:
         return rows
 
     def save_status(self, status: Mapping[str, Any]) -> None:
-        self._write(self.root / STATUS, _dump(status) + "\n")
+        self._write(self.root / STATUS, compact(status) + "\n")
 
     def status(self) -> dict[str, Any]:
         path = self.root / STATUS
@@ -96,7 +90,7 @@ class Store:
         path = self.archive / f"{day}.jsonl"
         self._ensure()
         with path.open("a", encoding="utf-8") as handle:
-            handle.write(_dump(alert.to_json()) + "\n")
+            handle.write(compact(alert.to_json()) + "\n")
         os.chmod(path, FILE_MODE)
         return path
 

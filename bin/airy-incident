@@ -11,10 +11,14 @@
 import sys
 from pathlib import Path
 
-OPS = Path(__file__).resolve().parents[1] / "ops"
+BASE = Path(__file__).resolve().parents[1]
+OPS = BASE / "ops"
+SERVICES = BASE / "services"
 
 if OPS.is_dir():
     sys.path.insert(0, str(OPS))
+if SERVICES.is_dir():
+    sys.path.insert(0, str(SERVICES))
 
 from incident.cli import main  # noqa: E402
 

@@ -116,6 +116,12 @@ install(DIRECTORY services/airydisk services/airyupdate
 	DESTINATION ${Python3_SITELIB}
 	PATTERN "__pycache__" EXCLUDE
 )
+# 命令行共用层：退出码、输出与台账落盘原语，安装到 site-packages 顶层，
+# 与各服务包同级，导入路径不依赖任何一方。
+install(DIRECTORY services/airylib
+	DESTINATION ${Python3_SITELIB}
+	PATTERN "__pycache__" EXCLUDE
+)
 # 告警聚合（P-13）：包体进 site-packages，默认规则进 share，入口进 bin。
 # 规则与包分开安装，运维可直接在 /etc/agentrt/alert/rules.d 覆盖默认值
 # 而不必改动包内文件。

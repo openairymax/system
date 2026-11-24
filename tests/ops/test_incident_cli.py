@@ -18,6 +18,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "ops"))
+sys.path.insert(0, str(ROOT / "services"))
 
 from incident.cli import main  # noqa: E402
 

@@ -17,6 +17,7 @@ __all__ = [
     "EXIT_RUN",
     "EXIT_USAGE",
     "Fault",
+    "need",
 ]
 
 EXIT_OK = 0
@@ -32,3 +33,9 @@ class Fault(Exception):
     def __init__(self, message: str, code: int = EXIT_ENV) -> None:
         super().__init__(message)
         self.code = code
+
+
+def need(ok: object, message: str, kind: type[Exception] = Fault) -> None:
+    """前置条件校验：不成立即抛出，主体逻辑保持单层缩进。"""
+    if not ok:
+        raise kind(message)

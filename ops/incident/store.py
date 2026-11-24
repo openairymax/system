@@ -15,16 +15,19 @@ import fcntl
 import json
 import os
 import time
+from collections import Counter
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator
+
+from airylib.err import need
+from airylib.ledger import FILE_MODE, atomic_write, compact
 
 from .model import (NS, TERMINAL, BadIncident, BadInput, BadStore,
                     Category, Incident, Severity, State, check_id, day_key,
                     iso, make_id, open_incident)
 
 DIR_MODE = 0o750
-FILE_MODE = 0o640
 LOCK = ".lock"
 ARCHIVE = "archive"
 REPORT = "postmortem"
@@ -32,8 +35,15 @@ DAY = 86400 * NS
 _PREFIX = "INC-"
 
 
-def _dump(obj: Any) -> str:
-    return json.dumps(obj, ensure_ascii=False, separators=(",", ":"))
+def _closed_in(inc: Incident, month: str) -> bool:
+    """终态且已恢复、且恢复月份匹配的记录才计入当月统计。"""
+    if inc.status not in TERMINAL or not inc.resolved_at:
+        return False
+    return time.strftime("%Y%m", time.gmtime(inc.resolved_at / NS)) == month
+
+
+def _open(rows: list[Incident]) -> int:
+    return sum(1 for inc in rows if inc.status not in TERMINAL)
 
 
 class Store:
@@ -50,18 +60,7 @@ class Store:
 
     def _write(self, path: Path, text: str) -> None:
         self._ensure()
-        tmp = path.with_name(path.name + ".tmp")
-        with tmp.open("w", encoding="utf-8") as handle:
-            handle.write(text)
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.chmod(tmp, FILE_MODE)
-        os.replace(tmp, path)
-        dirfd = os.open(path.parent, os.O_RDONLY)
-        try:
-            os.fsync(dirfd)
-        finally:
-            os.close(dirfd)
+        atomic_write(path, text)
 
     @contextmanager
     def _lock(self) -> Iterator[None]:
@@ -78,7 +77,7 @@ class Store:
         return self.root / f"{check_id(ident)}.json"
 
     def save(self, inc: Incident) -> None:
-        self._write(self._path(inc.incident_id), _dump(inc.to_json()) + "\n")
+        self._write(self._path(inc.incident_id), compact(inc.to_json()) + "\n")
 
     def load(self, ident: str) -> Incident:
         path = self._path(ident)
@@ -184,34 +183,24 @@ class Store:
             report.unlink()
         path = self.archive / f"{month}.jsonl"
         with path.open("a", encoding="utf-8") as handle:
-            handle.write(_dump(row) + "\n")
+            handle.write(compact(row) + "\n")
             handle.flush()
             os.fsync(handle.fileno())
         os.chmod(path, FILE_MODE)
 
     def stats(self, month: str, stamp: int) -> dict[str, Any]:
-        if len(month) != 6 or not month.isdigit():
-            raise BadInput(f"月份格式应为 YYYYMM: {month}")
+        need(len(month) == 6 and month.isdigit(),
+             f"月份格式应为 YYYYMM: {month}", BadInput)
         rows = self.rows()
-        closed = [inc for inc in rows
-                  if inc.status in TERMINAL and inc.resolved_at
-                  and time.strftime("%Y%m", time.gmtime(
-                      inc.resolved_at / NS)) == month]
+        closed = [inc for inc in rows if _closed_in(inc, month)]
         spans = [inc.span(inc.resolved_at) for inc in closed]
-        mttr = round(sum(spans) / len(spans) / NS, 1) if spans else None
-        by_state: dict[str, int] = {}
-        by_level: dict[str, int] = {}
-        for inc in rows:
-            by_state[inc.status.value] = by_state.get(inc.status.value, 0) + 1
-            by_level[inc.severity.value] = by_level.get(
-                inc.severity.value, 0) + 1
         return {
             "month": month,
             "total": len(rows),
-            "open": len([inc for inc in rows if inc.status not in TERMINAL]),
+            "open": _open(rows),
             "closed": len(closed),
-            "mttr_s": mttr,
+            "mttr_s": round(sum(spans) / len(spans) / NS, 1) if spans else None,
             "actions": sum(len(inc.response_actions) for inc in closed),
-            "by_state": by_state,
-            "by_severity": by_level,
+            "by_state": dict(Counter(inc.status.value for inc in rows)),
+            "by_severity": dict(Counter(inc.severity.value for inc in rows)),
         }

@@ -11,10 +11,14 @@
 import sys
 from pathlib import Path
 
-DAEMONS = Path(__file__).resolve().parents[1] / "services" / "daemons"
+BASE = Path(__file__).resolve().parents[1]
+DAEMONS = BASE / "services" / "daemons"
+SERVICES = BASE / "services"
 
 if DAEMONS.is_dir():
     sys.path.insert(0, str(DAEMONS))
+if SERVICES.is_dir():
+    sys.path.insert(0, str(SERVICES))
 
 from alert_d.server import main  # noqa: E402
 
