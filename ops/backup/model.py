@@ -128,22 +128,22 @@ def safe_arcname(name: str) -> str:
     return "/".join(parts)
 
 
-def member_under_agent(name: str, agent_id: str | int) -> bool:
+_HOST_PREFIX = ["var", "lib", "airy"]
+
+
+def agent_member(name: str, agent_id: str | int) -> bool:
     """判断归档成员是否属于某个 Agent 的私有数据。
 
     覆盖三类落点：主机 Agent 目录、L3 记忆、L4 记忆。调用方传 agent 号
     时只还原该号；不传则整包还原。
     """
     parts = str(name).strip("/").split("/")
-    if parts[0] == "var" and len(parts) >= 5 and parts[1] == "lib" \
-            and parts[2] == "airy":
-        rest = parts[3:]
-    else:
-        rest = parts
-    if len(rest) >= 3 and rest[0] == "agents":
-        return rest[1] == str(agent_id)
-    if len(rest) >= 4 and rest[0] == "memory" and rest[1] in ("l3", "l4"):
-        return rest[2] == str(agent_id)
+    if parts[:3] == _HOST_PREFIX:
+        parts = parts[3:]
+    if parts[:1] == ["agents"] and len(parts) >= 3:
+        return parts[1] == str(agent_id)
+    if parts[:1] == ["memory"] and len(parts) >= 4:
+        return parts[1] in ("l3", "l4") and parts[2] == str(agent_id)
     return False
 
 
@@ -259,7 +259,7 @@ class BackupRecord:
             raise BadStore(f"清单缺字段: {exc.args[0]}") from exc
 
 
-def summarize_sources(entries: Iterable[dict[str, Any]]) -> tuple[int, int, int]:
+def sum_sources(entries: Iterable[dict[str, Any]]) -> tuple[int, int, int]:
     """返回 (文件总数, 字节总数, Agent 数)。
 
     Agent 数只从名为 agents 的来源数直接子目录，避免把记忆层里的同名

@@ -17,8 +17,8 @@ sys.path.insert(0, str(ROOT / "ops"))
 
 from backup.model import (  # noqa: E402
     BadInput, BadStore, BackupRecord, Kind, Retention, check_id, iso,
-    make_id, member_under_agent, parse_id, parse_iso, safe_arcname,
-    summarize_sources,
+    agent_member, make_id, parse_id, parse_iso, safe_arcname,
+    sum_sources,
 )
 
 BASE = 1_700_000_000 * 1_000_000_000
@@ -70,14 +70,14 @@ class PathTest(unittest.TestCase):
             with self.assertRaises(BadInput):
                 safe_arcname(bad)
 
-    def test_member_under_agent(self) -> None:
-        self.assertTrue(member_under_agent("var/lib/airy/agents/7/a", 7))
-        self.assertTrue(member_under_agent("var/lib/airy/memory/l3/7/x", "7"))
-        self.assertTrue(member_under_agent("agents/7/a", 7))
-        self.assertTrue(member_under_agent("memory/l4/7/x", 7))
-        self.assertFalse(member_under_agent("var/lib/airy/agents/8/a", 7))
-        self.assertFalse(member_under_agent("var/lib/airy/memory/l3/8/x", 7))
-        self.assertFalse(member_under_agent("etc/agentrt/agentrt.toml", 7))
+    def test_agent_member(self) -> None:
+        self.assertTrue(agent_member("var/lib/airy/agents/7/a", 7))
+        self.assertTrue(agent_member("var/lib/airy/memory/l3/7/x", "7"))
+        self.assertTrue(agent_member("agents/7/a", 7))
+        self.assertTrue(agent_member("memory/l4/7/x", 7))
+        self.assertFalse(agent_member("var/lib/airy/agents/8/a", 7))
+        self.assertFalse(agent_member("var/lib/airy/memory/l3/8/x", 7))
+        self.assertFalse(agent_member("etc/agentrt/agentrt.toml", 7))
 
 
 class RecordTest(unittest.TestCase):
@@ -107,7 +107,7 @@ class RecordTest(unittest.TestCase):
             )
 
     def test_summarize(self) -> None:
-        files, size, agents = summarize_sources([
+        files, size, agents = sum_sources([
             {"name": "var/lib/airy/agents", "files": 2, "bytes": 10,
              "agent_count": 3},
             {"name": "etc/agentrt", "files": 1, "bytes": 5, "agent_count": 9},

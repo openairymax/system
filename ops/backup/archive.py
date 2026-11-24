@@ -45,6 +45,22 @@ def archive_name(stem: str, codec: str) -> str:
     return f"{stem}.tar.zst" if codec == "zstd" else f"{stem}.tar.gz"
 
 
+def _count_files(root: str, names: list[str]) -> tuple[int, int]:
+    files = 0
+    size = 0
+    for name in names:
+        full = Path(root) / name
+        try:
+            st = full.lstat()
+        except OSError:
+            continue
+        if full.is_symlink():
+            continue
+        files += 1
+        size += st.st_size
+    return files, size
+
+
 def source_stats(path: Path) -> tuple[int, int, int]:
     """(文件数, 字节数, 直接子目录数)。
 
@@ -59,20 +75,13 @@ def source_stats(path: Path) -> tuple[int, int, int]:
     for root, dirs, names in os.walk(path):
         if root == str(path):
             children = len(dirs)
-        for name in names:
-            full = Path(root) / name
-            try:
-                st = full.lstat()
-            except OSError:
-                continue
-            if full.is_symlink():
-                continue
-            files += 1
-            size += st.st_size
+        got, span = _count_files(root, names)
+        files += got
+        size += span
     return files, size, children
 
 
-def _open_tar_writer(out: Path, codec: str, level: int):
+def _tar_writer(out: Path, codec: str, level: int):
     """返回 (tarfile, closer)；closer 必须在 tarfile 关闭之后调用。"""
     if codec == "gzip":
         tar = tarfile.open(out, mode="w:gz", compresslevel=9)
@@ -104,14 +113,8 @@ def _open_tar_writer(out: Path, codec: str, level: int):
     return tar, close
 
 
-def pack(sources: Iterable[tuple[str, Path]], out_path: Path,
-         codec: str = "zstd", level: int = 12) -> list[dict[str, Any]]:
-    """把 (归档内相对路径, 源路径) 逐项加入归档。
-
-    返回来源清单；任何一步失败都删除半成品，不把半份归档留在仓库里。
-    """
-    out_path = Path(out_path)
-    out_path.parent.mkdir(parents=True, exist_ok=True)
+def _collect(sources: Iterable[tuple[str, Path]]
+             ) -> tuple[list[tuple[str, Path]], list[dict[str, Any]]]:
     entries: list[dict[str, Any]] = []
     pairs: list[tuple[str, Path]] = []
     for name, path in sources:
@@ -130,11 +133,22 @@ def pack(sources: Iterable[tuple[str, Path]], out_path: Path,
             "bytes": size,
             "agent_count": children if arcname.rstrip("/").endswith("agents") else 0,
         })
+    return pairs, entries
 
+
+def pack(sources: Iterable[tuple[str, Path]], out_path: Path,
+         codec: str = "zstd", level: int = 12) -> list[dict[str, Any]]:
+    """把 (归档内相对路径, 源路径) 逐项加入归档。
+
+    返回来源清单；任何一步失败都删除半成品，不把半份归档留在仓库里。
+    """
+    out_path = Path(out_path)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    pairs, entries = _collect(sources)
     if not pairs:
         raise BadInput("没有可备份的来源")
 
-    tar, closer = _open_tar_writer(out_path, codec, level)
+    tar, closer = _tar_writer(out_path, codec, level)
     try:
         for arcname, src in pairs:
             tar.add(str(src), arcname=arcname, recursive=True)
@@ -150,7 +164,7 @@ def pack(sources: Iterable[tuple[str, Path]], out_path: Path,
     return entries
 
 
-def _open_tar_reader(path: Path, codec: str):
+def _tar_reader(path: Path, codec: str):
     if codec == "gzip":
         return tarfile.open(path, mode="r:gz"), (lambda: None)
 
@@ -177,15 +191,14 @@ def _open_tar_reader(path: Path, codec: str):
     return tar, close
 
 
+_MEMBER_KINDS = ("isfile", "isdir", "issym", "islnk")
+
+
 def _check_member(member: tarfile.TarInfo) -> None:
     name = member.name.replace("\\", "/")
-    if name.startswith("/"):
-        raise BadIntegrity(f"归档成员是绝对路径: {member.name}")
-    parts = name.split("/")
-    if any(part == ".." for part in parts):
-        raise BadIntegrity(f"归档成员含上跳路径: {member.name}")
-    if not (member.isfile() or member.isdir() or
-            member.issym() or member.islnk()):
+    if name.startswith("/") or ".." in name.split("/"):
+        raise BadIntegrity(f"归档成员路径越界: {member.name}")
+    if not any(getattr(member, kind)() for kind in _MEMBER_KINDS):
         raise BadIntegrity(f"归档成员类型不受支持: {member.name}")
 
 
@@ -198,7 +211,7 @@ def unpack(path: Path, codec: str, target: Path,
     """
     target = Path(target)
     target.mkdir(parents=True, exist_ok=True)
-    tar, closer = _open_tar_reader(Path(path), codec)
+    tar, closer = _tar_reader(Path(path), codec)
     files = 0
     try:
         for member in tar:
@@ -216,7 +229,7 @@ def unpack(path: Path, codec: str, target: Path,
 
 def inspect(path: Path, codec: str) -> tuple[int, list[str]]:
     """只读遍历归档，返回 (普通文件数, 结构问题列表)。"""
-    tar, closer = _open_tar_reader(Path(path), codec)
+    tar, closer = _tar_reader(Path(path), codec)
     files = 0
     problems: list[str] = []
     try:

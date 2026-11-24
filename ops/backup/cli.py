@@ -30,17 +30,19 @@ def _stamp(text: str | None) -> int | None:
     return parse_iso(raw)
 
 
+def _pair(item: str) -> tuple[str, Path]:
+    name, sep, path = item.partition("=")
+    if not sep or not name or not path:
+        raise BadInput(f"--source 需要 NAME=PATH 形式: {item!r}")
+    return name, Path(path)
+
+
 def _sources(values: list[str] | None) -> list[tuple[str, Path]] | None:
     if not values:
         return None
     pairs: list[tuple[str, Path]] = []
     for item in values:
-        if "=" not in item:
-            raise BadInput(f"--source 需要 NAME=PATH 形式: {item!r}")
-        name, path = item.split("=", 1)
-        if not name or not path:
-            raise BadInput(f"--source 需要 NAME=PATH 形式: {item!r}")
-        pairs.append((name, Path(path)))
+        pairs.append(_pair(item))
     return pairs
 
 
@@ -70,46 +72,62 @@ def _cmd_create(args: argparse.Namespace, store: Store) -> int:
     return 0
 
 
-def _cmd_auto(args: argparse.Namespace, store: Store) -> int:
-    stamp = _stamp(args.at) or time.time_ns()
-    stamp = int(stamp)
-    moment = datetime.fromtimestamp(stamp // NS, timezone.utc)
+def _auto_kind(store: Store, moment: datetime, stamp: int,
+               full_hour: int) -> Kind:
+    if moment.hour != full_hour:
+        return Kind.INCREMENTAL
     today = iso(stamp)[:10]
+    for rec in store.records():
+        if rec.kind is Kind.FULL and iso(rec.created_at)[:10] == today:
+            return Kind.INCREMENTAL
+    return Kind.FULL
 
-    same_day_full = any(
-        rec.kind is Kind.FULL and iso(rec.created_at)[:10] == today
-        for rec in store.records()
-    )
-    kind = Kind.FULL if (moment.hour == args.full_hour and not same_day_full) \
-        else Kind.INCREMENTAL
 
-    rec = store.create(kind, sources=_sources(args.source), stamp=stamp,
-                       actor=args.actor, sign_key=args.sign_key,
-                       codec=args.codec)
-    steps: dict[str, Any] = {"backup": rec.to_dict()}
-
+def _auto_extra(store: Store, moment: datetime, stamp: int,
+                args: argparse.Namespace) -> dict[str, Any]:
+    steps: dict[str, Any] = {}
     if moment.hour == args.prune_hour:
         steps["prune"] = store.prune(stamp=stamp, apply=True)
     if moment.weekday() == 6 and moment.hour == args.verify_hour:
         steps["verify"] = store.verify_all(deep=False)
+    return steps
 
-    if args.json:
+
+def _auto_show(steps: dict[str, Any], rec: Any, as_json: bool) -> None:
+    if as_json:
         print(json.dumps(steps, ensure_ascii=False, sort_keys=True))
-    else:
-        print(f"已创建 {rec.backup_id} ({rec.kind.value})")
-        for name in ("prune", "verify"):
-            if name in steps:
-                print(f"{name}: {json.dumps(steps[name], ensure_ascii=False)}")
+        return
+    print(f"已创建 {rec.backup_id} ({rec.kind.value})")
+    for name in ("prune", "verify"):
+        if name in steps:
+            print(f"{name}: {json.dumps(steps[name], ensure_ascii=False)}")
+
+
+def _cmd_auto(args: argparse.Namespace, store: Store) -> int:
+    stamp = int(_stamp(args.at) or time.time_ns())
+    moment = datetime.fromtimestamp(stamp // NS, timezone.utc)
+    kind = _auto_kind(store, moment, stamp, args.full_hour)
+    rec = store.create(kind, sources=_sources(args.source), stamp=stamp,
+                       actor=args.actor, sign_key=args.sign_key,
+                       codec=args.codec)
+    steps: dict[str, Any] = {"backup": rec.to_dict()}
+    steps.update(_auto_extra(store, moment, stamp, args))
+    _auto_show(steps, rec, args.json)
     return 0
 
 
-def _cmd_list(args: argparse.Namespace, store: Store) -> int:
-    recs = store.records()
-    if args.kind:
-        want = Kind.parse(args.kind)
+def _pick(recs: list[Any], kind: str | None,
+          limit: int | None) -> list[Any]:
+    if kind:
+        want = Kind.parse(kind)
         recs = [rec for rec in recs if rec.kind is want]
-    if args.limit:
-        recs = recs[-args.limit:]
+    if limit:
+        recs = recs[-limit:]
+    return recs
+
+
+def _cmd_list(args: argparse.Namespace, store: Store) -> int:
+    recs = _pick(store.records(), args.kind, args.limit)
     if args.json:
         print(json.dumps([rec.to_dict() for rec in recs],
                          ensure_ascii=False, sort_keys=True))
@@ -127,29 +145,39 @@ def _cmd_show(args: argparse.Namespace, store: Store) -> int:
     return 0
 
 
+def _show_checks(checks: list[dict[str, Any]], indent: str = "") -> None:
+    for check in checks:
+        flag = "ok" if check["ok"] else "FAIL"
+        print(f"{indent}[{flag}] {check['check']} {check['detail']}")
+
+
+def _show_all(results: dict[str, Any]) -> None:
+    for ident, result in results.items():
+        mark = "ok" if result["ok"] else "FAIL"
+        print(f"[{mark}] {ident}")
+        _show_checks(result["checks"], "  ")
+
+
+def _verify_all(args: argparse.Namespace, store: Store) -> int:
+    results = store.verify_all(pub_key=args.pub_key, deep=args.deep)
+    ok = all(item["ok"] for item in results.values())
+    if args.json:
+        print(json.dumps(results, ensure_ascii=False, sort_keys=True))
+    else:
+        _show_all(results)
+    return 0 if ok else 4
+
+
 def _cmd_verify(args: argparse.Namespace, store: Store) -> int:
     if args.all:
-        results = store.verify_all(pub_key=args.pub_key, deep=args.deep)
-        if args.json:
-            print(json.dumps(results, ensure_ascii=False, sort_keys=True))
-        else:
-            for ident, result in results.items():
-                mark = "ok" if result["ok"] else "FAIL"
-                print(f"[{mark}] {ident}")
-                for check in result["checks"]:
-                    flag = "ok" if check["ok"] else "FAIL"
-                    print(f"  [{flag}] {check['check']} {check['detail']}")
-        return 0 if all(item["ok"] for item in results.values()) else 4
-
+        return _verify_all(args, store)
     if not args.backup_id:
         raise BadInput("verify 需要备份编号，或用 --all")
     result = store.verify(args.backup_id, pub_key=args.pub_key, deep=args.deep)
     if args.json:
         print(json.dumps(result.to_dict(), ensure_ascii=False, sort_keys=True))
     else:
-        for check in result.checks:
-            flag = "ok" if check["ok"] else "FAIL"
-            print(f"[{flag}] {check['check']} {check['detail']}")
+        _show_checks(result.checks)
     return 0 if result.ok else 4
 
 

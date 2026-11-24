@@ -25,7 +25,7 @@ from typing import Any, Iterator
 from . import archive
 from .model import (
     BadInput, BadIntegrity, BadStore, BackupRecord, Kind, Retention, SCHEMA,
-    VERSION, day_key, iso, make_id, member_under_agent,
+    VERSION, agent_member, day_key, iso, make_id,
 )
 
 CHUNK = 1024 * 1024
@@ -166,41 +166,15 @@ class Store:
                previous: str | None = None) -> BackupRecord:
         kind = Kind.parse(kind)
         stamp = time.time_ns() if stamp is None else int(stamp)
-        pairs = list(sources) if sources is not None else self._default_pairs()
+        pairs = self._pairs(sources)
 
         with self._lock():
             recs = self.records()
-            same_day = [rec for rec in recs
-                        if rec.kind is kind and day_key(rec.created_at) == day_key(stamp)]
-            seq = max((int(rec.backup_id.rsplit("-", 1)[1]) for rec in same_day),
-                      default=0) + 1
+            seq = self._next_seq(self._same_day(recs, kind, stamp))
             backup_id = make_id(kind, stamp, seq)
-            stem = self._stem(kind, stamp, seq)
-            chosen = archive.choose_codec(codec)
-            file_name = archive.archive_name(stem, chosen)
-            target = self.root / kind.value / file_name
-            partial = target.with_name(file_name + ".partial")
-
-            entries = archive.pack(pairs, partial, codec=chosen)
-            try:
-                digest = sha256_file(partial)
-                size = partial.stat().st_size
-                os.replace(partial, target)
-            finally:
-                partial.unlink(missing_ok=True)
-
-            signed_by = ""
-            if sign_key:
-                self._sign(target, Path(sign_key))
-                signed_by = actor or "operator"
-
-            self._checksum_of_path(target).write_text(
-                f"{digest}  {file_name}\n", encoding="utf-8")
-
-            prev = previous
-            if prev is None:
-                older = [rec for rec in recs if rec.kind is kind]
-                prev = older[-1].backup_id if older else ""
+            made = self._pack(kind, stamp, seq, pairs, codec, sign_key, actor)
+            file_name, chosen, entries, digest, size, signed_by = made
+            agents, confs, total = self._counts(entries)
 
             record = BackupRecord(
                 backup_id=backup_id,
@@ -213,16 +187,76 @@ class Store:
                 sha256=digest,
                 actor=actor,
                 signed_by=signed_by,
-                agent_count=sum(int(e.get("agent_count", 0)) for e in entries),
-                config_files=sum(int(e.get("files", 0)) for e in entries
-                                 if str(e.get("name", "")).startswith("etc/")),
-                total_files=sum(int(e.get("files", 0)) for e in entries),
+                agent_count=agents,
+                config_files=confs,
+                total_files=total,
                 sources=entries,
-                previous_backup_id=prev,
+                previous_backup_id=self._prev_id(recs, kind, previous),
             )
             self._write_manifest(record)
             self._write_index()
             return record
+
+    def _pairs(self, sources: list[tuple[str, Path]] | None
+               ) -> list[tuple[str, Path]]:
+        if sources is not None:
+            return list(sources)
+        return self._default_pairs()
+
+    @staticmethod
+    def _same_day(recs: list[BackupRecord], kind: Kind,
+                  stamp: int) -> list[BackupRecord]:
+        day = day_key(stamp)
+        return [rec for rec in recs
+                if rec.kind is kind and day_key(rec.created_at) == day]
+
+    @staticmethod
+    def _next_seq(recs: list[BackupRecord]) -> int:
+        seqs = (int(rec.backup_id.rsplit("-", 1)[1]) for rec in recs)
+        return max(seqs, default=0) + 1
+
+    @staticmethod
+    def _prev_id(recs: list[BackupRecord], kind: Kind,
+                 previous: str | None) -> str:
+        if previous is not None:
+            return previous
+        older = [rec for rec in recs if rec.kind is kind]
+        if not older:
+            return ""
+        return older[-1].backup_id
+
+    @staticmethod
+    def _counts(entries: list[dict[str, Any]]) -> tuple[int, int, int]:
+        agents = sum(int(e.get("agent_count", 0)) for e in entries)
+        total = sum(int(e.get("files", 0)) for e in entries)
+        confs = sum(int(e.get("files", 0)) for e in entries
+                    if str(e.get("name", "")).startswith("etc/"))
+        return agents, confs, total
+
+    def _pack(self, kind: Kind, stamp: int, seq: int,
+              pairs: list[tuple[str, Path]], codec: str,
+              sign_key: Path | str | None, actor: str
+              ) -> tuple[str, str, list[dict[str, Any]], str, int, str]:
+        chosen = archive.choose_codec(codec)
+        file_name = archive.archive_name(self._stem(kind, stamp, seq), chosen)
+        target = self.root / kind.value / file_name
+        partial = target.with_name(file_name + ".partial")
+
+        entries = archive.pack(pairs, partial, codec=chosen)
+        try:
+            digest = sha256_file(partial)
+            size = partial.stat().st_size
+            os.replace(partial, target)
+        finally:
+            partial.unlink(missing_ok=True)
+
+        signed_by = ""
+        if sign_key:
+            self._sign(target, Path(sign_key))
+            signed_by = actor or "operator"
+        self._sha_path(target).write_text(f"{digest}  {file_name}\n",
+                                          encoding="utf-8")
+        return file_name, chosen, entries, digest, size, signed_by
 
     def _default_pairs(self) -> list[tuple[str, Path]]:
         pairs: list[tuple[str, Path]] = []
@@ -251,7 +285,7 @@ class Store:
 
     # ── 清单 ─────────────────────────────────────────────────────────
     @staticmethod
-    def _checksum_of_path(target: Path) -> Path:
+    def _sha_path(target: Path) -> Path:
         return target.with_name(target.name + ".sha256")
 
     def _write_manifest(self, record: BackupRecord) -> None:
@@ -289,50 +323,69 @@ class Store:
             return result
         result.add("archive", True, target.name)
 
-        digest = sha256_file(target)
-        result.add("sha256", digest == rec.sha256,
-                   "" if digest == rec.sha256 else f"{digest} != {rec.sha256}")
-        size = target.stat().st_size
-        result.add("size", size == rec.size_bytes,
-                   "" if size == rec.size_bytes else f"{size} != {rec.size_bytes}")
-
-        check_file = self._checksum_of(rec)
-        if check_file.is_file():
-            token = check_file.read_text(encoding="utf-8").split()
-            result.add("checksum_file", bool(token) and token[0] == rec.sha256,
-                       str(check_file))
-        else:
-            result.add("checksum_file", False, f"缺少 {check_file.name}")
-
-        sig = self._signature_of(rec)
-        if rec.signed_by:
-            if not sig.is_file():
-                result.add("signature", False, "清单声明已签名但缺少 .sig")
-            elif pub_key is None:
-                result.add("signature", False, "已签名，但未提供公钥")
-            elif shutil.which("openssl") is None:
-                result.add("signature", False, "openssl 不可用，无法验签")
-            else:
-                proc = subprocess.run(
-                    ["openssl", "dgst", "-sha256", "-verify", str(pub_key),
-                     "-signature", str(sig), str(target)],
-                    capture_output=True, text=True)
-                result.add("signature", proc.returncode == 0,
-                           proc.stdout.strip() or proc.stderr.strip())
-        elif sig.is_file():
-            result.add("signature", False, "存在 .sig 但清单未声明签名")
-        else:
-            result.add("signature", True, "未签名")
-
+        self._check_bytes(result, rec, target)
+        self._check_sidecar(result, rec)
+        self._check_sig(result, rec, target, pub_key)
         if deep:
-            try:
-                files, problems = archive.inspect(target, rec.compression)
-            except (OSError, BadStore) as exc:
-                result.add("structure", False, str(exc))
-            else:
-                result.add("structure", not problems,
-                           "; ".join(problems) or f"{files} files")
+            self._check_tree(result, rec, target)
         return result
+
+    @staticmethod
+    def _check_bytes(result: VerifyResult, rec: BackupRecord,
+                     target: Path) -> None:
+        digest = sha256_file(target)
+        same = digest == rec.sha256
+        result.add("sha256", same, "" if same else f"{digest} != {rec.sha256}")
+        size = target.stat().st_size
+        ok = size == rec.size_bytes
+        result.add("size", ok, "" if ok else f"{size} != {rec.size_bytes}")
+
+    def _check_sidecar(self, result: VerifyResult, rec: BackupRecord) -> None:
+        path = self._checksum_of(rec)
+        if not path.is_file():
+            result.add("checksum_file", False, f"缺少 {path.name}")
+            return
+        token = path.read_text(encoding="utf-8").split()
+        result.add("checksum_file", bool(token) and token[0] == rec.sha256,
+                   str(path))
+
+    def _check_sig(self, result: VerifyResult, rec: BackupRecord, target: Path,
+                   pub_key: Path | str | None) -> None:
+        sig = self._signature_of(rec)
+        if not rec.signed_by:
+            if sig.is_file():
+                result.add("signature", False, "存在 .sig 但清单未声明签名")
+            else:
+                result.add("signature", True, "未签名")
+            return
+        if not sig.is_file():
+            result.add("signature", False, "清单声明已签名但缺少 .sig")
+            return
+        if pub_key is None:
+            result.add("signature", False, "已签名，但未提供公钥")
+            return
+        ok, detail = self._sig_ok(sig, pub_key, target)
+        result.add("signature", ok, detail)
+
+    @staticmethod
+    def _sig_ok(sig: Path, pub_key: Path | str, target: Path) -> tuple[bool, str]:
+        if shutil.which("openssl") is None:
+            return False, "openssl 不可用，无法验签"
+        proc = subprocess.run(
+            ["openssl", "dgst", "-sha256", "-verify", str(pub_key),
+             "-signature", str(sig), str(target)],
+            capture_output=True, text=True)
+        return proc.returncode == 0, proc.stdout.strip() or proc.stderr.strip()
+
+    @staticmethod
+    def _check_tree(result: VerifyResult, rec: BackupRecord,
+                    target: Path) -> None:
+        try:
+            files, problems = archive.inspect(target, rec.compression)
+        except (OSError, BadStore) as exc:
+            result.add("structure", False, str(exc))
+            return
+        result.add("structure", not problems, "; ".join(problems) or f"{files} files")
 
     def verify_all(self, pub_key: Path | str | None = None,
                    deep: bool = False) -> dict[str, dict[str, Any]]:
@@ -345,34 +398,12 @@ class Store:
                 actor: str = "", agent_id: str | int | None = None,
                 confirm: bool = False, pub_key: Path | str | None = None,
                 log_path: Path | str | None = None) -> dict[str, Any]:
-        rec = self.load(backup_id)
-        result = self.verify(backup_id, pub_key=pub_key, deep=True)
-        if not result.ok:
-            raise BadIntegrity("；".join(result.errors))
-
+        rec = self._verified(backup_id, pub_key)
         if rec.kind is Kind.FULL and not confirm:
             raise BadInput("全量恢复会覆盖现有数据，必须加 --confirm")
 
-        dest = Path(target)
-        if dest.exists() and not dest.is_dir():
-            raise BadInput(f"恢复目标不是目录: {dest}")
-        dest.mkdir(parents=True, exist_ok=True)
-
-        staging = dest / f".airy-restore-{rec.backup_id}"
-        if staging.exists():
-            shutil.rmtree(staging)
-        keep = None
-        if agent_id is not None:
-            keep = lambda name: member_under_agent(name, agent_id)  # noqa: E731
-        files = archive.unpack(self.path_of(rec), rec.compression, staging, keep=keep)
-        if agent_id is not None and files == 0:
-            shutil.rmtree(staging, ignore_errors=True)
-            raise BadInput(f"备份中没有 Agent {agent_id} 的数据")
-
-        for child in list(staging.iterdir()):
-            self._merge(child, dest / child.name)
-        staging.rmdir()
-
+        dest = self._dest(target)
+        files = self._unpack_into(rec, dest, agent_id)
         when = time.time_ns() if stamp is None else int(stamp)
         record = {
             "at": iso(when),
@@ -386,6 +417,43 @@ class Store:
         }
         self._log(log_path, record)
         return record
+
+    def _verified(self, backup_id: str,
+                  pub_key: Path | str | None) -> BackupRecord:
+        rec = self.load(backup_id)
+        result = self.verify(backup_id, pub_key=pub_key, deep=True)
+        if not result.ok:
+            raise BadIntegrity("；".join(result.errors))
+        return rec
+
+    @staticmethod
+    def _dest(target: Path | str) -> Path:
+        dest = Path(target)
+        if dest.exists() and not dest.is_dir():
+            raise BadInput(f"恢复目标不是目录: {dest}")
+        dest.mkdir(parents=True, exist_ok=True)
+        return dest
+
+    def _unpack_into(self, rec: BackupRecord, dest: Path,
+                     agent_id: str | int | None) -> int:
+        staging = dest / f".airy-restore-{rec.backup_id}"
+        if staging.exists():
+            shutil.rmtree(staging)
+        files = archive.unpack(self.path_of(rec), rec.compression, staging,
+                               keep=self._keep(agent_id))
+        if agent_id is not None and files == 0:
+            shutil.rmtree(staging, ignore_errors=True)
+            raise BadInput(f"备份中没有 Agent {agent_id} 的数据")
+        for child in list(staging.iterdir()):
+            self._merge(child, dest / child.name)
+        staging.rmdir()
+        return files
+
+    @staticmethod
+    def _keep(agent_id: str | int | None):
+        if agent_id is None:
+            return None
+        return lambda name: agent_member(name, agent_id)
 
     @staticmethod
     def _merge(src: Path, dst: Path) -> None:
@@ -415,28 +483,11 @@ class Store:
         now = time.time_ns() if stamp is None else int(stamp)
         with self._lock():
             recs = self.records()
-            newest_full = None
-            fulls = [rec for rec in recs if rec.kind is Kind.FULL]
-            if fulls:
-                newest_full = max(fulls, key=lambda rec: rec.created_at)
-
-            candidates: list[BackupRecord] = []
-            for rec in recs:
-                if newest_full is not None and rec.backup_id == newest_full.backup_id:
-                    continue  # 任何时候至少留一份全量，清空仓库不是保留策略
-                if rec.created_at < self.retention.cutoff(rec.kind, now):
-                    candidates.append(rec)
-
+            candidates = self._expired(recs, now)
             removed: list[str] = []
             if apply:
-                for rec in candidates:
-                    self.path_of(rec).unlink(missing_ok=True)
-                    self._checksum_of(rec).unlink(missing_ok=True)
-                    self._signature_of(rec).unlink(missing_ok=True)
-                    self._manifest_of(rec).unlink(missing_ok=True)
-                    removed.append(rec.backup_id)
+                removed = self._drop(candidates)
                 self._write_index()
-
             return {
                 "checked": len(recs),
                 "candidates": [rec.backup_id for rec in candidates],
@@ -444,20 +495,50 @@ class Store:
                 "applied": bool(apply),
             }
 
+    def _expired(self, recs: list[BackupRecord],
+                 now: int) -> list[BackupRecord]:
+        newest = self._newest(recs)
+        out: list[BackupRecord] = []
+        for rec in recs:
+            # 任何时候至少留一份全量，清空仓库不是保留策略。
+            if rec.backup_id == newest:
+                continue
+            if rec.created_at < self.retention.cutoff(rec.kind, now):
+                out.append(rec)
+        return out
+
+    @staticmethod
+    def _newest(recs: list[BackupRecord]) -> str:
+        fulls = [rec for rec in recs if rec.kind is Kind.FULL]
+        if not fulls:
+            return ""
+        return max(fulls, key=lambda rec: rec.created_at).backup_id
+
+    def _drop(self, candidates: list[BackupRecord]) -> list[str]:
+        removed: list[str] = []
+        for rec in candidates:
+            self.path_of(rec).unlink(missing_ok=True)
+            self._checksum_of(rec).unlink(missing_ok=True)
+            self._signature_of(rec).unlink(missing_ok=True)
+            self._manifest_of(rec).unlink(missing_ok=True)
+            removed.append(rec.backup_id)
+        return removed
+
     # ── 统计 ─────────────────────────────────────────────────────────
     def stats(self) -> dict[str, Any]:
         recs = self.records()
-        by_kind: dict[str, dict[str, Any]] = {}
-        for kind in Kind:
-            subset = [rec for rec in recs if rec.kind is kind]
-            by_kind[kind.value] = {
-                "count": len(subset),
-                "bytes": sum(rec.size_bytes for rec in subset),
-                "latest": subset[-1].backup_id if subset else "",
-            }
         return {
             "root": str(self.root),
             "total": len(recs),
             "bytes": sum(rec.size_bytes for rec in recs),
-            "kinds": by_kind,
+            "kinds": {kind.value: self._by_kind(recs, kind) for kind in Kind},
+        }
+
+    @staticmethod
+    def _by_kind(recs: list[BackupRecord], kind: Kind) -> dict[str, Any]:
+        subset = [rec for rec in recs if rec.kind is kind]
+        return {
+            "count": len(subset),
+            "bytes": sum(rec.size_bytes for rec in subset),
+            "latest": subset[-1].backup_id if subset else "",
         }
