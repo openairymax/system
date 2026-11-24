@@ -27,7 +27,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterator
 
-from airylib.err import Fault
+from airylib.err import Fault, need
 
 __all__ = [
     "Deb",
@@ -156,20 +156,16 @@ def _walk(handle: io.BufferedReader) -> Iterator[Member]:
 
 
 def _head(raw: bytes) -> tuple[str, int]:
-    if len(raw) < HEAD:
-        raise Fault("ar 成员头被截断")
+    need(len(raw) >= HEAD, "ar 成员头被截断")
     name = raw[:16].decode("ascii", "replace").strip().rstrip("/")
     size = raw[48:58].decode("ascii", "replace").strip()
-    if not size.isdigit():
-        raise Fault(f"ar 成员长度不可读: {name or '?'}")
+    need(size.isdigit(), f"ar 成员长度不可读: {name or '?'}")
     return name, int(size)
 
 
 def _first(path: Path, items: tuple[Member, ...]) -> None:
-    if not items or items[0].name != BIN:
-        raise Fault("首成员不是 debian-binary")
-    if not _bytes(path, items[0]).startswith(b"2.0"):
-        raise Fault("debian-binary 未声明 2.0")
+    need(items and items[0].name == BIN, "首成员不是 debian-binary")
+    need(_bytes(path, items[0]).startswith(b"2.0"), "debian-binary 未声明 2.0")
 
 
 def _bytes(path: Path, item: Member) -> bytes:
@@ -190,8 +186,7 @@ def _mode(name: str) -> str:
     suffix = name.rsplit(".", 1)[-1]
     if suffix == "zst":
         return "zst"
-    if suffix not in MODES:
-        raise Fault(f"不支持的压缩格式: {name}")
+    need(suffix in MODES, f"不支持的压缩格式: {name}")
     return MODES[suffix]
 
 
