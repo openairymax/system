@@ -692,6 +692,65 @@ POWER_PAIRS: dict[tuple[str, str], str] = {
 
 COEXIST = "airy-rt-coexist.service"
 
+ALERT = "airy-alert.service"
+
+# 告警聚合是运维面唯一的告警写者：socket 收事件、判重抑制、落状态与归档，
+# 再由 journal 与 sd_notify 分发给读者。它不重启别的单元，因此 OnFailure
+# 只交 incident；Restart=on-failure 保证崩溃后状态文件仍可续读。
+# Type=notify + WatchdogSec：主循环每秒 tick，每 10 秒喂狗，卡在 select 或
+# 归档 I/O 上都会被 systemd 发现。RuntimeDirectory/StateDirectory 让
+# ProtectSystem=strict 下的两个写点由 systemd 建好并授权，避免服务账户
+# 自己 mkdir 时踩只读根。RestrictAddressFamilies 只留 AF_UNIX：告警面
+# 不外联，出口由 gateway_d 负责。
+ALERT_PAIRS: dict[tuple[str, str], str] = {
+    ("Unit", "Description"): "AirymaxOS Alert Aggregator",
+    ("Unit", "Documentation"):
+        "https://docs.agentrt.local/100-operations/04-alerting",
+    ("Unit", "After"): "agentrt-logger.service",
+    ("Unit", "Wants"): "agentrt-logger.service",
+    ("Unit", "OnFailure"): "airy-incident@%n.service",
+    ("Unit", "StartLimitBurst"): "5",
+    ("Unit", "StartLimitIntervalSec"): "300",
+    ("Service", "Type"): "notify",
+    ("Service", "NotifyAccess"): "main",
+    ("Service", "ExecStart"): "/usr/bin/airy-alertd",
+    ("Service", "ExecReload"): "/bin/kill -HUP $MAINPID",
+    ("Service", "Restart"): "on-failure",
+    ("Service", "RestartSec"): "2s",
+    ("Service", "WatchdogSec"): "30s",
+    ("Service", "TimeoutStartSec"): "15",
+    ("Service", "TimeoutStopSec"): "10",
+    ("Service", "User"): "airy",
+    ("Service", "Group"): "airy",
+    ("Service", "RuntimeDirectory"): "agentrt",
+    ("Service", "RuntimeDirectoryMode"): "0755",
+    ("Service", "StateDirectory"): "agentrt/alerts",
+    ("Service", "StateDirectoryMode"): "0750",
+    ("Service", "MemoryHigh"): "96M",
+    ("Service", "MemoryMax"): "160M",
+    ("Service", "CPUQuota"): "40%",
+    ("Service", "TasksMax"): "64",
+    ("Service", "LimitNOFILE"): "4096",
+    ("Service", "ProtectSystem"): "strict",
+    ("Service", "ProtectHome"): "yes",
+    ("Service", "PrivateTmp"): "yes",
+    ("Service", "NoNewPrivileges"): "yes",
+    ("Service", "CapabilityBoundingSet"): "",
+    ("Service", "AmbientCapabilities"): "",
+    ("Service", "RestrictAddressFamilies"): "AF_UNIX",
+    ("Service", "ProtectKernelTunables"): "yes",
+    ("Service", "ProtectKernelModules"): "yes",
+    ("Service", "ProtectControlGroups"): "yes",
+    ("Service", "RestrictNamespaces"): "yes",
+    ("Service", "RestrictRealtime"): "yes",
+    ("Service", "LockPersonality"): "yes",
+    ("Service", "SyslogIdentifier"): "airy-alertd",
+    ("Service", "StandardOutput"): "journal",
+    ("Service", "StandardError"): "journal",
+    ("Service", "OOMPolicy"): "stop",
+    ("Install", "WantedBy"): "agentrt.target",
+}
+
 # 共存单元只经 D-Bus 让 systemd 改一个运行时属性，不直接写 cgroupfs：
 # --runtime 的语义只有 systemd 能保证，自己写文件会在单元重载后被冲掉。
 # 服务在桌面 slice 未加载时以 0 退出，因此不挂 incident——无桌面机器
@@ -990,6 +1049,7 @@ TIMERS: dict[str, dict[tuple[str, str], str]] = {
 
 UNITS = frozenset(SERVICES) | frozenset(TARGETS) | frozenset(TEMPLATES) | {
     AGENT_SLICE,
+    ALERT,
     BOOT_MOUNT,
     BOOT_TUI,
     BOOT_WATCH,
@@ -1508,6 +1568,7 @@ PAIR_SPECS: dict[str, dict[tuple[str, str], str | None]] = {
     MEMCAP: MEMCAP_PAIRS,
     POWER: POWER_PAIRS,
     COEXIST: COEXIST_PAIRS,
+    ALERT: ALERT_PAIRS,
     UPDATE_CHECK: CHECK_PAIRS,
     LLM: LLM_PAIRS,
     AGENT_SLICE: AGENT_SLICE_PAIRS,

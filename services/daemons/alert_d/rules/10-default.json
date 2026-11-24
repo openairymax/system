@@ -1,0 +1,35 @@
+{
+  "schema": 1,
+  "rules": [
+    {
+      "name": "sched_brief",
+      "window": "5m",
+      "max_emit": 1,
+      "match": {
+        "source": "sched_d",
+        "severity": "INFO"
+      },
+      "note": "scheduler informational events, one per five minutes"
+    },
+    {
+      "name": "mem_brief",
+      "window": "1m",
+      "max_emit": 3,
+      "match": {
+        "source": "mem_d",
+        "severity": "INFO"
+      },
+      "note": "memory level churn, three per minute"
+    },
+    {
+      "name": "net_brief",
+      "window": "1m",
+      "max_emit": 3,
+      "match": {
+        "source": "net_d",
+        "severity": "INFO"
+      },
+      "note": "network informational events, three per minute"
+    }
+  ]
+}

@@ -1,0 +1,22 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: AGPL-3.0-or-later OR Apache-2.0
+#
+# AirymaxOS 告警命令行入口脚本
+#
+# 安装后从 site-packages 导入 alert_d；源码树内直接运行时把同级
+# services/daemons 目录加入搜索路径，不依赖安装也不隐藏导入错误。
+
+"""AirymaxOS alert client entry point (P-13)."""
+
+import sys
+from pathlib import Path
+
+DAEMONS = Path(__file__).resolve().parents[1] / "services" / "daemons"
+
+if DAEMONS.is_dir():
+    sys.path.insert(0, str(DAEMONS))
+
+from alert_d.cli import main  # noqa: E402
+
+if __name__ == "__main__":
+    sys.exit(main())

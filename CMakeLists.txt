@@ -116,8 +116,21 @@ install(DIRECTORY services/airydisk services/airyupdate
 	DESTINATION ${Python3_SITELIB}
 	PATTERN "__pycache__" EXCLUDE
 )
+# 告警聚合（P-13）：包体进 site-packages，默认规则进 share，入口进 bin。
+# 规则与包分开安装，运维可直接在 /etc/agentrt/alert/rules.d 覆盖默认值
+# 而不必改动包内文件。
+install(DIRECTORY services/daemons/alert_d
+	DESTINATION ${Python3_SITELIB}
+	PATTERN "__pycache__" EXCLUDE
+	PATTERN "rules" EXCLUDE
+)
+install(FILES services/daemons/alert_d/rules/10-default.json
+	DESTINATION share/airymax/alert/rules.d
+)
 install(PROGRAMS
 	bin/airy-disk
 	bin/airy-update
+	bin/airy-alertd
+	bin/airy-alert
 	DESTINATION bin
 )
