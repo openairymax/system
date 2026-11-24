@@ -36,9 +36,7 @@ def choose_codec(preferred: str = "zstd") -> str:
     text = (preferred or "zstd").strip().lower()
     if text not in ("auto", "zstd", "gzip"):
         raise BadInput(f"未知压缩编码: {preferred!r}")
-    if text == "gzip":
-        return "gzip"
-    return "zstd" if zstd_available() else "gzip"
+    return "gzip" if text == "gzip" or not zstd_available() else "zstd"
 
 
 def archive_name(stem: str, codec: str) -> str:

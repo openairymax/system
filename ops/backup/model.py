@@ -117,34 +117,39 @@ def parse_id(backup_id: str) -> tuple[Kind, str, int]:
     return _PREFIX_KIND[prefix], day, int(seq)
 
 
+_BAD_PARTS = ("", ".", "..")
+
+
 def safe_arcname(name: str) -> str:
-    """归档内路径只允许相对、无 ..、无空段。"""
-    text = str(name).replace("\\", "/").strip()
-    if not text or text.startswith("/"):
-        raise BadInput(f"归档路径必须是相对路径: {name!r}")
-    parts = text.split("/")
-    if any(part in ("", ".", "..") for part in parts):
-        raise BadInput(f"归档路径含空段或上跳: {name!r}")
+    """归档内路径只允许相对、无 ..、无空段。
+
+    绝对路径的首段为空、盘符或重复分隔符同样落在空段上，一种判据覆盖
+    全部越界写法；两处各自判断必然在某个边界上分叉。
+    """
+    parts = str(name).replace("\\", "/").strip().split("/")
+    if any(part in _BAD_PARTS for part in parts):
+        raise BadInput(f"归档路径必须相对且无空段或上跳: {name!r}")
     return "/".join(parts)
 
 
 _HOST_PREFIX = ["var", "lib", "airy"]
+# Agent 私有数据的三类落点：主机 Agent 目录、L3 记忆、L4 记忆。表里的
+# 头段之后紧邻的就是 Agent 号。
+_AGENT_HEADS = (("agents",), ("memory", "l3"), ("memory", "l4"))
 
 
 def agent_member(name: str, agent_id: str | int) -> bool:
     """判断归档成员是否属于某个 Agent 的私有数据。
 
-    覆盖三类落点：主机 Agent 目录、L3 记忆、L4 记忆。调用方传 agent 号
-    时只还原该号；不传则整包还原。
+    调用方传 agent 号时只还原该号；不传则整包还原。
     """
     parts = str(name).strip("/").split("/")
     if parts[:3] == _HOST_PREFIX:
         parts = parts[3:]
-    if parts[:1] == ["agents"] and len(parts) >= 3:
-        return parts[1] == str(agent_id)
-    if parts[:1] == ["memory"] and len(parts) >= 4:
-        return parts[1] in ("l3", "l4") and parts[2] == str(agent_id)
-    return False
+    want = [str(agent_id)]
+    return any(parts[:len(head)] == list(head)
+               and parts[len(head):len(head) + 1] == want
+               for head in _AGENT_HEADS)
 
 
 def _minus_months(stamp_ns: int, months: int) -> int:
