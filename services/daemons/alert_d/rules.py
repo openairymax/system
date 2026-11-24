@@ -15,7 +15,9 @@ import json
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterable, Mapping
+from typing import Any, Callable, Iterable, Mapping
+
+from airylib.err import need
 
 from .model import (
     CODE_MAX, NS, BadEvent, Severity, source_of,
@@ -52,101 +54,89 @@ class Rule:
     note: str = ""
 
     def match(self, event: Any) -> bool:
-        if self.source is not None and event.source != self.source:
+        """逐项比对非空条件，标签按子集匹配。"""
+        conds = ((self.source, event.source), (self.code, event.code),
+                 (self.severity, event.severity))
+        if any(want is not None and want != got for want, got in conds):
             return False
-        if self.code is not None and event.code != self.code:
-            return False
-        if self.severity is not None and event.severity != self.severity:
-            return False
-        if self.labels:
-            got = dict(event.labels)
-            for key, val in self.labels:
-                if got.get(key) != val:
-                    return False
-        return True
+        got = dict(event.labels)
+        return all(got.get(key) == val for key, val in self.labels)
+
+
+def _wrap(fn: Callable[[Any], Any], value: Any) -> Any:
+    """把模型层的字段错误转成规则错误，消息保持不变。"""
+    try:
+        return fn(value)
+    except BadEvent as exc:
+        raise RuleError(str(exc)) from exc
 
 
 def parse_window(text: Any) -> int:
-    if not isinstance(text, str):
-        raise RuleError("window must be a string such as 5m")
+    """把 5s/30m/1h 解析成纳秒，并检查窗口范围。"""
+    need(isinstance(text, str), "window must be a string such as 5m", RuleError)
     hit = _DUR.match(text.strip())
-    if hit is None:
-        raise RuleError(f"bad window: {text!r}")
+    need(hit is not None, f"bad window: {text!r}", RuleError)
     span = int(hit.group(1)) * _SCALE[hit.group(2)]
-    if not WINDOW_MIN_NS <= span <= WINDOW_MAX_NS:
-        raise RuleError(f"window out of range: {text}")
+    need(WINDOW_MIN_NS <= span <= WINDOW_MAX_NS,
+         f"window out of range: {text}", RuleError)
     return span
+
+
+def _label_of(key: Any, val: Any) -> tuple[str, str]:
+    need(isinstance(key, str) and isinstance(val, str),
+         "match.labels must map strings to strings", RuleError)
+    need(key and len(key.encode("utf-8")) <= 32,
+         f"bad match label key: {key!r}", RuleError)
+    need(len(val.encode("utf-8")) <= 64,
+         f"match label value too long: {key}", RuleError)
+    return key, val
 
 
 def _label_pairs(value: Any) -> tuple[tuple[str, str], ...]:
     if value is None:
         return ()
-    if not isinstance(value, Mapping):
-        raise RuleError("match.labels must be an object")
-    if len(value) > LABEL_MAX:
-        raise RuleError(f"too many match labels: {len(value)}")
-    pairs = []
-    for key, val in value.items():
-        if not isinstance(key, str) or not isinstance(val, str):
-            raise RuleError("match.labels must map strings to strings")
-        if not key or len(key.encode("utf-8")) > 32:
-            raise RuleError(f"bad match label key: {key!r}")
-        if len(val.encode("utf-8")) > 64:
-            raise RuleError(f"match label value too long: {key}")
-        pairs.append((key, val))
-    return tuple(sorted(pairs))
+    need(isinstance(value, Mapping), "match.labels must be an object", RuleError)
+    need(len(value) <= LABEL_MAX,
+         f"too many match labels: {len(value)}", RuleError)
+    return tuple(sorted(_label_of(key, val) for key, val in value.items()))
 
 
 def _parse_match(value: Any) -> dict[str, Any]:
     if value is None:
         return {}
-    if not isinstance(value, Mapping):
-        raise RuleError("match must be an object")
+    need(isinstance(value, Mapping), "match must be an object", RuleError)
     extra = set(value) - _MATCH_KEYS
-    if extra:
-        raise RuleError(f"unknown match keys: {sorted(extra)}")
+    need(not extra, f"unknown match keys: {sorted(extra)}", RuleError)
     out: dict[str, Any] = {}
     if "source" in value:
-        try:
-            out["source"] = source_of(value["source"])
-        except BadEvent as exc:
-            raise RuleError(str(exc)) from exc
+        out["source"] = _wrap(source_of, value["source"])
     if "code" in value:
         code = value["code"]
-        if isinstance(code, bool) or not isinstance(code, int):
-            raise RuleError("match.code must be an integer")
-        if not 0 <= code <= CODE_MAX:
-            raise RuleError(f"match.code out of range: {code}")
+        need(isinstance(code, int) and not isinstance(code, bool),
+             "match.code must be an integer", RuleError)
+        need(0 <= code <= CODE_MAX, f"match.code out of range: {code}", RuleError)
         out["code"] = code
     if "severity" in value:
-        try:
-            out["severity"] = Severity.parse(value["severity"])
-        except BadEvent as exc:
-            raise RuleError(str(exc)) from exc
+        out["severity"] = _wrap(Severity.parse, value["severity"])
     out["labels"] = _label_pairs(value.get("labels"))
     return out
 
 
 def _parse_rule(obj: Any, where: str) -> Rule:
-    if not isinstance(obj, Mapping):
-        raise RuleError(f"{where}: rule must be an object")
+    need(isinstance(obj, Mapping), f"{where}: rule must be an object", RuleError)
     extra = set(obj) - _RULE_KEYS
-    if extra:
-        raise RuleError(f"{where}: unknown keys: {sorted(extra)}")
+    need(not extra, f"{where}: unknown keys: {sorted(extra)}", RuleError)
     name = obj.get("name")
-    if not isinstance(name, str) or _NAME.match(name) is None:
-        raise RuleError(f"{where}: bad name: {name!r}")
+    need(isinstance(name, str) and _NAME.match(name) is not None,
+         f"{where}: bad name: {name!r}", RuleError)
     window = parse_window(obj.get("window"))
     emit = obj.get("max_emit", 1)
-    if isinstance(emit, bool) or not isinstance(emit, int):
-        raise RuleError(f"{where}: max_emit must be an integer")
-    if not 0 <= emit <= EMIT_MAX:
-        raise RuleError(f"{where}: max_emit out of range: {emit}")
+    need(isinstance(emit, int) and not isinstance(emit, bool),
+         f"{where}: max_emit must be an integer", RuleError)
+    need(0 <= emit <= EMIT_MAX, f"{where}: max_emit out of range: {emit}", RuleError)
     note = obj.get("note", "")
-    if not isinstance(note, str):
-        raise RuleError(f"{where}: note must be a string")
-    if len(note.encode("utf-8")) > NOTE_MAX:
-        raise RuleError(f"{where}: note too long")
+    need(isinstance(note, str), f"{where}: note must be a string", RuleError)
+    need(len(note.encode("utf-8")) <= NOTE_MAX, f"{where}: note too long", RuleError)
     match = _parse_match(obj.get("match"))
     return Rule(
         name=name,
@@ -162,23 +152,15 @@ def _parse_rule(obj: Any, where: str) -> Rule:
 
 def _load_file(path: Path) -> tuple[Rule, ...]:
     try:
-        text = path.read_text(encoding="utf-8")
-    except OSError as exc:
+        doc = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
         raise RuleError(f"{path}: {exc}") from exc
-    try:
-        doc = json.loads(text)
-    except json.JSONDecodeError as exc:
-        raise RuleError(f"{path}: {exc}") from exc
-    if not isinstance(doc, Mapping):
-        raise RuleError(f"{path}: document must be an object")
+    need(isinstance(doc, Mapping), f"{path}: document must be an object", RuleError)
     extra = set(doc) - _DOC_KEYS
-    if extra:
-        raise RuleError(f"{path}: unknown keys: {sorted(extra)}")
-    if doc.get("schema", 1) != 1:
-        raise RuleError(f"{path}: unsupported schema")
+    need(not extra, f"{path}: unknown keys: {sorted(extra)}", RuleError)
+    need(doc.get("schema", 1) == 1, f"{path}: unsupported schema", RuleError)
     rows = doc.get("rules")
-    if not isinstance(rows, list):
-        raise RuleError(f"{path}: rules must be an array")
+    need(isinstance(rows, list), f"{path}: rules must be an array", RuleError)
     return tuple(
         _parse_rule(row, f"{path.name}#{idx}") for idx, row in enumerate(rows)
     )
@@ -197,10 +179,9 @@ def load_rules(paths: Iterable[str | Path] | str | Path) -> tuple[Rule, ...]:
         found = True
         for path in sorted(base.glob("*.json")):
             for rule in _load_file(path):
-                if rule.name in seen:
-                    raise RuleError(f"duplicate rule name: {rule.name}")
+                need(rule.name not in seen,
+                     f"duplicate rule name: {rule.name}", RuleError)
                 seen.add(rule.name)
                 out.append(rule)
-    if not found:
-        raise RuleError("no rules directory found")
+    need(found, "no rules directory found", RuleError)
     return tuple(out)

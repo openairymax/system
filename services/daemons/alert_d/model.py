@@ -16,6 +16,8 @@ from dataclasses import dataclass, replace
 from enum import IntEnum
 from typing import Any, Mapping
 
+from airylib.err import need
+
 NS = 1_000_000_000
 DEDUP_NS = 100 * 1_000_000
 AUTO_WARN_NS = 5 * 60 * NS
@@ -58,8 +60,8 @@ class Severity(IntEnum):
             if key in cls.__members__:
                 return cls[key]
         if isinstance(value, int) and not isinstance(value, bool):
-            if 0 <= value <= cls.CRITICAL:
-                return cls(value)
+            need(0 <= value <= cls.CRITICAL, f"bad severity: {value!r}", BadEvent)
+            return cls(value)
         raise BadEvent(f"bad severity: {value!r}")
 
     @property
@@ -85,12 +87,10 @@ _SOURCE_ID = {name: sid for sid, name in SOURCES.items()}
 
 
 def source_of(value: Any) -> int:
-    if isinstance(value, bool):
-        raise BadEvent("source must not be a boolean")
+    need(not isinstance(value, bool), "source must not be a boolean", BadEvent)
     if isinstance(value, int):
-        if value in SOURCES:
-            return value
-        raise BadEvent(f"unknown source id: {value}")
+        need(value in SOURCES, f"unknown source id: {value}", BadEvent)
+        return value
     if isinstance(value, str):
         key = value.strip()
         if key in _SOURCE_ID:
@@ -101,10 +101,9 @@ def source_of(value: Any) -> int:
 
 
 def _num(value: Any, low: int, high: int, name: str) -> int:
-    if isinstance(value, bool) or not isinstance(value, int):
-        raise BadEvent(f"{name} must be an integer")
-    if not low <= value <= high:
-        raise BadEvent(f"{name} out of range: {value}")
+    need(isinstance(value, int) and not isinstance(value, bool),
+         f"{name} must be an integer", BadEvent)
+    need(low <= value <= high, f"{name} out of range: {value}", BadEvent)
     return value
 
 
@@ -118,18 +117,16 @@ def clip(text: str, limit: int = MSG_MAX) -> str:
 def parse_labels(value: Any) -> tuple[tuple[str, str], ...]:
     if value is None:
         return ()
-    if not isinstance(value, Mapping):
-        raise BadEvent("labels must be an object")
-    if len(value) > LABEL_MAX:
-        raise BadEvent(f"too many labels: {len(value)}")
+    need(isinstance(value, Mapping), "labels must be an object", BadEvent)
+    need(len(value) <= LABEL_MAX, f"too many labels: {len(value)}", BadEvent)
     pairs = []
     for key, val in value.items():
-        if not isinstance(key, str) or not isinstance(val, str):
-            raise BadEvent("labels must map strings to strings")
-        if not key or len(key.encode("utf-8")) > 32:
-            raise BadEvent(f"bad label key: {key!r}")
-        if len(val.encode("utf-8")) > 64:
-            raise BadEvent(f"label value too long: {key}")
+        need(isinstance(key, str) and isinstance(val, str),
+             "labels must map strings to strings", BadEvent)
+        need(key and len(key.encode("utf-8")) <= 32,
+             f"bad label key: {key!r}", BadEvent)
+        need(len(val.encode("utf-8")) <= 64,
+             f"label value too long: {key}", BadEvent)
         pairs.append((key, val))
     return tuple(sorted(pairs))
 
@@ -154,14 +151,12 @@ class AlertEvent:
 
     @classmethod
     def build(cls, obj: Any, now: int = 0) -> "AlertEvent":
-        if not isinstance(obj, Mapping):
-            raise BadEvent("event must be an object")
+        need(isinstance(obj, Mapping), "event must be an object", BadEvent)
         stamp = obj.get("ts_ns", now)
         if stamp is None:
             stamp = now
         message = obj.get("message", "")
-        if not isinstance(message, str):
-            raise BadEvent("message must be a string")
+        need(isinstance(message, str), "message must be a string", BadEvent)
         return cls(
             ts_ns=_num(stamp, 0, TS_MAX, "ts_ns"),
             severity=Severity.parse(obj.get("severity")),

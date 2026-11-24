@@ -82,53 +82,59 @@ class Engine:
 
         key = event.key
         current = self.active.get(key)
-        if current is not None and now - current.last_ns < DEDUP_NS:
-            current.count += 1
-            current.last_ns = now
-            self.counts["deduped"] += 1
-            out.append(Action("DEDUP", current, "within dedup window"))
+        duplicate = self._duplicate(current, now)
+        if duplicate is not None:
+            out.append(duplicate)
             return out
 
-        sev = event.severity
-        if self.storm and sev < Severity.CRITICAL:
-            if not self._gap_ok(key, now):
-                self._count_hit(current, now)
-                self.counts["suppressed"] += 1
-                out.append(Action("SUPPRESS", current, "storm"))
-                return out
-        elif self.storm and sev == Severity.CRITICAL:
-            event = replace(event, message=clip(event.message, STORM_MSG_MAX))
-
-        rule = self._rule_hit(event, now)
-        if rule is not None:
+        blocked = self._block(self._calm(event), key, now)
+        if blocked is not None:
             self._count_hit(current, now)
             self.counts["suppressed"] += 1
-            out.append(Action("SUPPRESS", current, rule.name))
+            out.append(Action("SUPPRESS", current, blocked))
             return out
 
-        if current is not None:
-            current.count += 1
-            current.last_ns = now
-            raise_sev(current, sev)
-            if current.state == PENDING:
-                current.state = FIRING
-                current.deadline_ns = 0
-                kind = "REFIRE"
-                note = "recurrence before confirmation"
-            else:
-                kind = "NOTIFY"
-                note = "alert refreshed"
-        else:
-            current = make_alert(event, now)
-            self.active[key] = current
-            kind = "EMIT"
-            note = ""
-
+        out.append(self._advance(self._calm(event), current, key, now))
         self.counts["emitted"] += 1
         if self.storm:
             self.gap[key] = now
-        out.append(Action(kind, current, note))
         return out
+
+    def _duplicate(self, current: Alert | None, now: int) -> Action | None:
+        if current is None or now - current.last_ns >= DEDUP_NS:
+            return None
+        current.count += 1
+        current.last_ns = now
+        self.counts["deduped"] += 1
+        return Action("DEDUP", current, "within dedup window")
+
+    def _calm(self, event: AlertEvent) -> AlertEvent:
+        # 风暴期只让 CRITICAL 透出，且消息截短，避免刷屏占满归档。
+        if self.storm and event.severity == Severity.CRITICAL:
+            return replace(event, message=clip(event.message, STORM_MSG_MAX))
+        return event
+
+    def _block(self, event: AlertEvent, key: str, now: int) -> str | None:
+        # 风暴闸门优先于规则抑制：闸门拦下的条目不该消耗规则配额。
+        if self.storm and not self._gap_ok(key, now):
+            return "storm"
+        rule = self._rule_hit(event, now)
+        return None if rule is None else rule.name
+
+    def _advance(self, event: AlertEvent, current: Alert | None, key: str,
+                 now: int) -> Action:
+        if current is None:
+            alert = make_alert(event, now)
+            self.active[key] = alert
+            return Action("EMIT", alert, "")
+        current.count += 1
+        current.last_ns = now
+        raise_sev(current, event.severity)
+        if current.state != PENDING:
+            return Action("NOTIFY", current, "alert refreshed")
+        current.state = FIRING
+        current.deadline_ns = 0
+        return Action("REFIRE", current, "recurrence before confirmation")
 
     def recover(self, event: AlertEvent, now: int) -> list[Action]:
         current = self.active.get(event.key)

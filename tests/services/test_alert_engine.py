@@ -13,6 +13,7 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "services"))
 sys.path.insert(0, str(ROOT / "services" / "daemons"))
 
 from alert_d.engine import Engine  # noqa: E402

@@ -17,7 +17,7 @@ import socket
 import sys
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from .model import BadEvent, NS, SOURCES
 from .rules import RuleError, load_rules
@@ -133,22 +133,31 @@ def cmd_history(args: argparse.Namespace) -> int:
     return E_OK
 
 
-def cmd_ack(args: argparse.Namespace) -> int:
+def _reply(args: argparse.Namespace, build: Callable[[], dict[str, Any]]
+           ) -> tuple[dict[str, Any], int]:
+    """投递一次请求并回写应答；参数与网络侧错误按是否可重试分流出口码。"""
     try:
-        reply = _request(args.socket, {
-            "kind": "ack",
-            "alert_id": args.alert_id,
-            "operator": args.operator,
-            "comment": args.comment,
-        })
+        reply = _request(args.socket, build())
     except Remote as exc:
         _dump({"error": str(exc)})
-        return E_REJECT
+        return {}, E_REJECT
     except BadEvent as exc:
         _dump({"error": str(exc)})
-        return E_MISS
+        return {}, E_MISS
     _dump(reply)
-    return E_OK if reply.get("action") == "ACK" else E_REJECT
+    return reply, E_OK
+
+
+def cmd_ack(args: argparse.Namespace) -> int:
+    reply, code = _reply(args, lambda: {
+        "kind": "ack",
+        "alert_id": args.alert_id,
+        "operator": args.operator,
+        "comment": args.comment,
+    })
+    if code == E_OK and reply.get("action") != "ACK":
+        return E_REJECT
+    return code
 
 
 def _event(args: argparse.Namespace) -> dict[str, Any]:
@@ -167,16 +176,7 @@ def _event(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def cmd_send(args: argparse.Namespace) -> int:
-    try:
-        reply = _request(args.socket, _event(args))
-    except Remote as exc:
-        _dump({"error": str(exc)})
-        return E_REJECT
-    except BadEvent as exc:
-        _dump({"error": str(exc)})
-        return E_MISS
-    _dump(reply)
-    return E_OK
+    return _reply(args, lambda: _event(args))[1]
 
 
 def cmd_rules(args: argparse.Namespace) -> int:
