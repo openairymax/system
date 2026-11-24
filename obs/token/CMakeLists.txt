@@ -29,9 +29,11 @@ if(NOT EXISTS "${AIRY_HDR_ROOT}/linux/airymax/token.h")
 	message(FATAL_ERROR "导出树缺少 linux/airymax/token.h")
 endif()
 
-add_executable(airy-token airy_token.c)
+add_executable(airy-token airy_token.c ../common/obs_view.c)
 target_compile_options(airy-token PRIVATE
 	-Wall -Wextra -Werror -D_GNU_SOURCE)
-target_include_directories(airy-token PRIVATE ${AIRY_HDR_ROOT})
+target_include_directories(airy-token PRIVATE
+	${AIRY_HDR_ROOT}
+	${CMAKE_CURRENT_SOURCE_DIR}/../common)
 
 install(TARGETS airy-token RUNTIME DESTINATION bin)
