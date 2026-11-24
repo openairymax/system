@@ -132,5 +132,17 @@ install(PROGRAMS
 	bin/airy-update
 	bin/airy-alertd
 	bin/airy-alert
+	bin/airy-incident
 	DESTINATION bin
+)
+
+# 事件响应（P-14）：台账包进 site-packages，运行手册进 share，入口进 bin。
+# 手册与包分开安装，现场可按需替换运行时手册而不动代码。
+install(DIRECTORY ops/incident
+	DESTINATION ${Python3_SITELIB}
+	PATTERN "__pycache__" EXCLUDE
+	PATTERN "runbooks" EXCLUDE
+)
+install(DIRECTORY ops/incident/runbooks
+	DESTINATION share/airymax/incident/runbooks
 )
