@@ -124,28 +124,44 @@ def cmd_list(args: argparse.Namespace, store: Store) -> int:
     return OK
 
 
+def _line(label: str, value: Any, blank: str = "未记录") -> str:
+    return f"{label}\t{value or blank}"
+
+
+def _detail(inc: Any) -> list[str]:
+    """事件主体字段，缺项统一填占位符，避免空行难辨。"""
+    return [
+        f"编号\t{inc.incident_id}",
+        f"级别\t{inc.severity.value}",
+        f"类别\t{inc.category.value}",
+        f"状态\t{inc.status.value}",
+        f"标题\t{inc.title}",
+        f"检测\t{iso(inc.detected_at)}",
+        _line("恢复", iso(inc.resolved_at) if inc.resolved_at else "", "未恢复"),
+        _line("来源", inc.source),
+        _line("根因", inc.root_cause),
+        _line("告警", " ".join(inc.alerts), "无"),
+        _line("Agent", " ".join(str(i) for i in inc.affected_agents), "无"),
+        _line("daemon", " ".join(inc.affected_daemons), "无"),
+        _line("复盘", inc.postmortem.get("report_id") if inc.postmortem else "",
+              "无"),
+    ]
+
+
+def _timeline(inc: Any) -> list[str]:
+    return [
+        f"  {row.get('ts')} {row.get('event')} {row.get('actor')}"
+        f" {row.get('detail') or ''}".rstrip()
+        for row in inc.timeline
+    ]
+
+
 def cmd_show(args: argparse.Namespace, store: Store) -> int:
     inc = store.load(args.id)
     if getattr(args, "json", False):
         print(_dump(inc.to_json()))
         return OK
-    print(f"编号\t{inc.incident_id}")
-    print(f"级别\t{inc.severity.value}")
-    print(f"类别\t{inc.category.value}")
-    print(f"状态\t{inc.status.value}")
-    print(f"标题\t{inc.title}")
-    print(f"检测\t{iso(inc.detected_at)}")
-    print(f"恢复\t{iso(inc.resolved_at) if inc.resolved_at else '未恢复'}")
-    print(f"来源\t{inc.source or '未记录'}")
-    print(f"根因\t{inc.root_cause or '未记录'}")
-    print(f"告警\t{' '.join(inc.alerts) or '无'}")
-    print(f"Agent\t{' '.join(str(i) for i in inc.affected_agents) or '无'}")
-    print(f"daemon\t{' '.join(inc.affected_daemons) or '无'}")
-    print(f"复盘\t{inc.postmortem.get('report_id') if inc.postmortem else '无'}")
-    print("时间线")
-    for row in inc.timeline:
-        print(f"  {row.get('ts')} {row.get('event')} {row.get('actor')}"
-              f" {row.get('detail') or ''}".rstrip())
+    print("\n".join(_detail(inc) + ["时间线"] + _timeline(inc)))
     return OK
 
 

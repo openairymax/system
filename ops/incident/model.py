@@ -18,6 +18,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Iterable, Mapping
 
+from airylib.err import need
+
 SCHEMA = 1
 NS = 1_000_000_000
 TITLE_MAX = 120
@@ -56,12 +58,10 @@ class Severity(str, Enum):
     def parse(cls, value: Any) -> "Severity":
         if isinstance(value, cls):
             return value
-        if isinstance(value, bool):
-            raise BadInput("severity 不接受布尔值")
+        need(not isinstance(value, bool), "severity 不接受布尔值", BadInput)
         if isinstance(value, int):
-            if 0 <= value < len(cls):
-                return list(cls)[value]
-            raise BadInput(f"severity 越界: {value}")
+            need(0 <= value < len(cls), f"severity 越界: {value}", BadInput)
+            return list(cls)[value]
         if isinstance(value, str):
             text = value.strip().upper()
             for item in cls:
@@ -164,19 +164,16 @@ def now_ns() -> int:
 
 def iso(stamp: int) -> str:
     """纳秒时间戳渲染成 UTC ISO 串，小数位固定九位。"""
-    if stamp < 0:
-        raise BadInput(f"时间戳为负: {stamp}")
+    need(stamp >= 0, f"时间戳为负: {stamp}", BadInput)
     secs, frac = divmod(stamp, NS)
     head = time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(secs))
     return f"{head}.{frac:09d}Z"
 
 
 def parse_iso(text: str) -> int:
-    if not isinstance(text, str):
-        raise BadInput(f"时间戳必须是字符串: {text!r}")
+    need(isinstance(text, str), f"时间戳必须是字符串: {text!r}", BadInput)
     hit = _ISO.match(text)
-    if hit is None:
-        raise BadInput(f"时间戳格式不合法: {text!r}")
+    need(hit is not None, f"时间戳格式不合法: {text!r}", BadInput)
     year, mon, day, hour, minute, sec = (int(hit.group(i))
                                          for i in range(1, 7))
     frac = int((hit.group(7) or "").ljust(9, "0") or 0)
@@ -189,54 +186,89 @@ def day_key(stamp: int) -> str:
 
 
 def make_id(day: str, seq: int) -> str:
-    if not 0 < seq < 1000:
-        raise BadInput(f"当日序号越界: {seq}")
+    need(0 < seq < 1000, f"当日序号越界: {seq}", BadInput)
     return f"INC-{day}-{seq:03d}"
 
 
 def check_id(ident: Any) -> str:
-    if not isinstance(ident, str) or _ID.match(ident) is None:
-        raise BadInput(f"事件编号不合法: {ident!r}")
+    need(isinstance(ident, str) and _ID.match(ident) is not None,
+         f"事件编号不合法: {ident!r}", BadInput)
     return ident
 
 
 def text_of(value: Any, name: str, limit: int) -> str:
-    if not isinstance(value, str):
-        raise BadInput(f"{name} 必须是字符串")
+    need(isinstance(value, str), f"{name} 必须是字符串", BadInput)
     body = value.strip()
-    if not body:
-        raise BadInput(f"{name} 不能为空")
-    if len(body) > limit:
-        raise BadInput(f"{name} 超过 {limit} 字符")
+    need(body, f"{name} 不能为空", BadInput)
+    need(len(body) <= limit, f"{name} 超过 {limit} 字符", BadInput)
     return body
 
 
-def names_of(value: Iterable[Any], name: str) -> list[str]:
+def _seq(value: Any, name: str) -> list[Any]:
     if value is None:
         return []
-    if isinstance(value, (str, bytes)):
-        raise BadInput(f"{name} 必须是列表")
+    need(not isinstance(value, (str, bytes)), f"{name} 必须是列表", BadInput)
+    return list(value)
+
+
+def _dedup(items: Iterable[str]) -> list[str]:
     out: list[str] = []
-    for item in value:
-        body = text_of(item, name, 64)
+    for body in items:
         if body not in out:
             out.append(body)
     return out
+
+
+def names_of(value: Iterable[Any], name: str) -> list[str]:
+    return _dedup(text_of(item, name, 64) for item in _seq(value, name))
 
 
 def ids_of(value: Iterable[Any], name: str) -> list[str]:
+    out: list[str] = []
+    for item in _seq(value, name):
+        need(isinstance(item, str) and item.strip(), f"{name} 含空编号",
+             BadInput)
+        out.append(item.strip())
+    return _dedup(out)
+
+
+_LIST_KEYS = ("alerts", "affected_agents", "affected_daemons")
+_TIME_KEYS = ("detected_at", "triaged_at", "responded_at", "recovered_at",
+              "resolved_at")
+
+
+def _array_of(doc: Mapping[str, Any], key: str) -> list[Any]:
+    value = doc.get(key)
     if value is None:
         return []
-    if isinstance(value, (str, bytes)):
-        raise BadInput(f"{name} 必须是列表")
-    out: list[str] = []
-    for item in value:
-        if not isinstance(item, str) or not item.strip():
-            raise BadInput(f"{name} 含空编号")
-        body = item.strip()
-        if body not in out:
-            out.append(body)
+    need(isinstance(value, list), f"{key} 必须是数组", BadInput)
+    return value
+
+
+def _rows_of(doc: Mapping[str, Any], key: str) -> list[dict[str, Any]]:
+    rows = _array_of(doc, key)
+    for row in rows:
+        need(isinstance(row, Mapping), f"{key} 含非对象项", BadInput)
+    return [dict(row) for row in rows]
+
+
+def _lists_of(doc: Mapping[str, Any]) -> list[list[Any]]:
+    return [_array_of(doc, key) for key in _LIST_KEYS]
+
+
+def _stamps_of(doc: Mapping[str, Any]) -> dict[str, int]:
+    out: dict[str, int] = {}
+    for slot in _TIME_KEYS:
+        raw = doc.get(slot)
+        out[slot] = parse_iso(raw) if raw else 0
     return out
+
+
+def _memo_of(doc: Mapping[str, Any]) -> dict[str, Any] | None:
+    memo = doc.get("postmortem")
+    need(memo is None or isinstance(memo, Mapping), "postmortem 必须是对象",
+         BadInput)
+    return dict(memo) if memo is not None else None
 
 
 @dataclass
@@ -266,11 +298,10 @@ class Incident:
         self.category = Category.parse(self.category)
         self.status = State.parse(self.status)
         self.title = text_of(self.title, "title", TITLE_MAX)
-        if self.detected_at <= 0:
-            raise BadInput("detected_at 缺失")
+        need(self.detected_at > 0, "detected_at 缺失", BadInput)
         self.root_cause = str(self.root_cause or "").strip()
-        if len(self.root_cause) > NOTE_MAX:
-            raise BadInput(f"root_cause 超过 {NOTE_MAX} 字符")
+        need(len(self.root_cause) <= NOTE_MAX,
+             f"root_cause 超过 {NOTE_MAX} 字符", BadInput)
         self.alerts = ids_of(self.alerts, "alerts")
         self.affected_daemons = names_of(self.affected_daemons,
                                          "affected_daemons")
@@ -279,10 +310,9 @@ class Incident:
     def _agents(self) -> list[int]:
         out: list[int] = []
         for item in self.affected_agents or ():
-            if isinstance(item, bool) or not isinstance(item, int):
-                raise BadInput("affected_agents 必须是整数列表")
-            if item < 0:
-                raise BadInput("affected_agents 不能为负")
+            ok = isinstance(item, int) and not isinstance(item, bool)
+            need(ok, "affected_agents 必须是整数列表", BadInput)
+            need(item >= 0, "affected_agents 不能为负", BadInput)
             if item not in out:
                 out.append(item)
         return sorted(out)
@@ -298,10 +328,9 @@ class Incident:
                detail: str = "") -> None:
         """按状态机迁移一次，非法边抛 BadState。"""
         want = State.parse(target)
-        if want not in ALLOWED[self.status]:
-            raise BadState(
-                f"{self.incident_id}: {self.status.value} 不能迁移到"
-                f" {want.value}")
+        need(want in ALLOWED[self.status],
+             f"{self.incident_id}: {self.status.value} 不能迁移到 {want.value}",
+             BadState)
         who = text_of(actor, "actor", 64)
         if want is REOPENED:
             self.resolved_at = 0
@@ -313,8 +342,8 @@ class Incident:
 
     def action(self, name: str, actor: str, stamp: int,
                result: str = "success", detail: str = "") -> None:
-        if result not in ("success", "failed"):
-            raise BadInput(f"action 结果只能是 success/failed: {result}")
+        need(result in ("success", "failed"),
+             f"action 结果只能是 success/failed: {result}", BadInput)
         row = {
             "action": text_of(name, "action", 64),
             "actor": text_of(actor, "actor", 64),
@@ -358,38 +387,11 @@ class Incident:
 
     @classmethod
     def from_json(cls, doc: Mapping[str, Any]) -> "Incident":
-        if not isinstance(doc, Mapping):
-            raise BadInput("事件记录必须是对象")
-        if doc.get("schema") != SCHEMA:
-            raise BadInput(f"事件记录 schema 不支持: {doc.get('schema')}")
-        stamps = {}
-        for slot in ("detected_at", "triaged_at", "responded_at",
-                     "recovered_at", "resolved_at"):
-            raw = doc.get(slot)
-            stamps[slot] = parse_iso(raw) if raw else 0
-        actions = doc.get("response_actions")
-        if actions is None:
-            actions = []
-        elif not isinstance(actions, list):
-            raise BadInput("response_actions 必须是数组")
-        for row in actions:
-            if not isinstance(row, Mapping):
-                raise BadInput("response_actions 含非对象项")
-        timeline = doc.get("timeline")
-        if timeline is None:
-            timeline = []
-        elif not isinstance(timeline, list):
-            raise BadInput("timeline 必须是数组")
-        for row in timeline:
-            if not isinstance(row, Mapping):
-                raise BadInput("timeline 含非对象项")
-        for key in ("alerts", "affected_agents", "affected_daemons"):
-            value = doc.get(key)
-            if value is not None and not isinstance(value, list):
-                raise BadInput(f"{key} 必须是数组")
-        memo = doc.get("postmortem")
-        if memo is not None and not isinstance(memo, Mapping):
-            raise BadInput("postmortem 必须是对象")
+        need(isinstance(doc, Mapping), "事件记录必须是对象", BadInput)
+        need(doc.get("schema") == SCHEMA,
+             f"事件记录 schema 不支持: {doc.get('schema')}", BadInput)
+        stamps = _stamps_of(doc)
+        alerts, agents, daemons = _lists_of(doc)
         return cls(
             incident_id=doc.get("incident_id"),
             severity=doc.get("severity"),
@@ -403,12 +405,12 @@ class Incident:
             resolved_at=stamps["resolved_at"],
             root_cause=str(doc.get("root_cause") or ""),
             source=str(doc.get("source") or ""),
-            timeline=[dict(row) for row in timeline],
-            alerts=doc.get("alerts") or [],
-            affected_agents=doc.get("affected_agents") or [],
-            affected_daemons=doc.get("affected_daemons") or [],
-            response_actions=[dict(row) for row in actions],
-            postmortem=dict(memo) if memo is not None else None,
+            timeline=_rows_of(doc, "timeline"),
+            alerts=alerts,
+            affected_agents=agents,
+            affected_daemons=daemons,
+            response_actions=_rows_of(doc, "response_actions"),
+            postmortem=_memo_of(doc),
         )
 
 
