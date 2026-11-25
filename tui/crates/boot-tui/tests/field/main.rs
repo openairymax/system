@@ -74,7 +74,12 @@ const RELEASE_CASES: [&str; 4] = ["probe-stale", "render-slow", "tty-small", "di
 /// `boot-ime` 常驻进程与 `asr-gateway` 通道属施工图纸 N2／N3 泳道（D27 起），
 /// 本版不随包；对应四格在实机上只能记 `unavailable`，不计入覆盖。通道随包
 /// 的那次提交把名字移入 `RELEASE_CASES`，其余不变。
-const DEFERRED: [&str; 4] = ["ime-recover", "ime-no-dict", "asr-unavailable", "inject-unknown"];
+const DEFERRED: [&str; 4] = [
+    "ime-recover",
+    "ime-no-dict",
+    "asr-unavailable",
+    "inject-unknown",
+];
 /// 本版声明支持的三条架构。
 const ARCHES: [&str; 3] = ["x86_64", "aarch64", "riscv64"];
 /// 发版必须给出实机读数的两条架构；riscv64 用户态本版移出范围。
