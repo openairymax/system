@@ -31,6 +31,13 @@ pub const DIR: &str = "/run/airymaxos/session";
 /// 内核命令行里跳过选择、直接进桌面的开关。
 pub const OFF_TOKEN: &str = "airymax.session=off";
 
+/// 输入设备类目录；键盘是否在位由它下面的键位图回答。
+pub const INPUTS: &str = "/sys/class/input";
+
+/// `capabilities/key` 位图里的 KEY_A 位号，与 `ci/lib/hwcap.py` 的 input
+/// 判据同源：有字母键才算键盘，电源键、休眠键之类不算。
+const KEY_A: u32 = 30;
+
 /// 选择结果。
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Choice {
@@ -64,7 +71,7 @@ impl Choice {
 pub struct Opts {
     /// 等待按键的秒数；0 表示立即取默认值。
     pub timeout: u64,
-    /// 超时、没有终端或命令行要求跳过时的结论。
+    /// 超时或没有终端时的结论；命令行跳过与无键盘一律进桌面。
     pub default: Choice,
     /// 状态目录。
     pub dir: PathBuf,
@@ -127,6 +134,32 @@ pub fn cmdline_off(line: &str) -> bool {
     line.split_whitespace().any(|word| word == OFF_TOKEN)
 }
 
+/// 键盘是否在位；`None` 表示输入类读不到，无从判断。
+///
+/// 拔掉键盘的机器上 tty1 仍然存在，若照常倒计时，用户什么也按不了，桌面
+/// 却被白等两分钟（A.2.7）。判据只认内核的键位图：`/sys/class/input` 可读
+/// 而没有任何设备带字母键，才算「无键盘」；读不到输入类时保留等待，因为
+/// 那可能是裁剪过的宿主，贸然跳过会拿走用户本该有的选择。
+pub fn keyboard_at(dir: &Path) -> Option<bool> {
+    let entries = fs::read_dir(dir).ok()?;
+    let mut keyboard = false;
+    for entry in entries.flatten() {
+        let caps = entry.path().join("capabilities/key");
+        if let Ok(text) = fs::read_to_string(caps) {
+            keyboard |= key_bit(&text, KEY_A);
+        }
+    }
+    Some(keyboard)
+}
+
+/// 内核按 `%*pb` 打印键位图：空格分字，最后一个字是最低位。
+fn key_bit(text: &str, bit: u32) -> bool {
+    let words: Vec<&str> = text.split_whitespace().collect();
+    let idx = words.len().checked_sub(1 + (bit / 64) as usize);
+    idx.and_then(|i| u64::from_str_radix(words[i], 16).ok())
+        .is_some_and(|word| (word >> (bit % 64)) & 1 == 1)
+}
+
 /// 一个按键对应哪个选择；不构成选择的键返回 `None`。
 ///
 /// `Ctrl-C`（0x03）必须落在这里而不是由终端转成 SIGINT：选择器在 TUI 的
@@ -155,7 +188,10 @@ pub fn write_choice(dir: &Path, choice: Choice) -> io::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{cmdline_off, countdown_line, judge, parse_args, write_choice, Choice, Opts, DIR};
+    use super::{
+        cmdline_off, countdown_line, judge, key_bit, keyboard_at, parse_args, write_choice, Choice,
+        Opts, DIR, KEY_A,
+    };
     use std::path::PathBuf;
 
     fn args(words: &[&str]) -> Vec<String> {
@@ -206,6 +242,29 @@ mod tests {
         assert!(!cmdline_off(""));
         assert!(!cmdline_off("airymax.session=offx"));
         assert!(!cmdline_off("xairymax.session=off"));
+    }
+
+    #[test]
+    fn the_keyboard_bit_follows_the_kernel_word_order() {
+        assert!(key_bit("40000000", KEY_A));
+        assert!(key_bit("0 40000000\n", KEY_A));
+        assert!(!key_bit("20000000", KEY_A));
+        assert!(!key_bit("40000000 0", KEY_A));
+        assert!(!key_bit("", KEY_A));
+        assert!(!key_bit("zz", KEY_A));
+    }
+
+    #[test]
+    fn a_missing_keyboard_is_told_apart_from_an_unreadable_class() {
+        let dir = scratch("kbd");
+        let caps = dir.join("input0/capabilities");
+        std::fs::create_dir_all(&caps).expect("夹具");
+        std::fs::write(caps.join("key"), "0\n").expect("写入");
+        assert_eq!(keyboard_at(&dir), Some(false), "只有电源键不算键盘");
+        std::fs::write(caps.join("key"), "40000000\n").expect("写入");
+        assert_eq!(keyboard_at(&dir), Some(true), "字母键在位");
+        std::fs::remove_dir_all(&dir).ok();
+        assert_eq!(keyboard_at(&dir), None, "读不到输入类不下结论");
     }
 
     #[test]

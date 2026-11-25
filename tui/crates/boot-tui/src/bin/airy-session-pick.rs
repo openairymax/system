@@ -8,6 +8,9 @@
 // `/run/airymaxos/session/desired`，随后退出；TUI 分支在这里显式拉起
 // `boot-tui.service`，GUI 分支什么都不做（lightdm 由 graphical.target 拉起）。
 //
+// 无键盘的机器不占这 120 秒：tty1 仍在，但没人能按键，白等只会拖慢开机
+// （§14.1 A.2.7）。判据取内核键位图，读不到输入类时仍按原样等待。
+//
 // 判定、写盘与参数解析都在 `boot_tui::pick` 里，本文件只做三件事：
 // 读 `/proc/cmdline`、驱动 tty1 的倒计时、把结论记进 journal。终端一定被
 // 恢复成原样，输入队列一定被清空——否则残留的 `T` 会被 getty 或桌面收走。
@@ -55,11 +58,14 @@ fn main() -> ExitCode {
     ExitCode::SUCCESS
 }
 
-/// 命令行开关优先，其次交互；两者都拿不到就取默认。
+/// 命令行开关优先，其次无键盘，再次交互；都拿不到就取默认。
 fn decide(opts: &Opts) -> (Choice, &'static str) {
     let cmdline = fs::read_to_string(root::path("/proc/cmdline")).unwrap_or_default();
     if pick::cmdline_off(&cmdline) {
         return (Choice::Gui, "cmdline");
+    }
+    if pick::keyboard_at(&root::path(pick::INPUTS)) == Some(false) {
+        return (Choice::Gui, "no-keyboard");
     }
     interactive(opts.timeout, opts.default)
 }

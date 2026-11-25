@@ -222,6 +222,37 @@ fn 命令行旁路强制桌面() {
 }
 
 #[test]
+fn 无键盘直接进桌面() {
+    let root = Root::new("pick-nokbd");
+    root.write("sys/class/input/input0/capabilities/key", "0\n");
+    let dir = root.session();
+    let out = root.pick(&["--dir", &dir, "--timeout", "120", "--default", "tui"]);
+    expect_code(&out, 0, "无键盘直接进桌面");
+    expect_page(&root, "desired", "gui");
+    assert!(
+        stderr(&out).contains("reason=no-keyboard"),
+        "期望 journal 记 reason=no-keyboard，实际 stderr={}",
+        stderr(&out)
+    );
+    expect_no_start(&root);
+}
+
+#[test]
+fn 键盘在位不跳过选择() {
+    let root = Root::new("pick-kbd");
+    root.write("sys/class/input/input0/capabilities/key", "40000000\n");
+    let dir = root.session();
+    let out = root.pick(&["--dir", &dir, "--timeout", "0", "--default", "tui"]);
+    expect_code(&out, 0, "键盘在位");
+    expect_page(&root, "desired", "tui");
+    assert!(
+        !stderr(&out).contains("no-keyboard"),
+        "有键盘时不得走跳过分支，实际 stderr={}",
+        stderr(&out)
+    );
+}
+
+#[test]
 fn 终端切到桌面成功() {
     let root = Root::new("to-gui");
     root.seed_page("mode", "tui");
