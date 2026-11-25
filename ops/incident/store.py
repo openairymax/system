@@ -153,23 +153,25 @@ class Store:
         """按保留期挑出可归档记录；安全事件另有更长的保留期。"""
         if days < 1 or sec_days < 1:
             raise BadInput("保留天数必须 >= 1")
-        plain = stamp - days * DAY
-        safe = stamp - sec_days * DAY
-        picked = []
-        for inc in self.rows():
-            if inc.status not in TERMINAL:
-                continue
-            edge = safe if inc.category is Category.SECURITY else plain
-            if (inc.resolved_at or inc.detected_at) < edge:
-                picked.append(inc)
+        picked = self._expired(stamp - days * DAY, stamp - sec_days * DAY)
         if not apply:
             return picked, []
+        return picked, self._retire(picked, stamp)
+
+    def _expired(self, plain: int, safe: int) -> list[Incident]:
+        """已收尾且越过各自保留期的记录；安全类按更长的界。"""
+        return [inc for inc in self.rows()
+                if inc.status in TERMINAL
+                and (inc.resolved_at or inc.detected_at)
+                < (safe if inc.category is Category.SECURITY else plain)]
+
+    def _retire(self, picked: list[Incident], stamp: int) -> list[str]:
         moved: list[str] = []
         for inc in picked:
             self._archive(inc, stamp)
             self._path(inc.incident_id).unlink()
             moved.append(inc.incident_id)
-        return picked, moved
+        return moved
 
     def _archive(self, inc: Incident, stamp: int) -> None:
         self._ensure()
