@@ -7,7 +7,7 @@
 # 在 agentrt.target 就绪后校验内核、控制面与内存子系统的真实状态：
 #   1. 内核版本可获取；
 #   2. agentrt.target 已启用时须处于 active，未启用时记跳过；
-#   3. 已安装的 agentrt daemon 全部处于 active；
+#   3. 已启用的 agentrt daemon 处于 active，未启用或无载荷时跳过；
 #   4. 具备 PMEM 设备时 memoryrovol/pmem 已挂载，无设备时跳过；
 #   5. 内核暴露 lru_gen 时 MGLRU 已启用，未暴露时跳过；
 #   6. PSI 三个压力文件可读。
@@ -28,9 +28,13 @@
 # 逐项结论仍写 stdout 供 journal 归因；屏幕上的结论汇总由 ui.sh 落盘，
 # pass/fail/skip 三项是真实计数，不是文案。
 #
-# 第 3 项按「unit 的 ExecStart 载荷是否存在」分档：0.0.3 只交付 unit 接口面，
-# daemon 可执行体属于另一个子仓，尚未纳入本版镜像。载荷缺失记跳过（不适用），
-# 载荷在而进程不在记失败，否则「本版不交付」会被误报成「运行故障」。
+# 第 3 项与第 2 项同构，按「载荷是否存在、单元是否启用」分三档：0.0.3 只
+# 交付 unit 接口面，0.0.5 起随包交付 config/logger/macro 三个可执行体，其余
+# 九个仍属 0.1.x。载荷缺失记跳过（本版不交付）；载荷在而单元被
+# 90-airymax.preset 钉在 disabled 且未启用记跳过（不适用）；只有单元已启用
+# 却不在 active 才记失败。若沿用「载荷在而进程不在即失败」，本版出厂镜像
+# 会因三个已交付但按策略关闭的守护而整机 degraded，桌面探针在第 8 阶段
+# 即判负——这与第 2 项要避免的是同一类误报。
 #
 # 失败数达到阈值且存在 /var/lib/agentrt/.pending-upgrade 时执行
 # 原子回滚；回滚工具缺失按 ENOTSUP 显式降级并保留标记，不伪造
@@ -123,22 +127,24 @@ daemon_binary() {
 }
 
 check_daemons() {
-    local name unit bin down=0 absent=0
+    local name unit bin down=0 absent=0 off=0
     for name in "${DAEMONS[@]}"; do
         unit="agentrt-${name}.service"
         bin=$(daemon_binary "$unit")
         if [[ -z $bin || $bin == '(null)' || ! -x $bin ]]; then
             absent=$((absent + 1))
+        elif ! systemctl is-enabled --quiet "$unit" 2>/dev/null; then
+            off=$((off + 1))
         elif ! systemctl is-active --quiet "$unit"; then
             down=$((down + 1))
         fi
     done
-    if ((down == 0 && absent == 0)); then
+    if ((down == 0 && absent == 0 && off == 0)); then
         mark_pass 3 "${#DAEMONS[@]} daemons"
     elif ((down == 0)); then
-        mark_skip 3 daemons "${absent} without payload"
+        mark_skip 3 daemons "${absent} without payload, ${off} disabled"
     else
-        mark_fail 3 daemons "${down} down, ${absent} without payload"
+        mark_fail 3 daemons "${down} down, ${absent} without payload, ${off} disabled"
     fi
 }
 

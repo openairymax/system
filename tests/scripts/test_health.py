@@ -41,6 +41,10 @@ case "${1:-}" in
         if [[ ${FAKE_TARGET_DISABLED:-0} == 1 && ${3:-} == agentrt.target ]]; then
             exit 1
         fi
+        # 载荷已交付但单元按 preset 钉在 disabled：与 target 同档记不适用。
+        case " ${FAKE_DISABLED:-} " in
+            *" ${3:-} "*) exit 1 ;;
+        esac
         ;;
     is-active)
         [[ ${2:-} == --quiet ]] || exit 2
@@ -248,6 +252,21 @@ class CheckCase(HealthCase):
         res = self.run_check(FAKE_DOWN="agentrt-sched.service")
         self.assertEqual(res.returncode, 1, res.stderr)
         self.assertIn("1 down, 1 without payload", res.stderr)
+
+    def test_payload_disabled(self) -> None:
+        """载荷已交付但单元按策略关闭：记不适用，不产生失败。"""
+        delivered = {"config", "logger", "macro-superv"}
+        for name in DAEMONS:
+            if name not in delivered:
+                (self.sbin / f"{name}_d").unlink()
+        res = self.run_check(
+            FAKE_DISABLED="agentrt-config.service agentrt-logger.service "
+                          "agentrt-macro-superv.service",
+            FAKE_TARGET_DISABLED="1",
+        )
+        self.assertEqual(res.returncode, 0, res.stderr)
+        self.assertIn("9 without payload, 3 disabled", res.stdout)
+        self.assertIn("fail=0", res.stdout)
 
     def test_mglru_on(self) -> None:
         self.mglru("0x0007")
