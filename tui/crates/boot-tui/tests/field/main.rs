@@ -64,6 +64,17 @@ const CASES: [&str; 8] = [
     "tty-small",
     "display-zh",
 ];
+/// 0.0.5 出厂能力面可触发的格。
+///
+/// 本版随包只有 `boot-tui`、`airy-session-pick`、`airy-session-mode` 三个
+/// 可执行文件，输入面是键盘单通道；这四格都能在该能力面上直接触发。
+const RELEASE_CASES: [&str; 4] = ["probe-stale", "render-slow", "tty-small", "display-zh"];
+/// 随 IME／ASR 通道交付的四格。
+///
+/// `boot-ime` 常驻进程与 `asr-gateway` 通道属施工图纸 N2／N3 泳道（D27 起），
+/// 本版不随包；对应四格在实机上只能记 `unavailable`，不计入覆盖。通道随包
+/// 的那次提交把名字移入 `RELEASE_CASES`，其余不变。
+const DEFERRED: [&str; 4] = ["ime-recover", "ime-no-dict", "asr-unavailable", "inject-unknown"];
 /// 本版声明支持的三条架构。
 const ARCHES: [&str; 3] = ["x86_64", "aarch64", "riscv64"];
 /// 发版必须给出实机读数的两条架构；riscv64 用户态本版移出范围。
@@ -254,10 +265,13 @@ fn bundle(dir: &Path) -> Result<Vec<Record>, String> {
 }
 
 /// 发版覆盖还差哪些格；只认实机且判定的记录。
+///
+/// 覆盖集是 `RELEASE_CASES` 而不是整张矩阵：本版能力面触达不到的格记多少
+/// 条 `unavailable` 也不会被算成通过。
 fn missing(records: &[Record]) -> Vec<String> {
     let mut gaps = Vec::new();
     for arch in RELEASE_ARCH {
-        for case in CASES {
+        for case in RELEASE_CASES {
             let hit = records.iter().any(|rec| {
                 rec.word("evidence") == "field"
                     && rec.word("arch") == arch
@@ -444,15 +458,27 @@ fn a_failing_result_fails_the_bundle() {
 }
 
 #[test]
-fn coverage_needs_every_case_on_both_arches() {
-    assert_eq!(missing(&[]).len(), RELEASE_ARCH.len() * CASES.len());
+fn coverage_needs_every_release_case_on_both_arches() {
+    assert_eq!(missing(&[]).len(), RELEASE_ARCH.len() * RELEASE_CASES.len());
     let mut records = Vec::new();
     for arch in RELEASE_ARCH {
-        for case in CASES {
+        for case in RELEASE_CASES {
             records.push(forged(case, arch));
         }
     }
     assert!(judge(&records).is_empty(), "{:?}", judge(&records));
+}
+
+#[test]
+fn deferred_cases_are_the_rest_of_the_matrix() {
+    assert_eq!(RELEASE_CASES.len() + DEFERRED.len(), CASES.len());
+    for case in RELEASE_CASES {
+        assert!(CASES.contains(&case), "{case} 不在矩阵内");
+        assert!(!DEFERRED.contains(&case), "{case} 同时出现在两张表");
+    }
+    for case in DEFERRED {
+        assert!(CASES.contains(&case), "{case} 不在矩阵内");
+    }
 }
 
 #[test]
