@@ -40,13 +40,22 @@ class FeedTest(unittest.TestCase):
     """清单地址与说明域名共用一份白名单，不各自维护。"""
 
     def test_feed_https(self) -> None:
-        parts = urlsplit(model.FEED_URL)
-        self.assertEqual(parts.scheme, "https")
-        self.assertEqual(parts.netloc, "github.com")
-        self.assertTrue(parts.path.endswith("/channel.json"))
+        for arch in ("x86_64", "aarch64", "riscv64"):
+            parts = urlsplit(model.feed_url(arch))
+            self.assertEqual(parts.scheme, "https")
+            self.assertEqual(parts.netloc, "github.com")
+
+    def test_feed_name(self) -> None:
+        self.assertEqual(model.feed_name("x86_64"), "channel.json")
+        self.assertEqual(model.feed_name("aarch64"), "channel-aarch64.json")
+        self.assertEqual(model.feed_name("riscv64"), "channel-riscv64.json")
+
+    def test_feed_default_follows_machine(self) -> None:
+        self.assertEqual(model.FEED_URL, model.feed_url())
+        self.assertTrue(model.feed_url().startswith(model.FEED_BASE + "/"))
 
     def test_feed_host_trusted(self) -> None:
-        self.assertIn(urlsplit(model.FEED_URL).netloc, model.NOTES_HOSTS)
+        self.assertIn(urlsplit(model.feed_url()).netloc, model.NOTES_HOSTS)
 
     def test_channel_whitelist(self) -> None:
         self.assertEqual(model.CHANNELS, {"stable"})

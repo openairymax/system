@@ -37,6 +37,8 @@ from .model import (
     Identity,
     Kernel,
     Manifest,
+    feed_name,
+    feed_url,
 )
 from .model import __all__ as _contract
 from .net import Fetch, Unreachable, fetch_manifest

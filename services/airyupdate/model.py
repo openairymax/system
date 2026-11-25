@@ -17,6 +17,7 @@
 
 from __future__ import annotations
 
+import platform
 from dataclasses import dataclass
 
 __all__ = [
@@ -27,7 +28,9 @@ __all__ = [
     "EXIT_OK",
     "EXIT_REINSTALL",
     "EXIT_UNKNOWN",
+    "FEED_BASE",
     "FEED_URL",
+    "FEED_X86",
     "FIELDS",
     "ISO_FIELDS",
     "ISO_OPTIONAL",
@@ -40,6 +43,8 @@ __all__ = [
     "Identity",
     "Kernel",
     "Manifest",
+    "feed_name",
+    "feed_url",
 ]
 
 SCHEMA_VERSION = 1
@@ -48,10 +53,31 @@ CHANNEL_STABLE = "stable"
 
 CHANNELS = frozenset({CHANNEL_STABLE})
 
-FEED_URL = (
+FEED_BASE = (
     "https://github.com/openairymax/agent-linux"
-    "/releases/latest/download/channel.json"
+    "/releases/latest/download"
 )
+
+# 清单名按架构分：x86_64 沿用 channel.json（0.0.5 装机端的取件地址写死在
+# 这个名字上，改名等于让存量机器永远收不到更新），其余架构为
+# channel-<arch>.json。没有对应清单的架构走「尚未发版」，不回落到 x86_64：
+# 把 x86_64 的 ISO 摘要在 aarch64 上渲染成「可升级」是把机器引向装不上的
+# 介质。
+FEED_X86 = frozenset({"x86_64"})
+
+
+def feed_name(machine=None):
+    arch = (machine or platform.machine() or "").lower()
+    if arch in FEED_X86:
+        return "channel.json"
+    return "channel-%s.json" % (arch or "unknown")
+
+
+def feed_url(machine=None):
+    return "%s/%s" % (FEED_BASE, feed_name(machine))
+
+
+FEED_URL = feed_url()
 
 NOTES_HOSTS = frozenset({"github.com"})
 
