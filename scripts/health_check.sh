@@ -126,18 +126,30 @@ daemon_binary() {
     sed -n 's/.*path=\([^ ;]*\).*/\1/p' <<<"$spec"
 }
 
+# 归类时先看载荷再看启用状态：本版不交付的单元没有可判的运行态。
+daemon_state() {
+    local unit=$1 bin
+    bin=$(daemon_binary "$unit")
+    if [[ -z $bin || $bin == '(null)' || ! -x $bin ]]; then
+        printf 'absent\n'
+    elif ! systemctl is-enabled --quiet "$unit" 2>/dev/null; then
+        printf 'off\n'
+    elif ! systemctl is-active --quiet "$unit"; then
+        printf 'down\n'
+    else
+        printf 'up\n'
+    fi
+}
+
 check_daemons() {
-    local name unit bin down=0 absent=0 off=0
+    local name state down=0 absent=0 off=0
     for name in "${DAEMONS[@]}"; do
-        unit="agentrt-${name}.service"
-        bin=$(daemon_binary "$unit")
-        if [[ -z $bin || $bin == '(null)' || ! -x $bin ]]; then
-            absent=$((absent + 1))
-        elif ! systemctl is-enabled --quiet "$unit" 2>/dev/null; then
-            off=$((off + 1))
-        elif ! systemctl is-active --quiet "$unit"; then
-            down=$((down + 1))
-        fi
+        state=$(daemon_state "agentrt-${name}.service")
+        case $state in
+            absent) absent=$((absent + 1)) ;;
+            off) off=$((off + 1)) ;;
+            down) down=$((down + 1)) ;;
+        esac
     done
     if ((down == 0 && absent == 0 && off == 0)); then
         mark_pass 3 "${#DAEMONS[@]} daemons"
