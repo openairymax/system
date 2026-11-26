@@ -18,6 +18,11 @@
 # oneshot 默认 TimeoutStartSec 是 90 秒，小于 120 秒的等待窗口；不显式放宽
 # 会在用户还在看倒计时时被 systemd 杀掉，结论随之中断。
 #
+# 结论行必须活得过这次开机：画面走 tty1（StandardOutput=tty），`reason=`
+# 诊断行走 journal（StandardError=journal）。stderr 默认 inherit，只设
+# StandardOutput=tty 会让诊断行也落在 tty1 上，随即被清屏与登录界面覆盖，
+# 事后无从判断这次是按了键、超时还是记住了上次选择。
+#
 # SSoT: 0.0.5 方案 §14.1。
 # ===========================================================================
 [Unit]
@@ -33,6 +38,7 @@ Type=oneshot
 RemainAfterExit=yes
 StandardInput=tty
 StandardOutput=tty
+StandardError=journal
 TTYPath=/dev/tty1
 TTYReset=yes
 TTYVHangup=yes
