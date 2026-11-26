@@ -104,15 +104,28 @@ impl Default for Opts {
 pub fn parse_args<I: Iterator<Item = String>>(mut args: I) -> Result<Opts, String> {
     let mut opts = Opts::default();
     while let Some(arg) = args.next() {
-        match arg.as_str() {
-            "--timeout" => opts.timeout = take_secs(&mut args, "--timeout")?,
-            "--repeat-timeout" => opts.repeat = take_secs(&mut args, "--repeat-timeout")?,
-            "--default" => set_default(&mut args, &mut opts)?,
-            "--dir" => set_dir(&mut args, &mut opts)?,
-            other => return Err(format!("未知参数: {other}")),
-        }
+        apply_arg(&mut opts, &arg, &mut args)?;
     }
     Ok(opts)
+}
+
+/// 把一个选项落到 `opts` 上；取值从同一个迭代器续读。
+///
+/// 逐条分派单独成函数，是为了让「循环读词」与「选项表」各自保持平坦：
+/// 合在一起时每加一个开关都要同时提高两处的分支密度。
+fn apply_arg<I: Iterator<Item = String>>(
+    opts: &mut Opts,
+    arg: &str,
+    args: &mut I,
+) -> Result<(), String> {
+    match arg {
+        "--timeout" => opts.timeout = take_secs(args, "--timeout")?,
+        "--repeat-timeout" => opts.repeat = take_secs(args, "--repeat-timeout")?,
+        "--default" => set_default(args, opts)?,
+        "--dir" => set_dir(args, opts)?,
+        other => return Err(format!("未知参数: {other}")),
+    }
+    Ok(())
 }
 
 /// 取一个秒数取值：上限 600 秒，超出即拒绝。
