@@ -140,6 +140,7 @@ install(PROGRAMS
 	bin/airy-alert
 	bin/airy-incident
 	bin/airy-backup
+	bin/airy-agent
 	DESTINATION bin
 )
 
@@ -158,4 +159,10 @@ install(DIRECTORY ops/incident
 )
 install(DIRECTORY ops/incident/runbooks
 	DESTINATION share/airymax/incident/runbooks
+)
+
+# Agent 运维（P-16）：元数据、健康分与调优实现装进 site-packages，入口进 bin。
+install(DIRECTORY ops/agent
+	DESTINATION ${Python3_SITELIB}
+	PATTERN "__pycache__" EXCLUDE
 )
