@@ -5,10 +5,11 @@
  * airy_probe.c — AirymaxOS eBPF 探针加载器
  *
  * 职责：
- *   打开 airy_probe.bpf.o，经 libbpf 加载并把四个程序挂到真实内核点：
- *   airy_cap_check 的入口/返回，以及 airy_policy_decision /
- *   airy_superv_enforce 两个追踪事件。ringbuf 事件逐条输出为 JSON 行，
- *   退出前汇总 per-CPU 计数器。
+ *   打开 airy_probe.bpf.o，经 libbpf 加载并把十个程序挂到真实内核点：
+ *   四个边界（能力闸门、551 相位通知、550 调度控制、548 执行分发）的
+ *   入口/返回各一对，以及 airy_policy_decision / airy_superv_enforce
+ *   两个追踪事件。ringbuf 事件逐条输出为 JSON 行，退出前汇总 per-CPU
+ *   计数器。
  *
  * 失败处理：
  *   libbpf 的打开、加载与验证器输出统一经打印回调落到
@@ -46,8 +47,8 @@
 #define AIRY_BPF_LOG	"/var/log/airymaxos/bpf-load.log"
 #define AIRY_BPF_DIR	"/var/log/airymaxos"
 
-#define AIRY_LINK_NR	4
-#define AIRY_STAT_NR	4
+#define AIRY_LINK_NR	10
+#define AIRY_STAT_NR	10
 
 /* 与 airy_probe.bpf.c 的 struct airy_evt 逐字段一致的镜像。 */
 struct airy_evt {
@@ -95,22 +96,28 @@ static int log_cb(enum libbpf_print_level level, const char *fmt, va_list ap)
 	return vfprintf(stderr, fmt, ap);
 }
 
-static int attach_one(struct bpf_object *obj, const char *name, int ret,
-		      const char *tp, struct bpf_link **link)
+struct link_spec {
+	const char *prog;
+	const char *sym;	/* NULL：tracepoint 挂载 */
+	const char *tp;
+	int ret;
+};
+
+static int attach_one(struct bpf_object *obj, const struct link_spec *s,
+		      struct bpf_link **link)
 {
 	struct bpf_program *prog;
 	long err;
 
-	prog = bpf_object__find_program_by_name(obj, name);
+	prog = bpf_object__find_program_by_name(obj, s->prog);
 	if (!prog) {
 		errno = ENOENT;
 		return -1;
 	}
-	if (tp)
-		*link = bpf_program__attach_tracepoint(prog, "airy", tp);
+	if (s->tp)
+		*link = bpf_program__attach_tracepoint(prog, "airy", s->tp);
 	else
-		*link = bpf_program__attach_kprobe(prog, ret != 0,
-						   "airy_cap_check");
+		*link = bpf_program__attach_kprobe(prog, s->ret != 0, s->sym);
 	err = libbpf_get_error(*link);
 	if (err) {
 		*link = NULL;
@@ -122,22 +129,26 @@ static int attach_one(struct bpf_object *obj, const char *name, int ret,
 
 static int attach_all(struct bpf_object *obj, struct bpf_link **links)
 {
-	static const struct {
-		const char *prog;
-		const char *tp;
-		int ret;
-	} spec[AIRY_LINK_NR] = {
-		{ "cap_in",	NULL,			0 },
-		{ "cap_out",	NULL,			1 },
-		{ "on_policy",	"airy_policy_decision",	0 },
-		{ "on_enforce",	"airy_superv_enforce",	0 },
+	static const struct link_spec spec[AIRY_LINK_NR] = {
+		{ "cap_in",	"airy_cap_check",		NULL, 0 },
+		{ "cap_out",	"airy_cap_check",		NULL, 1 },
+		{ "clt_in",	"airy_clt_serve",		NULL, 0 },
+		{ "clt_out",	"airy_clt_serve",		NULL, 1 },
+		{ "sched_in",	"airy_sched_ctl",		NULL, 0 },
+		{ "sched_out",	"airy_sched_ctl",		NULL, 1 },
+		{ "exec_in",	"airy_invoke_dispatch",		NULL, 0 },
+		{ "exec_out",	"airy_invoke_dispatch",		NULL, 1 },
+		{ "on_policy",	NULL, "airy_policy_decision",	0 },
+		{ "on_enforce",	NULL, "airy_superv_enforce",	0 },
 	};
 	int n = 0, i;
 
 	for (i = 0; i < AIRY_LINK_NR; i++) {
-		if (attach_one(obj, spec[i].prog, spec[i].ret, spec[i].tp,
-			       &links[n]))
+		if (attach_one(obj, &spec[i], &links[n])) {
+			fprintf(stderr, "airy-probe: 挂载 %s 失败: %s\n",
+				spec[i].prog, strerror(errno));
 			break;
+		}
 		n++;
 	}
 	if (n == AIRY_LINK_NR)
@@ -172,7 +183,9 @@ static int stat_sum(struct bpf_map *map, uint32_t key, uint64_t *sum)
 static void dump_stats(struct bpf_object *obj)
 {
 	static const char *const names[AIRY_STAT_NR] = {
-		"cap_in", "cap_out", "policy", "enforce"
+		"cap_in", "cap_out", "policy", "enforce",
+		"clt_in", "clt_out", "sched_in", "sched_out",
+		"exec_in", "exec_out"
 	};
 	struct bpf_map *map = bpf_object__find_map_by_name(obj, "airy_stats");
 	uint64_t val;
@@ -252,10 +265,8 @@ static int run(struct bpf_object *obj, int secs)
 	struct bpf_link *links[AIRY_LINK_NR] = { NULL };
 	int n = 0, rc = 1, ret;
 
-	if (attach_all(obj, links)) {
-		fprintf(stderr, "airy-probe: 挂载失败: %s\n", strerror(errno));
+	if (attach_all(obj, links))
 		goto out;
-	}
 	n = AIRY_LINK_NR;
 	map = bpf_object__find_map_by_name(obj, "airy_events");
 	if (!map) {

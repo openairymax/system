@@ -5,13 +5,21 @@
  * airy_probe.bpf.c — AirymaxOS 可编程探针（eBPF 侧）
  *
  * 职责：
- *   把安全能力判定与监督强制动作变成可从用户态消费的事件流：kprobe 与
- *   kretprobe 成对挂在 airy_cap_check，求判定耗时；tracepoint 挂在内核
- *   已发布的 airy_policy_decision / airy_superv_enforce 上，取带类型的
- *   裁决与强制语义。事件经 ringbuf 送出，计数留在 per-CPU array。
+ *   把安全能力判定、Agent 边界进入/退出与监督强制动作变成可从用户态消费
+ *   的事件流：kprobe 与 kretprobe 成对挂在四个内核边界，求各边界耗时；
+ *   tracepoint 挂在内核已发布的 airy_policy_decision /
+ *   airy_superv_enforce 上，取带类型的裁决与强制语义。事件经 ringbuf
+ *   送出，计数留在 per-CPU array。
+ *
+ *   四阶段（认知/规划/调度/执行）本身在用户态运行（ADR-006），内核侧只
+ *   观测承载阶段切换的 syscall 边界；airy_clt_serve 同时承载认知与规划
+ *   两个相位，按 phase 区分，不复制挂载点。
  *
  * 挂载点与来源：
  *   kernel/security/airy/airy_cap_check.c   int airy_cap_check()
+ *   kernel/kernel/syscalls/airy_clt.c       int airy_clt_serve()
+ *   kernel/kernel/syscalls/airy_sched.c     int airy_sched_ctl()
+ *   kernel/kernel/syscalls/airy_syscalls.c  int airy_invoke_dispatch()
  *   kernel/include/trace/events/airy.h      airy_policy_decision
  *                                           airy_superv_enforce
  *
@@ -36,6 +44,12 @@ enum airy_evt_kind {
 	EVT_CAP_OUT	= 2,
 	EVT_POLICY	= 3,
 	EVT_ENF		= 4,
+	EVT_CLT_IN	= 5,
+	EVT_CLT_OUT	= 6,
+	EVT_SCHED_IN	= 7,
+	EVT_SCHED_OUT	= 8,
+	EVT_EXEC_IN	= 9,
+	EVT_EXEC_OUT	= 10,
 };
 
 /* per-CPU 计数格，顺序即加载器的打印顺序。 */
@@ -44,7 +58,13 @@ enum airy_stat_idx {
 	ST_CAP_OUT	= 1,
 	ST_POLICY	= 2,
 	ST_ENF		= 3,
-	ST_MAX		= 4,
+	ST_CLT_IN	= 4,
+	ST_CLT_OUT	= 5,
+	ST_SCHED_IN	= 6,
+	ST_SCHED_OUT	= 7,
+	ST_EXEC_IN	= 8,
+	ST_EXEC_OUT	= 9,
+	ST_MAX		= 10,
 };
 
 /*
@@ -124,31 +144,40 @@ static __always_inline struct airy_evt *evt_new(__u32 kind)
 	return e;
 }
 
-SEC("kprobe/airy_cap_check")
-int cap_in(void *ctx)
+/* 统一的边界事件出口：计数 + 一条 ringbuf 记录，ringbuf 满时丢事件但计数照记。 */
+static __always_inline int trace_emit(__u32 idx, __u32 kind)
 {
 	struct airy_evt *e;
 
-	(void)ctx;
-	stat_add(ST_CAP_IN);
-	e = evt_new(EVT_CAP_IN);
+	stat_add(idx);
+	e = evt_new(kind);
 	if (e)
 		bpf_ringbuf_submit(e, 0);
 	return 0;
 }
 
-SEC("kretprobe/airy_cap_check")
-int cap_out(void *ctx)
-{
-	struct airy_evt *e;
+/*
+ * 一对 kprobe/kretprobe 程序共用一个符号：入口记进入、返回记退出，两者
+ * 时间差即该边界的处理耗时。tag 决定程序名，kind 决定事件与计数格。
+ */
+#define AIRY_TRACE_PAIR(sym, tag, kind)					\
+	SEC("kprobe/" #sym)						\
+	int tag##_in(void *ctx)						\
+	{								\
+		(void)ctx;						\
+		return trace_emit(ST_##kind##_IN, EVT_##kind##_IN);	\
+	}								\
+	SEC("kretprobe/" #sym)						\
+	int tag##_out(void *ctx)					\
+	{								\
+		(void)ctx;						\
+		return trace_emit(ST_##kind##_OUT, EVT_##kind##_OUT);	\
+	}
 
-	(void)ctx;
-	stat_add(ST_CAP_OUT);
-	e = evt_new(EVT_CAP_OUT);
-	if (e)
-		bpf_ringbuf_submit(e, 0);
-	return 0;
-}
+AIRY_TRACE_PAIR(airy_cap_check, cap, CAP)
+AIRY_TRACE_PAIR(airy_clt_serve, clt, CLT)
+AIRY_TRACE_PAIR(airy_sched_ctl, sched, SCHED)
+AIRY_TRACE_PAIR(airy_invoke_dispatch, exec, EXEC)
 
 SEC("tracepoint/airy/airy_policy_decision")
 int on_policy(struct pd_ctx *ctx)
