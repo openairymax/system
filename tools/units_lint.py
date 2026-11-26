@@ -912,6 +912,9 @@ SESSION_CHOICE_PAIRS: dict[tuple[str, str], str] = {
     ("Service", "RemainAfterExit"): "yes",
     ("Service", "StandardInput"): "tty",
     ("Service", "StandardOutput"): "tty",
+    # 结论行只走 stderr：画面留在 tty1，`reason=` 必须落 journal，否则
+    # 清屏与登录界面一覆盖，事后就分不清按键、超时与沿用记录。
+    ("Service", "StandardError"): "journal",
     ("Service", "TTYPath"): "/dev/tty1",
     ("Service", "TTYReset"): "yes",
     ("Service", "TTYVHangup"): "yes",
