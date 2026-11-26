@@ -7,13 +7,18 @@
 // 供 lightdm／桌面就绪探针在启动前读（ExecCondition），也供运行期切换读取
 // 当时的起点。选完即走，不驻留、不跨重启。
 //
+// 跨重启的只有「上次选了什么」这一个词：`PREFERRED` 让第二次开机不再白等
+// 两分钟，只留一个够按 T 的短窗口。它不是第二个状态源——本次开机的唯一
+// 事实仍是 `desired`，`preferred` 只影响窗口长度与超时落点。
+//
 // 判定与呈现分开：本模块只回答「哪个键算哪个选择」「命令行开关是否要求
 // 跳过」「结论怎么写盘」。终端读写与倒计时在二进制入口里，因此判定逻辑
 // 可以在没有 pty 的单元测试里逐条断言。
 //
 // 只写 `desired`，不写 `mode`：`mode` 由会话真正就绪后的 root 助手
 // `airy-session-state` 写入（§14.15 F-50）。选择器写 `mode` 会让「用户选了
-// TUI 但 TUI 没起来」与「TUI 正在跑」在盘上不可区分。
+// TUI 但 TUI 没起来」与「TUI 正在跑」在盘上不可区分。`preferred` 是偏好
+// 记录而不是本次状态，两个下游闸门都不读它。
 //
 // SSoT: 0.0.5 方案 §14.1、§14.15。
 // ===========================================================================
@@ -27,6 +32,10 @@ use std::path::{Path, PathBuf};
 
 /// 会话状态目录；选择器只写其中的 `desired`。
 pub const DIR: &str = "/run/airymaxos/session";
+
+/// 上次选择的持久落点。`/run` 随重启清空，记不住用户偏好；这个文件跨重启
+/// 保留，只由选择器在交互有结论时改写。
+pub const PREFERRED: &str = "/var/lib/airymaxos/session/preferred";
 
 /// 内核命令行里跳过选择、直接进桌面的开关。
 pub const OFF_TOKEN: &str = "airymax.session=off";
@@ -71,6 +80,9 @@ impl Choice {
 pub struct Opts {
     /// 等待按键的秒数；0 表示立即取默认值。
     pub timeout: u64,
+    /// 记住上次选择后的等待秒数。第一次开机仍用 `timeout`，之后只留一个
+    /// 够按 T 的短窗口——每次开机都白等两分钟是开机慢的直接原因。
+    pub repeat: u64,
     /// 超时或没有终端时的结论；命令行跳过与无键盘一律进桌面。
     pub default: Choice,
     /// 状态目录。
@@ -81,6 +93,7 @@ impl Default for Opts {
     fn default() -> Self {
         Self {
             timeout: 120,
+            repeat: 5,
             default: Choice::Gui,
             dir: crate::root::path(DIR),
         }
@@ -92,7 +105,8 @@ pub fn parse_args<I: Iterator<Item = String>>(mut args: I) -> Result<Opts, Strin
     let mut opts = Opts::default();
     while let Some(arg) = args.next() {
         match arg.as_str() {
-            "--timeout" => set_timeout(&mut args, &mut opts)?,
+            "--timeout" => opts.timeout = take_secs(&mut args, "--timeout")?,
+            "--repeat-timeout" => opts.repeat = take_secs(&mut args, "--repeat-timeout")?,
             "--default" => set_default(&mut args, &mut opts)?,
             "--dir" => set_dir(&mut args, &mut opts)?,
             other => return Err(format!("未知参数: {other}")),
@@ -101,17 +115,16 @@ pub fn parse_args<I: Iterator<Item = String>>(mut args: I) -> Result<Opts, Strin
     Ok(opts)
 }
 
-/// `--timeout <秒>`：上限 600 秒，超出即拒绝。
-fn set_timeout<I: Iterator<Item = String>>(args: &mut I, opts: &mut Opts) -> Result<(), String> {
-    let raw = args.next().ok_or("--timeout 缺少取值")?;
+/// 取一个秒数取值：上限 600 秒，超出即拒绝。
+fn take_secs<I: Iterator<Item = String>>(args: &mut I, flag: &str) -> Result<u64, String> {
+    let raw = args.next().ok_or_else(|| format!("{flag} 缺少取值"))?;
     let secs = raw
         .parse::<u64>()
-        .map_err(|_| format!("--timeout 不是整数: {raw}"))?;
+        .map_err(|_| format!("{flag} 不是整数: {raw}"))?;
     if secs > 600 {
-        return Err(format!("--timeout 超出 0..=600: {secs}"));
+        return Err(format!("{flag} 超出 0..=600: {secs}"));
     }
-    opts.timeout = secs;
-    Ok(())
+    Ok(secs)
 }
 
 /// `--default <gui|tui>`：只认两个词。
@@ -172,25 +185,55 @@ pub fn judge(byte: u8) -> Option<Choice> {
     }
 }
 
-/// 倒计时那一行的内容。
-pub fn countdown_line(secs: u64) -> String {
-    format!("剩余 {secs} 秒，超时进入图形桌面")
+/// 倒计时那一行的内容；超时落点必须写清楚，记住的是 TUI 时不能再报桌面。
+pub fn countdown_line(secs: u64, fallback: Choice) -> String {
+    let mode = match fallback {
+        Choice::Gui => "图形桌面",
+        Choice::Tui => "文本模式",
+    };
+    format!("剩余 {secs} 秒，超时进入{mode}")
 }
 
-/// 原子写 `desired`：同目录临时文件 + rename，读方不会看到半行。
-pub fn write_choice(dir: &Path, choice: Choice) -> io::Result<()> {
+/// 原子写一页：同目录临时文件 + rename，读方不会看到半行。
+fn write_page(dir: &Path, name: &str, choice: Choice) -> io::Result<()> {
     fs::create_dir_all(dir)?;
     fs::set_permissions(dir, fs::Permissions::from_mode(0o755))?;
-    let temp = dir.join(".desired.new");
+    let temp = dir.join(format!(".{name}.new"));
     fs::write(&temp, format!("{}\n", choice.word()))?;
-    fs::rename(&temp, dir.join("desired"))
+    fs::set_permissions(&temp, fs::Permissions::from_mode(0o644))?;
+    fs::rename(&temp, dir.join(name))
+}
+
+/// 原子写 `desired`。
+pub fn write_choice(dir: &Path, choice: Choice) -> io::Result<()> {
+    write_page(dir, "desired", choice)
+}
+
+/// 读上次选择；文件缺失、读失败或内容非法一律按「没有记住」处理。
+///
+/// 坏值不当成证据：升级前留下的旧文件、掉电截断的文件都不该让这台机器
+/// 永远按一个无意义的值开机，回到首次开机的长窗口更接近用户预期。
+pub fn read_preferred(path: &Path) -> Option<Choice> {
+    fs::read_to_string(path)
+        .ok()
+        .and_then(|text| Choice::parse(text.trim()))
+}
+
+/// 原子写上次选择，权限 0644：状态可读，但只有 root 能改。
+pub fn write_preferred(path: &Path, choice: Choice) -> io::Result<()> {
+    let dir = path.parent();
+    let name = path.file_name().and_then(|n| n.to_str());
+    match (dir, name) {
+        (Some(dir), Some(name)) => write_page(dir, name, choice),
+        _ => Err(io::Error::from(io::ErrorKind::InvalidInput)),
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        cmdline_off, countdown_line, judge, key_bit, keyboard_at, parse_args, write_choice, Choice,
-        Opts, DIR, KEY_A,
+        cmdline_off, countdown_line, judge, key_bit, keyboard_at, parse_args, read_preferred,
+        write_choice, write_preferred, Choice, Opts, DIR, KEY_A, PREFERRED,
     };
     use std::path::PathBuf;
 
@@ -206,16 +249,29 @@ mod tests {
     fn defaults_match_the_unit() {
         assert_eq!(parse_args(args(&[]).into_iter()), Ok(Opts::default()));
         assert_eq!(Opts::default().timeout, 120);
+        assert_eq!(Opts::default().repeat, 5);
         assert_eq!(Opts::default().dir, PathBuf::from(DIR));
+        assert_eq!(PREFERRED, "/var/lib/airymaxos/session/preferred");
     }
 
     #[test]
     fn every_option_is_honoured() {
         let got = parse_args(
-            args(&["--timeout", "30", "--default", "tui", "--dir", "/tmp/x"]).into_iter(),
+            args(&[
+                "--timeout",
+                "30",
+                "--repeat-timeout",
+                "7",
+                "--default",
+                "tui",
+                "--dir",
+                "/tmp/x",
+            ])
+            .into_iter(),
         )
         .expect("合法参数");
         assert_eq!(got.timeout, 30);
+        assert_eq!(got.repeat, 7);
         assert_eq!(got.default, Choice::Tui);
         assert_eq!(got.dir, PathBuf::from("/tmp/x"));
     }
@@ -226,6 +282,9 @@ mod tests {
             vec!["--timeout"],
             vec!["--timeout", "x"],
             vec!["--timeout", "601"],
+            vec!["--repeat-timeout"],
+            vec!["--repeat-timeout", "x"],
+            vec!["--repeat-timeout", "601"],
             vec!["--default"],
             vec!["--default", "desktop"],
             vec!["--dir"],
@@ -282,8 +341,10 @@ mod tests {
 
     #[test]
     fn the_countdown_line_carries_the_seconds() {
-        assert!(countdown_line(0).contains('0'));
-        assert!(countdown_line(119).contains("119"));
+        assert!(countdown_line(0, Choice::Gui).contains('0'));
+        assert!(countdown_line(119, Choice::Gui).contains("119"));
+        assert!(countdown_line(5, Choice::Gui).contains("图形桌面"));
+        assert!(countdown_line(5, Choice::Tui).contains("文本模式"));
     }
 
     #[test]
@@ -309,5 +370,30 @@ mod tests {
         assert_eq!(Choice::parse("tui"), Some(Choice::Tui));
         assert_eq!(Choice::parse("GUI"), None);
         assert_eq!(Choice::parse("desktop"), None);
+    }
+
+    #[test]
+    fn a_remembered_choice_survives_a_round_trip() {
+        let dir = scratch("pref");
+        let file = dir.join("preferred");
+        assert_eq!(read_preferred(&file), None, "没有文件按没记住处理");
+        write_preferred(&file, Choice::Tui).expect("写入");
+        assert_eq!(read_preferred(&file), Some(Choice::Tui));
+        assert!(!dir.join(".preferred.new").exists(), "临时文件必须被重命名");
+        write_preferred(&file, Choice::Gui).expect("覆盖");
+        assert_eq!(read_preferred(&file), Some(Choice::Gui));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_damaged_record_is_not_a_choice() {
+        let dir = scratch("pref-bad");
+        let file = dir.join("preferred");
+        std::fs::create_dir_all(&dir).expect("夹具");
+        for text in ["", "\n", "desktop\n", "GUI\n", "gui tui\n"] {
+            std::fs::write(&file, text).expect("写入");
+            assert_eq!(read_preferred(&file), None, "{text:?}");
+        }
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

@@ -8,12 +8,18 @@
 // `/run/airymaxos/session/desired`，随后退出；TUI 分支在这里显式拉起
 // `boot-tui.service`，GUI 分支什么都不做（lightdm 由 graphical.target 拉起）。
 //
+// 120 秒只在第一次开机发生。交互一旦有结论，结果记进
+// `/var/lib/airymaxos/session/preferred`；此后每次开机只留一个短窗口
+// （`--repeat-timeout`），超时按记住的选择走，开机不再白等两分钟。
+// 命令行旁路与无键盘是设备事实而不是用户选择，不写这份记录。
+//
 // 无键盘的机器不占这 120 秒：tty1 仍在，但没人能按键，白等只会拖慢开机
 // （§14.1 A.2.7）。判据取内核键位图，读不到输入类时仍按原样等待。
 //
-// 判定、写盘与参数解析都在 `boot_tui::pick` 里，本文件只做三件事：
-// 读 `/proc/cmdline`、驱动 tty1 的倒计时、把结论记进 journal。终端一定被
-// 恢复成原样，输入队列一定被清空——否则残留的 `T` 会被 getty 或桌面收走。
+// 判定、写盘与参数解析都在 `boot_tui::pick` 里，本文件只做四件事：读
+// `/proc/cmdline`、驱动 tty1 的倒计时、把结论记进 journal、把交互结论留
+// 给下次开机。终端一定被恢复成原样，输入队列一定被清空——否则残留的 `T`
+// 会被 getty 或桌面收走。
 //
 // 退出码恒为 0：选择不是失败点，任何异常都回落默认值并留下 journal 行。
 // 唯一例外是参数本身不合法（退出码 2），那是打包错误而不是开机故障。
@@ -52,6 +58,7 @@ fn main() -> ExitCode {
             choice.word()
         ),
     }
+    remember(choice, reason);
     if choice == Choice::Tui {
         start_tui();
     }
@@ -59,6 +66,9 @@ fn main() -> ExitCode {
 }
 
 /// 命令行开关优先，其次无键盘，再次交互；都拿不到就取默认。
+///
+/// 有上次选择时窗口缩到 `--repeat-timeout`，超时落点就是上次的选择；
+/// 第一次开机仍用完整窗口与 `--default`。
 fn decide(opts: &Opts) -> (Choice, &'static str) {
     let cmdline = fs::read_to_string(root::path("/proc/cmdline")).unwrap_or_default();
     if pick::cmdline_off(&cmdline) {
@@ -67,7 +77,30 @@ fn decide(opts: &Opts) -> (Choice, &'static str) {
     if pick::keyboard_at(&root::path(pick::INPUTS)) == Some(false) {
         return (Choice::Gui, "no-keyboard");
     }
-    interactive(opts.timeout, opts.default)
+    match pick::read_preferred(&root::path(pick::PREFERRED)) {
+        Some(last) => {
+            let (choice, reason) = interactive(opts.repeat, last);
+            let reason = if reason == "timeout" {
+                "remembered"
+            } else {
+                reason
+            };
+            (choice, reason)
+        }
+        None => interactive(opts.timeout, opts.default),
+    }
+}
+
+/// 把交互结论记成下次的起点；命令行旁路与无键盘不落盘。
+///
+/// 写失败只记一行：记住与否影响的是下次开机的窗口长度，不影响本次结论。
+fn remember(choice: Choice, reason: &str) {
+    if !matches!(reason, "key" | "timeout") {
+        return;
+    }
+    if let Err(err) = pick::write_preferred(&root::path(pick::PREFERRED), choice) {
+        eprintln!("AIRYMAX-SESSION preferred={err}");
+    }
 }
 
 /// 打开 tty1 并在原始终端里等一个键。
@@ -95,7 +128,7 @@ fn interactive(secs: u64, fallback: Choice) -> (Choice, &'static str) {
 
 /// 倒计时与按键循环；每轮最多阻塞一秒，便于按秒重绘。
 fn wait_key(tty: &mut File, secs: u64, fallback: Choice) -> (Choice, &'static str) {
-    draw_all(tty, secs);
+    draw_all(tty, secs, fallback);
     if secs == 0 {
         return (fallback, "timeout");
     }
@@ -112,7 +145,7 @@ fn wait_key(tty: &mut File, secs: u64, fallback: Choice) -> (Choice, &'static st
         match rustix::event::poll(&mut fds, Some(&tick)) {
             Ok(0) => {
                 left -= 1;
-                draw_left(tty, left);
+                draw_left(tty, left, fallback);
                 if left == 0 {
                     return (fallback, "timeout");
                 }
@@ -131,19 +164,23 @@ fn wait_key(tty: &mut File, secs: u64, fallback: Choice) -> (Choice, &'static st
 }
 
 /// 首屏：固定说明一次画完。
-fn draw_all(tty: &mut File, secs: u64) {
+fn draw_all(tty: &mut File, secs: u64, fallback: Choice) {
     let _ = write!(
         tty,
         "\x1b[2J\x1b[HAirymaxOS 0.0.5  会话选择\r\n\r\n\
          \x20 [T] 进入 TUI 终端会话\r\n\
          \x20 [G/Enter] 进入图形桌面\r\n\r\n"
     );
-    draw_left(tty, secs);
+    draw_left(tty, secs, fallback);
 }
 
 /// 只重绘倒计时那一行，避免整屏闪烁。
-fn draw_left(tty: &mut File, secs: u64) {
-    let _ = write!(tty, "\x1b[6;1H\x1b[2K{}", pick::countdown_line(secs));
+fn draw_left(tty: &mut File, secs: u64, fallback: Choice) {
+    let _ = write!(
+        tty,
+        "\x1b[6;1H\x1b[2K{}",
+        pick::countdown_line(secs, fallback)
+    );
     let _ = tty.flush();
 }
 

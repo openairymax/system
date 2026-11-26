@@ -900,8 +900,9 @@ LLM_PAIRS: dict[tuple[str, str], str] = {
 }
 
 # 选择器独占 tty1：与 getty 互斥靠 Conflicts + RemainAfterExit 两条一起实现，
-# 少一条就会在选择完成后把登录提示放回来。窗口 120 秒，而 oneshot 缺省启动
-# 超时只有 90 秒，TimeoutStartSec 必须单独放宽。
+# 少一条就会在选择完成后把登录提示放回来。首次窗口 120 秒，此后按记住的
+# 选择只留 5 秒；而 oneshot 缺省启动超时只有 90 秒，TimeoutStartSec 必须
+# 单独放宽。
 SESSION_CHOICE_PAIRS: dict[tuple[str, str], str] = {
     ("Unit", "DefaultDependencies"): "no",
     ("Unit", "After"): "local-fs.target getty@tty1.service",
@@ -918,7 +919,7 @@ SESSION_CHOICE_PAIRS: dict[tuple[str, str], str] = {
     (
         "Service",
         "ExecStart",
-    ): "/usr/bin/airy-session-pick --timeout 120 --default gui",
+    ): "/usr/bin/airy-session-pick --timeout 120 --default gui --repeat-timeout 5",
     ("Install", "WantedBy"): "sysinit.target",
 }
 

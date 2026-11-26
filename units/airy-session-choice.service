@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later OR Apache-2.0
 # ===========================================================================
-# airy-session-choice — 引导期会话选择（120 秒窗口）
+# airy-session-choice — 引导期会话选择（首次 120 秒，此后短窗口）
 #
 # 独占 tty1：与 getty@tty1 互斥，且必须在它可能启动之前占住，否则用户先
 # 看到登录提示再被切走。RemainAfterExit=yes 是互斥的实现方式——选择完成后
@@ -10,6 +10,10 @@
 # 只在 sysinit.target 拉起：graphical.target 与 multi-user.target 都会经过
 # 它，而选择本身不依赖网络与日志。没有终端时入口直接写默认值退出，不改变
 # 后续单元的形状。
+#
+# 窗口分两档：第一次开机给 120 秒（`--timeout`），交互有结论后入口把结果
+# 记进 /var/lib/airymaxos/session/preferred，此后每次开机只留
+# `--repeat-timeout` 秒，超时按记住的选择走。两档都在 TimeoutStartSec 之内。
 #
 # oneshot 默认 TimeoutStartSec 是 90 秒，小于 120 秒的等待窗口；不显式放宽
 # 会在用户还在看倒计时时被 systemd 杀掉，结论随之中断。
@@ -33,7 +37,7 @@ TTYPath=/dev/tty1
 TTYReset=yes
 TTYVHangup=yes
 TimeoutStartSec=150
-ExecStart=/usr/bin/airy-session-pick --timeout 120 --default gui
+ExecStart=/usr/bin/airy-session-pick --timeout 120 --default gui --repeat-timeout 5
 
 [Install]
 WantedBy=sysinit.target

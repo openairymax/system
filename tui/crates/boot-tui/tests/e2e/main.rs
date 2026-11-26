@@ -14,8 +14,8 @@
 // 断言只读假命令留下的调用记录、单元状态与 journal，不读被测进程的
 // 内部状态。
 //
-// 覆盖 AC-A10：冷启动两侧选择、命令行旁路、双向切换、注销回落、忙碌拒绝、
-// 失败回滚、幂等；全程不重启机器。
+// 覆盖 AC-A10：冷启动两侧选择、命令行旁路、记住上次选择、双向切换、注销回落、
+// 忙碌拒绝、失败回滚、幂等；全程不重启机器。
 // ===========================================================================
 
 //! 会话选择与运行期切换的端到端判据。
@@ -249,6 +249,41 @@ fn 键盘在位不跳过选择() {
         !stderr(&out).contains("no-keyboard"),
         "有键盘时不得走跳过分支，实际 stderr={}",
         stderr(&out)
+    );
+}
+
+#[test]
+fn 记住的选择成为下次的超时落点() {
+    let root = Root::new("pick-remembered");
+    root.write("var/lib/airymaxos/session/preferred", "tui\n");
+    let dir = root.session();
+    let out = root.pick(&[
+        "--dir",
+        &dir,
+        "--timeout",
+        "120",
+        "--default",
+        "gui",
+        "--repeat-timeout",
+        "0",
+    ]);
+    expect_code(&out, 0, "记住上次选择");
+    expect_page(&root, "desired", "tui");
+}
+
+#[test]
+fn 命令行旁路不改写记住的选择() {
+    let root = Root::new("pick-keep");
+    root.write("var/lib/airymaxos/session/preferred", "tui\n");
+    root.write("proc/cmdline", "ro quiet airymax.session=off\n");
+    let dir = root.session();
+    let out = root.pick(&["--dir", &dir, "--timeout", "0", "--default", "gui"]);
+    expect_code(&out, 0, "命令行旁路");
+    expect_page(&root, "desired", "gui");
+    assert_eq!(
+        root.text("var/lib/airymaxos/session/preferred").trim(),
+        "tui",
+        "设备事实不得覆盖用户选择"
     );
 }
 
