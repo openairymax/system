@@ -142,6 +142,7 @@ install(PROGRAMS
 	bin/airy-backup
 	bin/airy-agent
 	bin/airy-memory
+	bin/airy-station
 	DESTINATION bin
 )
 
@@ -170,6 +171,13 @@ install(DIRECTORY ops/agent
 
 # 记忆运维（P-17）：块存储、整理、迁移与擦除实现装进 site-packages，入口进 bin。
 install(DIRECTORY ops/memory
+	DESTINATION ${Python3_SITELIB}
+	PATTERN "__pycache__" EXCLUDE
+)
+
+# 开发运维工作站（P-18）：八面板采集、渲染与交互实现装进 site-packages，
+# 入口进 bin；远程与 Web 能力属 v1.1.0，本版只交付本地 TUI 与单次快照。
+install(DIRECTORY ops/devstation
 	DESTINATION ${Python3_SITELIB}
 	PATTERN "__pycache__" EXCLUDE
 )
