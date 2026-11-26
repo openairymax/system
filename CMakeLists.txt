@@ -141,6 +141,7 @@ install(PROGRAMS
 	bin/airy-incident
 	bin/airy-backup
 	bin/airy-agent
+	bin/airy-memory
 	DESTINATION bin
 )
 
@@ -163,6 +164,12 @@ install(DIRECTORY ops/incident/runbooks
 
 # Agent 运维（P-16）：元数据、健康分与调优实现装进 site-packages，入口进 bin。
 install(DIRECTORY ops/agent
+	DESTINATION ${Python3_SITELIB}
+	PATTERN "__pycache__" EXCLUDE
+)
+
+# 记忆运维（P-17）：块存储、整理、迁移与擦除实现装进 site-packages，入口进 bin。
+install(DIRECTORY ops/memory
 	DESTINATION ${Python3_SITELIB}
 	PATTERN "__pycache__" EXCLUDE
 )
