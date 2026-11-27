@@ -11,7 +11,7 @@ import sys
 from pathlib import Path
 
 SYS = Path(__file__).resolve().parents[2]
-for _path in (SYS / "ops", SYS / "services"):
+for _path in (SYS / "ops", SYS / "services", SYS / "services" / "daemons"):
     if str(_path) not in sys.path:
         sys.path.insert(0, str(_path))
 

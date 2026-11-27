@@ -11,10 +11,10 @@ import json
 import re
 from pathlib import Path
 
+from alert_d.store import Store as AlertStore
 from agent.health import evaluate
 from agent.store import Store as AgentStore
 from backup.store import Store as BackupStore
-from daemons.alert_d.store import Store as AlertStore
 from incident.store import Store as IncidentStore
 from memory.store import Store as MemoryStore
 from memory.stats import agent_status
