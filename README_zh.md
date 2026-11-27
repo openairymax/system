@@ -35,12 +35,27 @@ agent-linux 系统（AirymaxOS System）复用并扩展了 Airymax 运行时平�
 system/
 ├── README.md           # 本文件（英文）
 ├── README_zh.md        # 中文翻译
+├── CONTRIBUTING.md     # 贡献规范
+├── MAINTAINERS         # 维护者名单
 ├── LICENSE             # AGPL-3.0 + Apache-2.0 双许可证
 ├── NOTICE              # 版权、商标与第三方声明
-└── .gitignore
+├── CMakeLists.txt      # 系统层构建与安装规则
+├── bin/                # 运维入口（airy-*）
+├── contracts/          # 输入、意图与审计契约
+├── Documentation/      # 组件与可观测性设计说明
+├── monitoring/         # 宿主监控（airymaxmon）
+├── obs/                # 可观测性内部实现：common、eBPF、内存、性能、令牌
+├── ops/                # 运维代理与其 CLI
+├── scripts/            # 启动、首启与健康检查脚本
+├── services/           # 服务包
+├── tests/              # ops、services、scripts、units 的单元测试
+├── tools/              # 配置检查入口
+├── tui/                # 终端用户界面（Rust 工作区）
+├── udev/               # udev 规则
+└── units/              # systemd 单元
 ```
 
-设计文档与 参考发行版规范维护在伞仓的 `docs/AirymaxAgentOS/` 目录。
+设计文档与 参考发行版规范维护在伞仓的 `docs/docs-linux/` 目录。
 
 ## 上下游依赖
 

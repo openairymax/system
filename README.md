@@ -43,11 +43,24 @@ layer, ensuring architectural homology with no adaptation layer.
 system/
 ├── README.md           # This file (English)
 ├── README_zh.md        # Chinese translation
+├── CONTRIBUTING.md     # Contribution rules
+├── MAINTAINERS         # Maintainer roster
 ├── LICENSE             # AGPL-3.0 + Apache-2.0 dual license
 ├── NOTICE              # Copyright, trademark and third-party notices
-├── .gitignore
-└── .github/
-    └── README.md       # GitHub automation for this leaf repo
+├── CMakeLists.txt      # Build and install rules for the system layer
+├── bin/                # Operator entry points (airy-*)
+├── contracts/          # Input, intent and audit contracts
+├── Documentation/      # Component and observability design notes
+├── monitoring/         # Host monitor (airymaxmon)
+├── obs/                # Observability internals: common, eBPF, memory, perf, token
+├── ops/                # Operational agents and their CLI
+├── scripts/            # Boot, first-boot and health scripts
+├── services/           # Service packages
+├── tests/              # Unit tests for ops, services, scripts and units
+├── tools/              # Configuration lint entry points
+├── tui/                # Terminal user interface (Rust workspace)
+├── udev/               # udev rules
+└── units/              # systemd units
 ```
 
 Design documents and reference distribution specifications are maintained in the
@@ -62,10 +75,11 @@ System changes are governed by management-repository workflows (each ≤ 2 jobs)
 | `mgmt-verify.yml` | `file-integrity` + `orchestrate-leaf-ci` | Verifies the `system/` submodule dir; aggregates this repo's CI status |
 | `release.yml` | `build-and-sign` (kernel RPM via `make binrpm-pkg`; SBOM scan of `system/`; GPG signing) + `publish-release` (publish dnf repo via `createrepo` + rsync) | Release tag |
 | `nightly.yml` | `nightly-test-suite` + `nightly-revert-or-budget` | Nightly cron |
-| `ssot-verify.yml` | `ssot-syntax-and-rules` + `doc-links` | When docs reference system/packaging rules |
+| `ssot-verify.yml` | `ssot-syntax-and-rules` + `doc-links` | When docs in this leaf reference registered rule IDs or relative links |
 
-Language-level CI (RPM spec lint, shell, config validation) is delegated to this
-leaf repository's own `.github/workflows/`.
+Language-level checks run from the management repository as well: the `system`
+gitlink is watched by `c-verify.yml`, `os-chk-verify.yml`, `agent-verify.yml` and
+`ops-verify.yml`. This leaf repository keeps no workflows of its own.
 
 ## Development Guide
 
