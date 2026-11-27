@@ -78,6 +78,22 @@ def _detail(agent: Any) -> str:
     ])
 
 
+def _mem_opts(opts: dict[str, Any], args: argparse.Namespace) -> None:
+    if args.memory_l1 is not None:
+        opts["l1_mb"] = parse_mb(args.memory_l1)
+    if args.memory_l2 is not None:
+        opts["l2_mb"] = parse_mb(args.memory_l2)
+
+
+def _sched_opts(opts: dict[str, Any], args: argparse.Namespace) -> None:
+    if args.sched_runtime is not None:
+        opts["runtime_ms"] = parse_ms(args.sched_runtime)
+    if args.sched_deadline is not None:
+        opts["deadline_ms"] = parse_ms(args.sched_deadline)
+    if args.sched_period is not None:
+        opts["period_ms"] = parse_ms(args.sched_period)
+
+
 def cmd_create(args: argparse.Namespace, store: Store) -> int:
     cfg = _cfg(args)
     opts: dict[str, Any] = {
@@ -88,16 +104,8 @@ def cmd_create(args: argparse.Namespace, store: Store) -> int:
     }
     if args.token_budget is not None:
         opts["token_budget"] = args.token_budget
-    if args.memory_l1 is not None:
-        opts["l1_mb"] = parse_mb(args.memory_l1)
-    if args.memory_l2 is not None:
-        opts["l2_mb"] = parse_mb(args.memory_l2)
-    if args.sched_runtime is not None:
-        opts["runtime_ms"] = parse_ms(args.sched_runtime)
-    if args.sched_deadline is not None:
-        opts["deadline_ms"] = parse_ms(args.sched_deadline)
-    if args.sched_period is not None:
-        opts["period_ms"] = parse_ms(args.sched_period)
+    _mem_opts(opts, args)
+    _sched_opts(opts, args)
     agent = store.create(cfg, opts)
     return _emit(args, agent, f"{agent.id} {agent.name} {agent.state.value}")
 
@@ -163,18 +171,31 @@ def cmd_status(args: argparse.Namespace, store: Store) -> int:
     return _emit(args, agent, _detail(agent))
 
 
-def cmd_list(args: argparse.Namespace, store: Store) -> int:
-    state = (args.state or "").strip().upper() or None
+def _norm_state(text: str | None) -> str | None:
+    return (text or "").strip().upper() or None
+
+
+def _want_state(args: argparse.Namespace) -> Any:
+    state = _norm_state(args.state)
     if state is not None and state not in State.__members__:
         raise BadInput(f"未知状态: {args.state}")
-    rows = store.rows(state)
-    if args.json:
-        print(_dump([item.to_json() for item in rows]))
-        return OK
+    return state
+
+
+def _list_rows(rows: Any) -> None:
     for item in rows:
         print(f"{item.id}\t{item.name}\t{item.state.value}\t"
               f"{item.token['consumed']}/{item.token['total_budget']}\t"
               f"{item.template}")
+
+
+def cmd_list(args: argparse.Namespace, store: Store) -> int:
+    state = _want_state(args)
+    rows = store.rows(state)
+    if args.json:
+        print(_dump([item.to_json() for item in rows]))
+        return OK
+    _list_rows(rows)
     return OK
 
 
@@ -236,26 +257,34 @@ def _log_arc(args: argparse.Namespace) -> str:
             or logs.LOG_ARCHIVE)
 
 
-def cmd_log(args: argparse.Namespace, store: Store) -> int:
-    logs.ensure_access()
+def _arch_done(args: argparse.Namespace, raw: str) -> int:
+    ident = check_id(raw)
+    moved = logs.archive_logs(_log_root(args), _log_arc(args), ident,
+                              _cfg(args)["log_retention_d"], now_ns())
+    print(f"{ident} archived={len(moved)}"
+          + (f" files={' '.join(moved)}" if moved else ""))
+    return OK
+
+
+def _log_archive(args: argparse.Namespace) -> Any:
     items = args.items
-    if items and items[0] == "archive":
-        if len(items) != 2:
-            raise BadInput("用法: log archive <id>")
-        ident = check_id(items[1])
-        moved = logs.archive_logs(_log_root(args), _log_arc(args), ident,
-                                  _cfg(args)["log_retention_d"], now_ns())
-        print(f"{ident} archived={len(moved)}"
-              + (f" files={' '.join(moved)}" if moved else ""))
-        return OK
-    if len(items) != 1:
-        raise BadInput("用法: log <id> [--lines N] [--follow]")
-    ident = check_id(items[0])
+    if not (items and items[0] == "archive"):
+        return None
+    if len(items) != 2:
+        raise BadInput("用法: log archive <id>")
+    return _arch_done(args, items[1])
+
+
+def _log_follow(args: argparse.Namespace, ident: str) -> None:
+    try:
+        logs.follow_logs(_log_root(args), ident, args.lines)
+    except KeyboardInterrupt:
+        print()
+
+
+def _log_tail(args: argparse.Namespace, ident: str) -> int:
     if args.follow:
-        try:
-            logs.follow_logs(_log_root(args), ident, args.lines)
-        except KeyboardInterrupt:
-            print()
+        _log_follow(args, ident)
         return OK
     rows = logs.tail_lines(_log_root(args), ident, args.lines)
     if not rows:
@@ -264,6 +293,18 @@ def cmd_log(args: argparse.Namespace, store: Store) -> int:
     for line in rows:
         print(line)
     return OK
+
+
+def cmd_log(args: argparse.Namespace, store: Store) -> int:
+    logs.ensure_access()
+    done = _log_archive(args)
+    if done is not None:
+        return done
+    items = args.items
+    if len(items) != 1:
+        raise BadInput("用法: log <id> [--lines N] [--follow]")
+    ident = check_id(items[0])
+    return _log_tail(args, ident)
 
 
 def cmd_health(args: argparse.Namespace, store: Store) -> int:

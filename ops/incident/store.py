@@ -100,13 +100,20 @@ class Store:
     def rows(self) -> list[Incident]:
         return [self.load(ident) for ident in self.ids()]
 
-    def list(self, state: Any = None, severity: Any = None,
-             limit: int | None = 200) -> list[Incident]:
+    def _filters(self, state: Any, severity: Any) -> tuple:
         want = State.parse(state) if state else None
         level = Severity.parse(severity) if severity else None
+        return want, level
+
+    def _matches(self, inc: Incident, want: Any, level: Any) -> bool:
+        return ((want is None or inc.status is want)
+                and (level is None or inc.severity is level))
+
+    def list(self, state: Any = None, severity: Any = None,
+             limit: int | None = 200) -> list[Incident]:
+        want, level = self._filters(state, severity)
         rows = [inc for inc in self.rows()
-                if (want is None or inc.status is want)
-                and (level is None or inc.severity is level)]
+                if self._matches(inc, want, level)]
         rows.sort(key=lambda inc: (inc.severity.rank, -inc.detected_at))
         return rows if limit is None else rows[:max(limit, 0)]
 
@@ -190,19 +197,36 @@ class Store:
             os.fsync(handle.fileno())
         os.chmod(path, FILE_MODE)
 
-    def stats(self, month: str, stamp: int) -> dict[str, Any]:
-        need(len(month) == 6 and month.isdigit(),
-             f"月份格式应为 YYYYMM: {month}", BadInput)
-        rows = self.rows()
+    def _month_close(self, rows: list[Incident],
+                     month: str) -> tuple:
         closed = [inc for inc in rows if _closed_in(inc, month)]
         spans = [inc.span(inc.resolved_at) for inc in closed]
+        return closed, spans
+
+    def _breakdown(self, rows: list[Incident]) -> tuple:
+        states = dict(Counter(inc.status.value for inc in rows))
+        levels = dict(Counter(inc.severity.value for inc in rows))
+        return states, levels
+
+    def _stats_row(self, rows: list[Incident], month: str,
+                   closed: list[Incident], spans: list[int],
+                   states: dict, levels: dict) -> dict[str, Any]:
         return {
             "month": month,
             "total": len(rows),
             "open": _open(rows),
             "closed": len(closed),
-            "mttr_s": round(sum(spans) / len(spans) / NS, 1) if spans else None,
+            "mttr_s": (round(sum(spans) / len(spans) / NS, 1)
+                       if spans else None),
             "actions": sum(len(inc.response_actions) for inc in closed),
-            "by_state": dict(Counter(inc.status.value for inc in rows)),
-            "by_severity": dict(Counter(inc.severity.value for inc in rows)),
+            "by_state": states,
+            "by_severity": levels,
         }
+
+    def stats(self, month: str, stamp: int) -> dict[str, Any]:
+        need(len(month) == 6 and month.isdigit(),
+             f"月份格式应为 YYYYMM: {month}", BadInput)
+        rows = self.rows()
+        closed, spans = self._month_close(rows, month)
+        states, levels = self._breakdown(rows)
+        return self._stats_row(rows, month, closed, spans, states, levels)

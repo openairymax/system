@@ -23,6 +23,30 @@ _MEM = ("l1_mb", "l2_mb")
 _LOCKED = (State.DEAD, State.STOPPING)
 
 
+def _defaults(cfg: Any) -> tuple[dict[str, Any], dict[str, Any]]:
+    """--auto 的调度与内存回到 /etc/agentrt 默认值。"""
+    sched = {
+        "runtime_ms": cfg["default_sched_runtime_ms"],
+        "deadline_ms": cfg["default_sched_deadline_ms"],
+        "period_ms": cfg["default_sched_period_ms"],
+    }
+    memory = {
+        "l1_mb": cfg["default_l1_mb"],
+        "l2_mb": cfg["default_l2_mb"],
+    }
+    return sched, memory
+
+
+def _merge(base: dict[str, Any], opts: dict[str, Any],
+           keys) -> dict[str, Any]:
+    """显式参数覆盖基线值；未给出的键保持原样。"""
+    out = dict(base)
+    for key in keys:
+        if opts.get(key) is not None:
+            out[key] = opts[key]
+    return out
+
+
 def apply(agent: Agent, cfg: Any, opts: dict[str, Any],
           stamp: int = 0) -> None:
     need(agent.state not in _LOCKED,
@@ -31,24 +55,12 @@ def apply(agent: Agent, cfg: Any, opts: dict[str, Any],
     explicit = [key for key in _SCHED + _MEM if opts.get(key) is not None]
     need(not (auto and explicit), "--auto 不能与显式参数同时使用", BadInput)
     need(auto or explicit, "tune 至少需要一个参数或 --auto", BadInput)
-    sched = dict(agent.sched)
-    memory = dict(agent.memory)
     if auto:
-        sched = {
-            "runtime_ms": cfg["default_sched_runtime_ms"],
-            "deadline_ms": cfg["default_sched_deadline_ms"],
-            "period_ms": cfg["default_sched_period_ms"],
-        }
-        memory = {
-            "l1_mb": cfg["default_l1_mb"],
-            "l2_mb": cfg["default_l2_mb"],
-        }
-    for key in _SCHED:
-        if opts.get(key) is not None:
-            sched[key] = opts[key]
-    for key in _MEM:
-        if opts.get(key) is not None:
-            memory[key] = opts[key]
+        sched, memory = _defaults(cfg)
+    else:
+        sched, memory = dict(agent.sched), dict(agent.memory)
+    sched = _merge(sched, opts, _SCHED)
+    memory = _merge(memory, opts, _MEM)
     need_sched(sched)
     need_mem(memory)
     agent.sched = sched

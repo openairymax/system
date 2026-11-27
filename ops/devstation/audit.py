@@ -9,10 +9,11 @@ fsync，两个终端并发也不会互相覆盖半行。
 """
 
 import getpass
-import json
 import os
 from pathlib import Path
 from typing import Any, Dict, List
+
+from airylib.ledger import append_line, read_rows
 
 from .model import iso, now_ns
 
@@ -42,15 +43,7 @@ def append(doc: Dict[str, Any]) -> Path:
     """原子追加一条审计记录。"""
     folder = logdir()
     folder.mkdir(parents=True, exist_ok=True, mode=0o750)
-    path = folder / FILE
-    line = json.dumps(doc, ensure_ascii=False, sort_keys=True) + "\n"
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o640)
-    try:
-        os.write(fd, line.encode("utf-8"))
-        os.fsync(fd)
-    finally:
-        os.close(fd)
-    return path
+    return append_line(folder / FILE, doc)
 
 
 def record(level: str, action: str, target: str, result: str,
@@ -70,17 +63,4 @@ def record(level: str, action: str, target: str, result: str,
 
 def read(limit: int = 50) -> List[Dict[str, Any]]:
     """读取最近的审计记录，坏行跳过。"""
-    path = logdir() / FILE
-    if not path.is_file():
-        return []
-    rows: List[Dict[str, Any]] = []
-    for line in path.read_text(encoding="utf-8").splitlines():
-        try:
-            row = json.loads(line)
-        except ValueError:
-            continue
-        if isinstance(row, dict):
-            rows.append(row)
-    if limit > 0:
-        return rows[-limit:]
-    return rows
+    return read_rows(logdir() / FILE, limit)

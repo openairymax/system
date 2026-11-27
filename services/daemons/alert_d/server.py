@@ -98,35 +98,50 @@ class Server:
         self.sel.register(srv, selectors.EVENT_READ, None)
         sd_notify("READY=1\nSTATUS=alert daemon ready")
 
+    def _ready(self, stamp: int) -> None:
+        self._save(stamp, force=True)
+        print(json.dumps({
+            "action": "READY",
+            "socket": str(self.sock_path),
+            "rules": len(self.engine.rules),
+        }), flush=True)
+
+    def _pump(self) -> None:
+        for key, _mask in self.sel.select(0.5):
+            if key.data is None:
+                self._accept()
+            else:
+                self._read(key.data)
+
+    def _clock(self, now: int, last_tick: int,
+               last_watch: int) -> tuple:
+        if now - last_tick >= TICK_NS:
+            last_tick = now
+            self._tick(now)
+        if now - last_watch >= WATCH_NS:
+            last_watch = now
+            sd_notify("WATCHDOG=1")
+        if self.want_reload:
+            self.want_reload = False
+            self._reload()
+        return last_tick, last_watch
+
+    def _finished(self, once: bool) -> bool:
+        return once and self.served and not self.conns
+
     def run(self, once: bool = False) -> int:
         self.once = once
         last_tick = time.monotonic_ns()
         last_watch = last_tick
         try:
             self.setup()
-            self._save(last_tick, force=True)
-            print(json.dumps({
-                "action": "READY",
-                "socket": str(self.sock_path),
-                "rules": len(self.engine.rules),
-            }), flush=True)
+            self._ready(last_tick)
             while not self.stop:
-                for key, _mask in self.sel.select(0.5):
-                    if key.data is None:
-                        self._accept()
-                    else:
-                        self._read(key.data)
+                self._pump()
                 now = time.monotonic_ns()
-                if now - last_tick >= TICK_NS:
-                    last_tick = now
-                    self._tick(now)
-                if now - last_watch >= WATCH_NS:
-                    last_watch = now
-                    sd_notify("WATCHDOG=1")
-                if self.want_reload:
-                    self.want_reload = False
-                    self._reload()
-                if once and self.served and not self.conns:
+                last_tick, last_watch = self._clock(now, last_tick,
+                                                    last_watch)
+                if self._finished(once):
                     break
         finally:
             self._cleanup()
@@ -153,17 +168,20 @@ class Server:
         except OSError:
             pass
 
-    def _read(self, conn: socket.socket) -> None:
+    def _recv(self, conn: socket.socket):
         try:
             data = conn.recv(MAX_LINE)
         except BlockingIOError:
-            return
+            return None
         except OSError:
             self._close(conn)
-            return
+            return None
         if not data:
             self._close(conn)
-            return
+            return None
+        return data
+
+    def _drain(self, conn: socket.socket, data: bytes) -> None:
         buf = self.bufs.get(conn, b"") + data
         if len(buf) > MAX_LINE:
             self._reply(conn, {"error": "line too long"})
@@ -174,6 +192,12 @@ class Server:
             if line.strip():
                 self._handle(conn, line)
         self.bufs[conn] = buf
+
+    def _read(self, conn: socket.socket) -> None:
+        data = self._recv(conn)
+        if data is None:
+            return
+        self._drain(conn, data)
 
     def _handle(self, conn: socket.socket, line: bytes) -> None:
         now = time.monotonic_ns()

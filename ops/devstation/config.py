@@ -97,24 +97,30 @@ def validate(values) -> dict:
     return out
 
 
+def _rows(lines) -> dict:
+    """把 devstation.* 键读成字典；语法错误交给调用方映射退出码。"""
+    values = {}
+    for raw in lines:
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if "=" not in line:
+            raise BadConfig(f"配置行缺少等号: {line}")
+        key, value = line.split("=", 1)
+        key = key.strip()
+        if key.startswith(PREFIX):
+            values[key] = value.strip()
+    return values
+
+
 def load(path=None) -> dict:
     """读取并校验配置；文件不存在时返回全默认值。"""
     target = path or os.environ.get(ENV) or CONF
-    values = {}
-    if target and os.path.exists(target):
-        try:
-            with open(target, encoding="utf-8") as handle:
-                lines = handle.readlines()
-        except OSError as exc:
-            raise BadConfig(f"配置不可读: {target}: {exc}") from exc
-        for raw in lines:
-            line = raw.strip()
-            if not line or line.startswith("#"):
-                continue
-            if "=" not in line:
-                raise BadConfig(f"配置行缺少等号: {line}")
-            key, value = line.split("=", 1)
-            key = key.strip()
-            if key.startswith(PREFIX):
-                values[key] = value.strip()
-    return validate(values)
+    if not target or not os.path.exists(target):
+        return validate({})
+    try:
+        with open(target, encoding="utf-8") as handle:
+            lines = handle.readlines()
+    except OSError as exc:
+        raise BadConfig(f"配置不可读: {target}: {exc}") from exc
+    return validate(_rows(lines))

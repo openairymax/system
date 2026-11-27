@@ -63,14 +63,22 @@ def status(store: Store) -> Dict[str, Any]:
     return state(store)
 
 
-def reason_for(before: Dict[str, Any], cfg: Dict[str, Any],
-               meta: Dict[str, Any], stamp: int) -> str:
+def _frag_reason(before: Dict[str, Any], cfg: Dict[str, Any]) -> str:
     if before["fragmentation_pct"] > float(cfg["defrag_threshold_pct"]):
         return "fragmentation"
-    if before["blocks"] > 10000 and before["utilization_pct"] < stats.LOW_UTIL:
+    return ""
+
+
+def _press_reason(before: Dict[str, Any]) -> str:
+    if (before["blocks"] > 10000
+            and before["utilization_pct"] < stats.LOW_UTIL):
         return "block-utilization"
     if before["index_ratio_pct"] > stats.INDEX_SHARE:
         return "index-ratio"
+    return ""
+
+
+def _age_reason(meta: Dict[str, Any], stamp: int) -> str:
     last = meta.get("last_defrag_at")
     if not last:
         return "age"
@@ -83,6 +91,12 @@ def reason_for(before: Dict[str, Any], cfg: Dict[str, Any],
     return ""
 
 
+def reason_for(before: Dict[str, Any], cfg: Dict[str, Any],
+               meta: Dict[str, Any], stamp: int) -> str:
+    return (_frag_reason(before, cfg) or _press_reason(before)
+            or _age_reason(meta, stamp))
+
+
 def _guard_window(cfg: Dict[str, Any], stamp: int, now: bool) -> None:
     if now:
         return
@@ -90,6 +104,15 @@ def _guard_window(cfg: Dict[str, Any], stamp: int, now: bool) -> None:
     need(in_window(window, stamp),
          f"当前不在 defrag 时间窗口 {window}，确需立即整理请加 --now",
          BadState)
+
+
+def _perform(store: Store, rank: Any, agent: Any,
+             moment: int) -> List[Any]:
+    with store.locked():
+        items = store.items(rank, agent)
+        store.replace_all(rank, agent, items)
+        store.mark_defrag(rank, agent, moment)
+    return items
 
 
 def run(store: Store, cfg: Dict[str, Any], level: Any, ident: Any,
@@ -109,10 +132,7 @@ def run(store: Store, cfg: Dict[str, Any], level: Any, ident: Any,
     _save(store, {"state": "running", "progress_pct": 0, "agent": agent,
                   "level": rank.value, "trigger": trigger,
                   "started_at": iso(moment)})
-    with store.locked():
-        items = store.items(rank, agent)
-        store.replace_all(rank, agent, items)
-        store.mark_defrag(rank, agent, moment)
+    items = _perform(store, rank, agent, moment)
     after = stats.level_stats(store, rank, agent)
     elapsed = int((time.monotonic() - started) * 1000)
     doc = {

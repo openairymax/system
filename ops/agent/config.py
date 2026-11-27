@@ -76,26 +76,37 @@ def _value(key: str, text: str) -> Any:
         raise BadConfig(f"配置项 {key} 需要整数: {text!r}") from exc
 
 
-def load(path: str | None = None) -> Config:
-    target = Path(path or os.environ.get("AIRY_AGENT_CONF") or CONF)
-    values = dict(DEFAULTS)
-    if not target.is_file():
-        return Config(values, str(target))
+def _split(line: str, target, number: int) -> tuple[str, str]:
+    """按 `key=value` 或 `key: value` 拆分一行配置。"""
+    if "=" in line:
+        key, text = line.split("=", 1)
+    elif ":" in line:
+        key, text = line.split(":", 1)
+    else:
+        raise BadConfig(f"{target}:{number} 不是 key=value")
+    return key.strip(), text
+
+
+def _rows(target) -> dict[str, Any]:
+    """读回文件里登记过的键；未登记的键忽略，便于跨版本共存。"""
+    values: dict[str, Any] = {}
     for number, raw in enumerate(
             target.read_text(encoding="utf-8").splitlines(), 1):
         line = raw.strip()
         if not line or line[0] in "#;":
             continue
-        if "=" in line:
-            key, text = line.split("=", 1)
-        elif ":" in line:
-            key, text = line.split(":", 1)
-        else:
-            raise BadConfig(f"{target}:{number} 不是 key=value")
-        key = key.strip()
+        key, text = _split(line, target, number)
         if key.startswith(PREFIX):
             key = key[len(PREFIX):]
-        if key not in DEFAULTS:
-            continue
-        values[key] = _value(key, text)
+        if key in DEFAULTS:
+            values[key] = _value(key, text)
+    return values
+
+
+def load(path: str | None = None) -> Config:
+    target = Path(path or os.environ.get("AIRY_AGENT_CONF") or CONF)
+    if not target.is_file():
+        return Config(dict(DEFAULTS), str(target))
+    values = dict(DEFAULTS)
+    values.update(_rows(target))
     return Config(values, str(target))

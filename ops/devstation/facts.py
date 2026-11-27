@@ -128,29 +128,80 @@ def _tail(path: Path) -> list:
     return [line.decode("utf-8", "replace") for line in lines]
 
 
+def _level(value) -> str:
+    """级别归一：缺省为 `-`，WARNING 与 WARN 合成一个词。"""
+    got = str(value or "-")
+    return "WARN" if got.upper() == "WARNING" else got
+
+
+def _json_obj(text: str):
+    try:
+        row = json.loads(text)
+    except ValueError:
+        return None
+    if not isinstance(row, dict):
+        return None
+    return row
+
+
+def _stamp(row) -> str:
+    return str(row.get("ts") or row.get("at") or "-")
+
+
+def _label(row) -> str:
+    return _level(row.get("level") or row.get("severity"))
+
+
+def _origin(row) -> str:
+    return str(row.get("source") or row.get("daemon") or "-")
+
+
+def _body(row) -> str:
+    return str(row.get("message") or row.get("msg") or "")
+
+
+def _json_row(text: str):
+    """解析一行 JSON 日志；不是对象或不可解析时返回 None。"""
+    row = _json_obj(text)
+    if row is None:
+        return None
+    return (_stamp(row), _label(row), _origin(row), _body(row))
+
+
 def _parse(text: str) -> tuple:
     text = text.strip()
     if not text:
         return None
     if text.startswith("{"):
-        try:
-            row = json.loads(text)
-        except ValueError:
-            row = None
-        if isinstance(row, dict):
-            level = str(row.get("level") or row.get("severity") or "-")
-            if level.upper() == "WARNING":
-                level = "WARN"
-            return (str(row.get("ts") or row.get("at") or "-"), level,
-                    str(row.get("source") or row.get("daemon") or "-"),
-                    str(row.get("message") or row.get("msg") or ""))
+        got = _json_row(text)
+        if got is not None:
+            return got
     found = LINE.match(text)
     if found:
         stamp, level, source, message = found.groups()
-        if level.upper() == "WARNING":
-            level = "WARN"
-        return (stamp, level, source, message)
+        return (stamp, _level(level), source, message)
     return ("-", "-", "-", text)
+
+
+def _row(path: Path, offset: int, got: tuple) -> dict:
+    stamp, level, source, message = got
+    return {"ts": stamp, "level": level, "source": source,
+            "message": message, "file": path.name, "line": offset + 1}
+
+
+def _collect(paths, rows: list) -> int:
+    """逐文件展开日志尾部；返回确实读不到内容的文件数。"""
+    failed = 0
+    for path in paths:
+        text = _tail(path)
+        if not text:
+            failed += 1 if path.is_file() else 0
+            continue
+        for offset, raw in enumerate(text):
+            got = _parse(raw)
+            if got is not None:
+                rows.append(_row(path, offset, got))
+    return failed
 
 
 def log_rows(base: Path, limit: int) -> Section:
@@ -158,30 +209,11 @@ def log_rows(base: Path, limit: int) -> Section:
     folder = base / LOG_DIR
     if not folder.is_dir():
         return _down("logs", "缺少 " + LOG_DIR)
-    files = sorted(folder.glob("*.log"), key=lambda path: str(path))
-    files += sorted(folder.glob("agents/*/*.log"), key=lambda path: str(path))
-    rows = []
-    failed = 0
-    for path in files:
-        text = _tail(path)
-        if not text:
-            if path.is_file():
-                failed += 1
-            continue
-        for offset, raw in enumerate(text):
-            got = _parse(raw)
-            if got is None:
-                continue
-            stamp, level, source, message = got
-            rows.append({
-                "ts": stamp,
-                "level": level,
-                "source": source,
-                "message": message,
-                "file": path.name,
-                "line": offset + 1,
-            })
-    if files and not rows and failed:
+    files = sorted(folder.glob("*.log"), key=str)
+    files += sorted(folder.glob("agents/*/*.log"), key=str)
+    rows: list = []
+    failed = _collect(files, rows)
+    if failed and not rows:
         return _down("logs", "日志文件不可读: %d 个" % failed)
     if limit > 0:
         rows = rows[-limit:]
@@ -292,6 +324,24 @@ def backup_rows(base: Path) -> Section:
     return _ok("backup", rows)
 
 
+def _split_line(offset: int, line: str) -> tuple:
+    if "=" in line:
+        key, value = line.split("=", 1)
+    elif ":" in line:
+        key, value = line.split(":", 1)
+    else:
+        key, value = "<line %d>" % offset, line
+    return key.strip(), value.strip()
+
+
+def _conf_row(name: str, offset: int, raw: str):
+    line = raw.strip()
+    if not line or line.startswith("#"):
+        return None
+    key, value = _split_line(offset, line)
+    return {"file": name, "key": key, "value": value}
+
+
 def config_rows(base: Path) -> Section:
     """逐行展开 /etc/agentrt 下的配置文件。"""
     folder = base / CONF_DIR
@@ -305,15 +355,7 @@ def config_rows(base: Path) -> Section:
                          "value": "权限不足或文件损坏"})
             continue
         for offset, raw in enumerate(text.splitlines(), 1):
-            line = raw.strip()
-            if not line or line.startswith("#"):
-                continue
-            if "=" in line:
-                key, value = line.split("=", 1)
-            elif ":" in line:
-                key, value = line.split(":", 1)
-            else:
-                key, value = "<line %d>" % offset, line
-            rows.append({"file": path.name, "key": key.strip(),
-                         "value": value.strip()})
+            row = _conf_row(path.name, offset, raw)
+            if row is not None:
+                rows.append(row)
     return _ok("config", rows)

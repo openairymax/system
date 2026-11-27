@@ -30,26 +30,36 @@ CATEGORY = {
 }
 
 
-def read_active(root: str | Path) -> list[dict[str, Any]]:
-    """读活动告警；没有状态文件视为当前无告警。"""
-    path = Path(root) / ACTIVE
+def _active_doc(path: Path):
     try:
-        doc = json.loads(path.read_text(encoding="utf-8"))
+        return json.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError:
-        return []
+        return None
     except (OSError, json.JSONDecodeError) as exc:
         raise BadStore(f"{path}: {exc}") from exc
-    if not isinstance(doc, Mapping) or doc.get("schema") != SCHEMA:
-        raise BadStore(f"{path}: 活动告警 schema 不支持")
-    rows = doc.get("alerts")
-    if not isinstance(rows, list):
-        raise BadStore(f"{path}: alerts 必须是数组")
+
+
+def _active_rows(path: Path, rows: list) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     for row in rows:
         if not isinstance(row, Mapping):
             raise BadStore(f"{path}: alerts 含非对象项")
         out.append(dict(row))
     return out
+
+
+def read_active(root: str | Path) -> list[dict[str, Any]]:
+    """读活动告警；没有状态文件视为当前无告警。"""
+    path = Path(root) / ACTIVE
+    doc = _active_doc(path)
+    if doc is None:
+        return []
+    if not isinstance(doc, Mapping) or doc.get("schema") != SCHEMA:
+        raise BadStore(f"{path}: 活动告警 schema 不支持")
+    rows = doc.get("alerts")
+    if not isinstance(rows, list):
+        raise BadStore(f"{path}: alerts 必须是数组")
+    return _active_rows(path, rows)
 
 
 def _ident(row: Mapping[str, Any], path: str) -> str:
@@ -74,14 +84,14 @@ def _agents(row: Mapping[str, Any]) -> list[int]:
     return [agent]
 
 
-def draft(row: Mapping[str, Any]) -> dict[str, Any] | None:
-    """把一行活动告警折算成建单参数；不该建单的返回 None。"""
+def _draft_level(row: Mapping[str, Any]):
     if row.get("state") != FIRING:
         return None
-    level = LEVELS.get(str(row.get("severity") or "").upper())
-    if level is None:
-        return None
-    source = str(row.get("source") or "").strip()
+    return LEVELS.get(str(row.get("severity") or "").upper())
+
+
+def _draft_meta(row: Mapping[str, Any], level: Any,
+                source: str) -> dict[str, Any]:
     title = _head(row).strip() or "未命名告警"
     return {
         "severity": level,
@@ -89,7 +99,17 @@ def draft(row: Mapping[str, Any]) -> dict[str, Any] | None:
         "title": title[:TITLE_MAX],
         "source": source or "alert",
         "detail": str(row.get("message") or "").strip(),
-        "alerts": [_ident(row, ACTIVE)],
-        "agents": _agents(row),
-        "daemons": [source] if source.endswith("_d") else [],
     }
+
+
+def draft(row: Mapping[str, Any]) -> dict[str, Any] | None:
+    """把一行活动告警折算成建单参数；不该建单的返回 None。"""
+    level = _draft_level(row)
+    if level is None:
+        return None
+    source = str(row.get("source") or "").strip()
+    doc = _draft_meta(row, level, source)
+    doc["alerts"] = [_ident(row, ACTIVE)]
+    doc["agents"] = _agents(row)
+    doc["daemons"] = [source] if source.endswith("_d") else []
+    return doc

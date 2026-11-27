@@ -101,20 +101,48 @@ def cmd_stats(ctx: Ctx, args: Any) -> int:
     return 0
 
 
+def _list_doc(agent: str, rank: Any, items: List[Any]) -> Dict[str, Any]:
+    return {"agent": agent, "level": rank.value,
+            "items": [item.to_json(rank.value) for item in items]}
+
+
+def _list_rows(items: List[Any], rank: Any) -> None:
+    for item in items:
+        print(f"{item.id} {rank.value} bytes={len(item.data)} "
+              f"sensitive={'yes' if item.sensitive else 'no'} "
+              f"created={iso(item.created_at)}")
+
+
 def cmd_list(ctx: Ctx, args: Any) -> int:
     agent = check_id(args.agent_id)
     rank = parse_level(args.level)
     need(ctx.store.exists(rank, agent), f"记忆仓库不存在: {agent}", BadStore)
     items = ctx.store.items(rank, agent)
     if args.json:
-        _dump({"agent": agent, "level": rank.value,
-               "items": [item.to_json(rank.value) for item in items]})
+        _dump(_list_doc(agent, rank, items))
         return 0
-    for item in items:
-        print(f"{item.id} {rank.value} bytes={len(item.data)} "
-              f"sensitive={'yes' if item.sensitive else 'no'} "
-              f"created={iso(item.created_at)}")
+    _list_rows(items, rank)
     return 0
+
+
+def _search_hits(ctx: Ctx, rank: Any, agent: str,
+                 needle: str) -> List[Any]:
+    folded = needle.lower()
+    return [item for item in ctx.store.items(rank, agent)
+            if folded in item.id.lower()
+            or folded in item.text().lower()]
+
+
+def _hits_doc(agent: str, rank: Any, needle: str,
+              hits: List[Any]) -> Dict[str, Any]:
+    return {"agent": agent, "level": rank.value, "keyword": needle,
+            "items": [item.to_json(rank.value) for item in hits]}
+
+
+def _search_rows(hits: List[Any], rank: Any) -> None:
+    for item in hits:
+        print(f"{item.id} {rank.value} bytes={len(item.data)} "
+              f"sensitive={'yes' if item.sensitive else 'no'}")
 
 
 def cmd_search(ctx: Ctx, args: Any) -> int:
@@ -123,44 +151,37 @@ def cmd_search(ctx: Ctx, args: Any) -> int:
     needle = str(args.keyword or "").strip()
     need(bool(needle), "搜索关键词不能为空", BadInput)
     need(ctx.store.exists(rank, agent), f"记忆仓库不存在: {agent}", BadStore)
-    folded = needle.lower()
-    hits = [item for item in ctx.store.items(rank, agent)
-            if folded in item.id.lower() or folded in item.text().lower()]
+    hits = _search_hits(ctx, rank, agent, needle)
     if args.json:
-        _dump({"agent": agent, "level": rank.value, "keyword": needle,
-               "items": [item.to_json(rank.value) for item in hits]})
+        _dump(_hits_doc(agent, rank, needle, hits))
         return 0
-    for item in hits:
-        print(f"{item.id} {rank.value} bytes={len(item.data)} "
-              f"sensitive={'yes' if item.sensitive else 'no'}")
+    _search_rows(hits, rank)
     return 0
 
 
-def cmd_defrag(ctx: Ctx, args: Any) -> int:
-    if args.target == "status":
-        doc = defrag.status(ctx.store)
-        if args.json:
-            _dump(doc)
-        elif doc.get("state") == "none":
-            print("defrag state=none")
-        else:
-            print(f"defrag state={doc.get('state')} "
-                  f"agent={doc.get('agent')} level={doc.get('level')} "
-                  f"progress={doc.get('progress_pct')} "
-                  f"freed_bytes={doc.get('freed_bytes', 0)} "
-                  f"duration_ms={doc.get('duration_ms', 0)}")
-        return 0
-    need(bool(args.all_agents) ^ bool(args.target),
-         "defrag 需要 Agent ID、status 或 --all", BadInput)
-    rank = parse_level(args.level)
-    if args.all_agents:
-        docs = defrag.run_all(ctx.store, ctx.cfg, rank, now=args.now)
-    else:
-        docs = [defrag.run(ctx.store, ctx.cfg, rank, args.target,
-                           now=args.now)]
+def _defrag_status(ctx: Ctx, args: Any) -> int:
+    doc = defrag.status(ctx.store)
     if args.json:
-        _dump(docs if args.all_agents else docs[0])
-        return 0
+        _dump(doc)
+    elif doc.get("state") == "none":
+        print("defrag state=none")
+    else:
+        print(f"defrag state={doc.get('state')} "
+              f"agent={doc.get('agent')} level={doc.get('level')} "
+              f"progress={doc.get('progress_pct')} "
+              f"freed_bytes={doc.get('freed_bytes', 0)} "
+              f"duration_ms={doc.get('duration_ms', 0)}")
+    return 0
+
+
+def _defrag_docs(ctx: Ctx, args: Any, rank: Any) -> List[Any]:
+    if args.all_agents:
+        return defrag.run_all(ctx.store, ctx.cfg, rank, now=args.now)
+    return [defrag.run(ctx.store, ctx.cfg, rank, args.target,
+                       now=args.now)]
+
+
+def _defrag_rows(docs: List[Any]) -> None:
     for doc in docs:
         if doc["state"] == "skipped":
             print(f"defrag agent={doc['agent']} level={doc['level']} "
@@ -173,13 +194,24 @@ def cmd_defrag(ctx: Ctx, args: Any) -> int:
               f"frag_after={doc['after']['fragmentation_pct']}% "
               f"freed_bytes={doc['freed_bytes']} "
               f"duration_ms={doc['duration_ms']}")
+
+
+def cmd_defrag(ctx: Ctx, args: Any) -> int:
+    if args.target == "status":
+        return _defrag_status(ctx, args)
+    need(bool(args.all_agents) ^ bool(args.target),
+         "defrag 需要 Agent ID、status 或 --all", BadInput)
+    rank = parse_level(args.level)
+    docs = _defrag_docs(ctx, args, rank)
+    if args.json:
+        _dump(docs if args.all_agents else docs[0])
+        return 0
+    _defrag_rows(docs)
     return 0
 
 
-def _move(ctx: Ctx, args: Any, copy: bool) -> int:
-    levels = _levels(args.level)
-    need(not (len(levels) > 1 and args.to_level),
-         "--to-level 与多层级列表同时使用有歧义", BadInput)
+def _transfer_docs(ctx: Ctx, args: Any, levels: List[str],
+                   copy: bool) -> List[Any]:
     docs = []
     for rank in levels:
         opts = {
@@ -192,14 +224,26 @@ def _move(ctx: Ctx, args: Any, copy: bool) -> int:
         }
         docs.append(transfer.clone(ctx.store, opts) if copy
                     else transfer.move(ctx.store, opts))
-    if args.json:
-        _dump(docs[0] if len(docs) == 1 else docs)
-        return 0
+    return docs
+
+
+def _move_rows(docs: List[Any]) -> None:
     for doc in docs:
         print(f"{doc['mode']} from={doc['from_agent']} "
               f"to={doc['to_agent']} level={doc['from_level']} "
               f"items={doc['items']} bytes={doc['bytes']} "
               f"duration_ms={doc['duration_ms']}")
+
+
+def _move(ctx: Ctx, args: Any, copy: bool) -> int:
+    levels = _levels(args.level)
+    need(not (len(levels) > 1 and args.to_level),
+         "--to-level 与多层级列表同时使用有歧义", BadInput)
+    docs = _transfer_docs(ctx, args, levels, copy)
+    if args.json:
+        _dump(docs[0] if len(docs) == 1 else docs)
+        return 0
+    _move_rows(docs)
     return 0
 
 

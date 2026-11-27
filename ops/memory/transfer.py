@@ -57,24 +57,41 @@ def _held(store: Store, level: Any, ident: Any, meta: Dict[str, Any],
     return {item.id: item for item in store.items(level, ident)}
 
 
-def _plan(store: Store, opts: Dict[str, Any], copy: bool) -> Dict[str, Any]:
+def _route(opts: Dict[str, Any]) -> Tuple[Any, Any, Any, Any]:
     source = check_id(opts.get("from"))
     target = check_id(opts.get("to"))
     src_level = parse_level(opts.get("level") or "L3")
     dst_level = parse_level(opts.get("to_level") or src_level.value)
     need(source != target or src_level is not dst_level,
          "源与目标是同一容器，无需迁移", BadInput)
-    started = time.monotonic()
+    return source, target, src_level, dst_level
+
+
+def _merge(chosen: Dict[str, Item],
+           held: Dict[str, Item]) -> List[Item]:
+    clash = [key for key in chosen if key in held]
+    need(not clash,
+         f"目标已存在同名记忆项: {','.join(clash)}", BadState)
+    return list(held.values()) + list(chosen.values())
+
+
+def _carry(store: Store, source: Any, target: Any, src_level: Any,
+           dst_level: Any, opts: Dict[str, Any],
+           copy: bool) -> Dict[str, Item]:
     with store.locked():
         meta, chosen = _guard(store, src_level, source, opts)
         held = _held(store, dst_level, target, meta, opts)
-        clash = [key for key in chosen if key in held]
-        need(not clash, f"目标已存在同名记忆项: {','.join(clash)}", BadState)
-        merged = list(held.values()) + list(chosen.values())
+        merged = _merge(chosen, held)
         store.replace_all(dst_level, target, merged,
                           owner=str(meta.get("owner") or ""))
         if not copy:
             store.remove(src_level, source, list(chosen))
+    return chosen
+
+
+def _result(source: Any, target: Any, src_level: Any, dst_level: Any,
+            chosen: Dict[str, Item], copy: bool,
+            started: float) -> Dict[str, Any]:
     elapsed = int((time.monotonic() - started) * 1000)
     return {
         "state": "done",
@@ -88,6 +105,14 @@ def _plan(store: Store, opts: Dict[str, Any], copy: bool) -> Dict[str, Any]:
         "bytes": sum(len(item.data) for item in chosen.values()),
         "duration_ms": elapsed,
     }
+
+
+def _plan(store: Store, opts: Dict[str, Any], copy: bool) -> Dict[str, Any]:
+    source, target, src_level, dst_level = _route(opts)
+    started = time.monotonic()
+    chosen = _carry(store, source, target, src_level, dst_level, opts, copy)
+    return _result(source, target, src_level, dst_level, chosen, copy,
+                   started)
 
 
 def move(store: Store, opts: Dict[str, Any]) -> Dict[str, Any]:

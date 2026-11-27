@@ -100,24 +100,40 @@ def _fills(method: Method) -> List[Fill]:
     return [zero_fill, one_fill, random_fill]
 
 
-def _select(blocks: Dict[str, List[Record]],
-            ids: Optional[List[str]]) -> Any:
-    live = {rec.item.id for rows in blocks.values()
+def _live(blocks: Dict[str, List[Record]]) -> set:
+    return {rec.item.id for rows in blocks.values()
             for rec in rows if not rec.deleted}
+
+
+def _resolve(blocks: Dict[str, List[Record]],
+             ids: Optional[List[str]]) -> tuple:
+    live = _live(blocks)
     chosen = set(live) if ids is None else set(ids)
     missing = sorted(chosen - live)
+    return chosen, missing
+
+
+def _hit_row(rows: List[Record], chosen: set) -> bool:
+    return any(not rec.deleted and rec.item.id in chosen for rec in rows)
+
+
+def _hits(blocks: Dict[str, List[Record]], chosen: set) -> List[str]:
+    return sorted({name for name, rows in blocks.items()
+                   if _hit_row(rows, chosen)})
+
+
+def _select(blocks: Dict[str, List[Record]],
+            ids: Optional[List[str]]) -> Any:
+    chosen, missing = _resolve(blocks, ids)
     need(not missing, f"记忆项不存在: {','.join(missing)}", BadState)
-    targets = sorted({
-        name for name, rows in blocks.items()
-        if any(not rec.deleted and rec.item.id in chosen for rec in rows)})
-    return chosen, targets
+    return chosen, _hits(blocks, chosen)
 
 
 def _wipe(blocks: Dict[str, List[Record]], chosen: set, folder: Path,
           fills: List[Fill]) -> int:
     written = 0
     for name, rows in blocks.items():
-        if any(not rec.deleted and rec.item.id in chosen for rec in rows):
+        if _hit_row(rows, chosen):
             written += overwrite_file(folder / name, fills)
     return written
 
@@ -186,25 +202,27 @@ def _save_state(store: Store, doc: Dict[str, Any]) -> None:
                             sort_keys=True) + "\n")
 
 
-def erase(store: Store, cfg: Dict[str, Any], opts: Dict[str, Any]) -> Dict[str, Any]:
+def _scope(cfg: Dict[str, Any], opts: Dict[str, Any]) -> tuple:
     method = parse_method(opts.get("method") or cfg["erase_default_level"])
     unsupported(method)
     rank = parse_level(opts.get("level") or "L3")
+    return method, rank
+
+
+def _request(cfg: Dict[str, Any], opts: Dict[str, Any]) -> tuple:
+    method, rank = _scope(cfg, opts)
     ident = check_id(opts.get("agent"))
     ids = parse_items(opts["items"]) if opts.get("items") else None
     need(ids is not None or bool(opts.get("all")),
-         "擦除需要 --items 指定记忆项或 --all 覆盖整个容器", BadInput)
-    started = time.monotonic()
-    fills = _fills(method)
-    with store.locked():
-        need(store.exists(rank, ident), f"记忆仓库不存在: {ident}", BadStore)
-        blocks = store.read_blocks(rank, ident)
-        chosen, _targets = _select(blocks, ids)
-        if ids is None:
-            stats_row = _whole(store, rank, ident, blocks, fills)
-        else:
-            stats_row = _partial(store, rank, ident, blocks, chosen, fills)
-    row = {
+         "擦除需要 --items 指定记忆项或 --all 覆盖整个容器",
+         BadInput)
+    return method, rank, ident, ids
+
+
+def _audit_row(ident: Any, rank: Any, method: Any, fills: List[Fill],
+               ids: Optional[List[str]], chosen: set,
+               stats_row: Dict[str, Any], started: float) -> Dict[str, Any]:
+    return {
         "ts": iso(now_ns()),
         "operator": _operator(),
         "action": "erase",
@@ -219,6 +237,23 @@ def erase(store: Store, cfg: Dict[str, Any], opts: Dict[str, Any]) -> Dict[str, 
         "bytes": stats_row["bytes"],
         "duration_ms": int((time.monotonic() - started) * 1000),
     }
+
+
+def erase(store: Store, cfg: Dict[str, Any],
+          opts: Dict[str, Any]) -> Dict[str, Any]:
+    method, rank, ident, ids = _request(cfg, opts)
+    started = time.monotonic()
+    fills = _fills(method)
+    with store.locked():
+        need(store.exists(rank, ident), f"记忆仓库不存在: {ident}", BadStore)
+        blocks = store.read_blocks(rank, ident)
+        chosen, _targets = _select(blocks, ids)
+        if ids is None:
+            stats_row = _whole(store, rank, ident, blocks, fills)
+        else:
+            stats_row = _partial(store, rank, ident, blocks, chosen, fills)
+    row = _audit_row(ident, rank, method, fills, ids, chosen, stats_row,
+                     started)
     _save_state(store, row)
     if cfg.get("erase_audit", True):
         audit.append(row)

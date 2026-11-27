@@ -89,21 +89,31 @@ def _count(blocks: Any) -> List[int]:
     return [live_items, dead_items, live_bytes, dead_bytes]
 
 
-def level_stats(store: Store, level: Any, ident: Any,
-                archived: bool = False) -> Dict[str, Any]:
-    rank = parse_level(level)
-    empty = _empty(store, rank, ident)
-    if not store.exists(rank, ident, archived):
-        return empty
-    meta = store.meta(rank, ident, archived)
-    blocks = store.read_blocks(rank, ident, archived)
-    folder = store.folder(rank, ident, archived)
-    data_bytes = sum(path.stat().st_size for path in _files(folder / DATA))
-    live_items, dead_items, live_bytes, dead_bytes = _count(blocks)
+def _sizes(folder: Path) -> tuple:
+    data_bytes = sum(path.stat().st_size
+                     for path in _files(folder / DATA))
     index_path = folder / "index.airyidx"
     index_size = index_path.stat().st_size if index_path.is_file() else 0
-    record = dict(empty)
-    record.update({
+    return data_bytes, index_size
+
+
+def _meta_bits(store: Store,
+               meta: Dict[str, Any]) -> tuple:
+    block_kb = int(meta.get("block_kb") or store.block_kb)
+    owner = str(meta.get("owner") or "")
+    updated = str(meta.get("updated_at") or "")
+    return block_kb, owner, updated
+
+
+def _measure(store: Store, rank: Any, ident: Any, archived: bool,
+             meta: Dict[str, Any], folder: Path,
+             blocks: Any) -> Dict[str, Any]:
+    data_bytes, index_size = _sizes(folder)
+    live_items, dead_items, live_bytes, dead_bytes = _count(blocks)
+    block_kb, owner, updated = _meta_bits(store, meta)
+    utilization = (round(live_bytes * 100.0 / data_bytes, 2)
+                   if data_bytes else 0.0)
+    return {
         "exists": True,
         "items": live_items,
         "blocks": len(blocks),
@@ -115,12 +125,25 @@ def level_stats(store: Store, level: Any, ident: Any,
         "index_ratio_pct": index_ratio(index_size, data_bytes),
         "fragmentation_pct": frag_pct(data_bytes - dead_bytes, data_bytes),
         "checksum": store.verify(rank, ident, archived),
-        "block_kb": int(meta.get("block_kb") or store.block_kb),
-        "owner": str(meta.get("owner") or ""),
-        "updated_at": str(meta.get("updated_at") or ""),
-    })
-    record["utilization_pct"] = round(
-        live_bytes * 100.0 / data_bytes, 2) if data_bytes else 0.0
+        "block_kb": block_kb,
+        "owner": owner,
+        "updated_at": updated,
+        "utilization_pct": utilization,
+    }
+
+
+def level_stats(store: Store, level: Any, ident: Any,
+                archived: bool = False) -> Dict[str, Any]:
+    rank = parse_level(level)
+    empty = _empty(store, rank, ident)
+    if not store.exists(rank, ident, archived):
+        return empty
+    meta = store.meta(rank, ident, archived)
+    blocks = store.read_blocks(rank, ident, archived)
+    folder = store.folder(rank, ident, archived)
+    record = dict(empty)
+    record.update(_measure(store, rank, ident, archived, meta, folder,
+                           blocks))
     return record
 
 

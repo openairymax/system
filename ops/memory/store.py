@@ -156,11 +156,8 @@ class Store:
         with self.locked():
             return self.replace_all(level, ident, list(items), owner)
 
-    def replace_all(self, level: Any, ident: Any, items: List[Item],
-                    owner: Optional[str] = None) -> Dict[str, Any]:
-        folder = self._guard(self._ensure(level, ident, owner))
-        capacity = int(self.meta(level, ident)["block_kb"]) * 1024
-        groups = self._pack(items, capacity)
+    def _stage(self, folder: Path,
+               groups: List[List[Item]]) -> Dict[str, List[Record]]:
         staging = folder / STAGING
         if staging.exists():
             self._drop_tree(staging)
@@ -170,15 +167,26 @@ class Store:
             name = block_name(number)
             blocks[name] = [Record(item) for item in group]
             self._write(staging / name, encode_block(blocks[name]))
+        return blocks
+
+    def _swap(self, folder: Path) -> None:
         retired = folder / RETIRED
         if retired.exists():
             self._drop_tree(retired)
         current = folder / DATA
         if current.exists():
             os.rename(current, retired)
-        os.rename(staging, current)
+        os.rename(folder / STAGING, current)
         if retired.exists():
             self._drop_tree(retired)
+
+    def replace_all(self, level: Any, ident: Any, items: List[Item],
+                    owner: Optional[str] = None) -> Dict[str, Any]:
+        folder = self._guard(self._ensure(level, ident, owner))
+        capacity = int(self.meta(level, ident)["block_kb"]) * 1024
+        groups = self._pack(items, capacity)
+        blocks = self._stage(folder, groups)
+        self._swap(folder)
         self._write_index(folder, level, ident, blocks)
         self._write_sum(folder)
         self._touch(folder, level, ident)
@@ -250,6 +258,17 @@ class Store:
         doc["last_defrag_at"] = iso(stamp)
         self._write_json(folder / META, doc)
 
+    def _mark(self, rows: List[Record], ids: set) -> tuple:
+        shape = []
+        found = 0
+        for rec in rows:
+            if not rec.deleted and rec.item.id in ids:
+                found += 1
+                shape.append(Record(rec.item, True))
+            else:
+                shape.append(rec)
+        return shape, found
+
     def _tomb(self, level: Any, ident: Any, ids: set) -> int:
         folder = self._guard(self.folder(level, ident))
         blocks = self.read_blocks(level, ident)
@@ -259,13 +278,8 @@ class Store:
         need(not missing, f"记忆项不存在: {','.join(missing)}", BadState)
         found = 0
         for name, rows in blocks.items():
-            shape = []
-            for rec in rows:
-                if not rec.deleted and rec.item.id in ids:
-                    found += 1
-                    shape.append(Record(rec.item, True))
-                else:
-                    shape.append(rec)
+            shape, hits = self._mark(rows, ids)
+            found += hits
             self._write(folder / DATA / name, encode_block(shape))
         self._write_index(folder, level, ident, blocks)
         self._write_sum(folder)

@@ -161,26 +161,46 @@ class Engine:
             return [Action("ACK", alert, "operator confirmed")]
         return [Action("IGNORE", None, "unknown alert id")]
 
+    def _escalate(self, alert: Alert, now: int):
+        sev = alert.event.severity
+        if not (alert.state == FIRING and sev == Severity.CRITICAL
+                and now - alert.first_ns >= ESCALATE_NS):
+            return None
+        alert.state = ESCALATED
+        alert.next_ns = now + ESCALATE_NS
+        self.counts["escalated"] += 1
+        return Action("ESCALATE", alert, "critical alert kept firing")
+
+    def _repeat(self, alert: Alert, now: int):
+        if alert.state != ESCALATED or now < alert.next_ns:
+            return None
+        alert.next_ns = now + ESCALATE_NS
+        self.counts["escalated"] += 1
+        return Action("ESCALATE", alert, "repeat escalation")
+
+    def _pending(self, key: str, alert: Alert, now: int):
+        if alert.state != PENDING or now < alert.deadline_ns:
+            return None
+        alert.state = RESOLVED
+        alert.resolved_ns = now
+        self.counts["resolved"] += 1
+        del self.active[key]
+        return Action("RESOLVE", alert, "auto confirmed")
+
+    def _tick_one(self, key: str, alert: Alert, now: int):
+        found = self._escalate(alert, now)
+        if found is None:
+            found = self._repeat(alert, now)
+        if found is None:
+            found = self._pending(key, alert, now)
+        return found
+
     def tick(self, now: int) -> list[Action]:
         out: list[Action] = []
         for key, alert in list(self.active.items()):
-            sev = alert.event.severity
-            if alert.state == FIRING and sev == Severity.CRITICAL and \
-                    now - alert.first_ns >= ESCALATE_NS:
-                alert.state = ESCALATED
-                alert.next_ns = now + ESCALATE_NS
-                self.counts["escalated"] += 1
-                out.append(Action("ESCALATE", alert, "critical alert kept firing"))
-            elif alert.state == ESCALATED and now >= alert.next_ns:
-                alert.next_ns = now + ESCALATE_NS
-                self.counts["escalated"] += 1
-                out.append(Action("ESCALATE", alert, "repeat escalation"))
-            elif alert.state == PENDING and now >= alert.deadline_ns:
-                alert.state = RESOLVED
-                alert.resolved_ns = now
-                self.counts["resolved"] += 1
-                out.append(Action("RESOLVE", alert, "auto confirmed"))
-                del self.active[key]
+            action = self._tick_one(key, alert, now)
+            if action is not None:
+                out.append(action)
         storm = self._storm(now)
         if storm is not None:
             out.append(storm)
@@ -205,7 +225,7 @@ class Engine:
         while self.rate and self.rate[0][0] < edge:
             self.rate.popleft()
 
-    def _hot(self, now: int) -> bool:
+    def _rate_counts(self, now: int) -> tuple:
         edge = now - 60 * NS
         recent = 0
         per_code: dict[int, int] = {}
@@ -215,6 +235,10 @@ class Engine:
             if now - stamp <= NS:
                 recent += 1
             per_code[code] = per_code.get(code, 0) + 1
+        return recent, per_code
+
+    def _hot(self, now: int) -> bool:
+        recent, per_code = self._rate_counts(now)
         if not per_code:
             return False
         if recent > STORM_1S or sum(per_code.values()) > STORM_1M:

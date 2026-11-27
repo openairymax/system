@@ -15,12 +15,12 @@
 
 from __future__ import annotations
 
-import json
 import os
 from pathlib import Path
 from typing import Any, Dict, List
 
 from airylib.err import need
+from airylib.ledger import append_line, read_rows
 
 from .model import BadStore
 
@@ -38,29 +38,8 @@ def append(doc: Dict[str, Any]) -> Path:
     need(isinstance(doc, dict), "审计记录必须是对象", BadStore)
     folder = logdir()
     folder.mkdir(parents=True, exist_ok=True, mode=0o750)
-    path = folder / FILE
-    line = json.dumps(doc, ensure_ascii=False, sort_keys=True) + "\n"
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o640)
-    try:
-        os.write(fd, line.encode("utf-8"))
-        os.fsync(fd)
-    finally:
-        os.close(fd)
-    return path
+    return append_line(folder / FILE, doc)
 
 
 def read(limit: int = 50) -> List[Dict[str, Any]]:
-    path = logdir() / FILE
-    if not path.is_file():
-        return []
-    rows: List[Dict[str, Any]] = []
-    for line in path.read_text(encoding="utf-8").splitlines():
-        try:
-            row = json.loads(line)
-        except ValueError:
-            continue
-        if isinstance(row, dict):
-            rows.append(row)
-    if limit > 0:
-        return rows[-limit:]
-    return rows
+    return read_rows(logdir() / FILE, limit)
